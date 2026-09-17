@@ -19,6 +19,7 @@ interface Spool {
   color_hex: string;
   current_weight: number;
   initial_weight?: number;
+  price_paid?: number;
 }
 
 interface PrintLog {
@@ -75,17 +76,19 @@ export default function App() {
     0: null, 1: null, 2: null, 3: null
   });
 
-  // Histórico de Impressões
   const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
-
-  // Estoque
   const [inventory, setInventory] = useState<Spool[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMaterial, setFilterMaterial] = useState("TODOS");
-
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Form Criador
+  // Modal de Re-pesagem / Ajuste
+  const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
+  const [modalGross, setModalGross] = useState("");
+  const [modalTare, setModalTare] = useState("220");
+  const [modalPrice, setModalPrice] = useState("85.00");
+
+  // Form Criador de Tags
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
   const [customBrandName, setCustomBrandName] = useState("");
   const [material, setMaterial] = useState("PETG");
@@ -94,6 +97,7 @@ export default function App() {
   const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
   const [grossWeight, setGrossWeight] = useState("1220");
   const [tareWeight, setTareWeight] = useState("220");
+  const [spoolPrice, setSpoolPrice] = useState("85.00");
   const [customTagId, setCustomTagId] = useState("");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
@@ -146,7 +150,6 @@ export default function App() {
   }, [setNfcUid]);
 
   async function loadData() {
-    // 1. Impressora e Slots
     const { data: pData } = await supabase.from("printers").select("*");
     if (pData && pData.length > 0) {
       setPrinters(pData);
@@ -166,11 +169,9 @@ export default function App() {
       }
     }
 
-    // 2. Almoxarifado
     const { data: invData } = await supabase.from("spools").select("*").order("created_at", { ascending: false });
     if (invData) setInventory(invData);
 
-    // 3. Histórico de Impressões
     const { data: logsData } = await supabase
       .from("print_logs")
       .select("*, spool:spools(*)")
@@ -218,6 +219,7 @@ export default function App() {
           color_hex: "#111827",
           initial_weight: 1000,
           current_weight: 1000,
+          price_paid: 85.00,
         })
         .select()
         .single();
@@ -252,6 +254,29 @@ export default function App() {
     await loadData();
   }
 
+  function openWeighModal(spool: Spool) {
+    setEditingSpool(spool);
+    setModalTare("220");
+    setModalGross((spool.current_weight + 220).toString());
+    setModalPrice((spool.price_paid || 85).toString());
+  }
+
+  async function handleSaveWeigh(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingSpool) return;
+
+    const net = Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0));
+    const price = parseFloat(modalPrice) || 85.00;
+
+    await supabase
+      .from("spools")
+      .update({ current_weight: net, price_paid: price })
+      .eq("id", editingSpool.id);
+
+    setEditingSpool(null);
+    await loadData();
+  }
+
   async function handleCreateAndWriteTag(e: React.FormEvent) {
     e.preventDefault();
     setFeedbackMsg(null);
@@ -272,6 +297,7 @@ export default function App() {
         color_hex: colorHex,
         initial_weight: netWeight,
         current_weight: netWeight,
+        price_paid: parseFloat(spoolPrice) || 85.00,
       },
       { onConflict: "nfc_uid" }
     );
@@ -310,7 +336,7 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
-      {/* Barra de Topo */}
+      {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -352,7 +378,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* 3 Abas Principais */}
+        {/* Abas */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
@@ -405,10 +431,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS + HISTÓRICO DE IMPRESSÕES */}
+      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          {/* Slots AMS Lite */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: 16, color: "#f8fafc" }}>
@@ -505,7 +530,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Histórico Recente de Impressões */}
+          {/* Histórico com Custo em R$ */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ fontSize: 15, margin: 0, color: "#f8fafc" }}>📋 Histórico Recente de Impressões</h3>
@@ -518,58 +543,68 @@ export default function App() {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {printLogs.map((log) => (
-                  <div
-                    key={log.id}
-                    style={{
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                      borderRadius: 8,
-                      padding: "10px 12px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 10,
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span
-                        style={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          backgroundColor: log.spool?.color_hex || "#38bdf8",
-                          border: "1px solid #64748b",
-                          display: "inline-block",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
-                          {log.subtask_name || "Trabalho 3D"}
-                        </div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>
-                          Slot {(log.slot_index ?? 0) + 1} ({log.spool?.material || "PETG"} {log.spool?.color_name || ""}) •{" "}
-                          {log.completed_at ? new Date(log.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
-                        </div>
-                      </div>
-                    </div>
+                {printLogs.map((log) => {
+                  const costPerGram = ((log.spool?.price_paid || 85) / 1000);
+                  const pieceCost = (log.filament_used_g * costPerGram).toFixed(2);
 
-                    <div style={{ textAlign: "right" }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
-                        -{log.filament_used_g}g
-                      </span>
-                      <div style={{ fontSize: 10, color: "#94a3b8" }}>
-                        {log.print_duration_minutes ? `${log.print_duration_minutes} min` : "Finalizado"}
+                  return (
+                    <div
+                      key={log.id}
+                      style={{
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        borderRadius: 8,
+                        padding: "10px 12px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span
+                          style={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            backgroundColor: log.spool?.color_hex || "#38bdf8",
+                            border: "1px solid #64748b",
+                            display: "inline-block",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
+                            {log.subtask_name || "Trabalho 3D"}
+                          </div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>
+                            Slot {(log.slot_index ?? 0) + 1} ({log.spool?.material || "PETG"} {log.spool?.color_name || ""}) •{" "}
+                            {log.completed_at ? new Date(log.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
+                            -{log.filament_used_g}g
+                          </span>
+                          <span style={{ fontSize: 11, background: "rgba(16, 185, 129, 0.2)", color: "#34d399", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
+                            R$ {pieceCost}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                          {log.print_duration_minutes ? `${log.print_duration_minutes} min` : "Finalizado"}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {/* Leitor Rápido NFC */}
+          {/* Leitura NFC */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
             <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
             <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
@@ -644,7 +679,7 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
             <div>
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
-              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Todos os rolos cadastrados com clipe NFC</p>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Controle de peso líquido e valor em estoque</p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input
@@ -676,6 +711,10 @@ export default function App() {
             ) : (
               filteredInventory.map((spool) => {
                 const isLow = spool.current_weight < 150;
+                const price = spool.price_paid || 85.00;
+                const costPerGram = price / 1000;
+                const currentAssetValue = (spool.current_weight * costPerGram).toFixed(2);
+
                 return (
                   <div
                     key={spool.id}
@@ -693,8 +732,8 @@ export default function App() {
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div
                         style={{
-                          width: 32,
-                          height: 32,
+                          width: 34,
+                          height: 34,
                           borderRadius: "50%",
                           backgroundColor: spool.color_hex,
                           border: "2px solid #475569",
@@ -714,32 +753,51 @@ export default function App() {
                         <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
                           Marca: {spool.brand} • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
                         </div>
+                        <div style={{ fontSize: 10, color: "#10b981", marginTop: 2 }}>
+                          Custo: R$ {costPerGram.toFixed(3)}/g (R$ {price.toFixed(2)}/kg) • Restante: R$ {currentAssetValue}
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ textAlign: "right" }}>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
                       <div style={{ fontSize: 14, fontWeight: 800, color: isLow ? "#ef4444" : "#38bdf8" }}>
                         {spool.current_weight}g
                       </div>
-                      <button
-                        onClick={() => {
-                          setNfcUid(spool.nfc_uid);
-                          setActiveTab("ams");
-                        }}
-                        style={{
-                          marginTop: 4,
-                          background: "#0284c7",
-                          color: "#fff",
-                          border: "none",
-                          padding: "4px 8px",
-                          borderRadius: 4,
-                          fontSize: 10,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        👉 Alocar no AMS
-                      </button>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => openWeighModal(spool)}
+                          style={{
+                            background: "#334155",
+                            color: "#e2e8f0",
+                            border: "1px solid #475569",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          ⚖️ Re-pesar
+                        </button>
+                        <button
+                          onClick={() => {
+                            setNfcUid(spool.nfc_uid);
+                            setActiveTab("ams");
+                          }}
+                          style={{
+                            background: "#0284c7",
+                            color: "#fff",
+                            border: "none",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          👉 AMS
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -754,7 +812,7 @@ export default function App() {
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-            Cadastre o carretel com cor exata e grave no chip adesivo do clipe 3D.
+            Cadastre o carretel com cor, custo e peso no clipe 3D.
           </p>
 
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -811,22 +869,35 @@ export default function App() {
               )}
             </div>
 
-            {/* Material */}
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
-              <select
-                value={material}
-                onChange={(e) => {
-                  setMaterial(e.target.value);
-                  generateNewTagCode(e.target.value);
-                }}
-                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
-              >
-                <option value="PETG">PETG</option>
-                <option value="PLA">PLA</option>
-                <option value="ABS">ABS</option>
-                <option value="TPU">TPU</option>
-              </select>
+            {/* Material e Preço */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+                <select
+                  value={material}
+                  onChange={(e) => {
+                    setMaterial(e.target.value);
+                    generateNewTagCode(e.target.value);
+                  }}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                >
+                  <option value="PETG">PETG</option>
+                  <option value="PLA">PLA</option>
+                  <option value="ABS">ABS</option>
+                  <option value="TPU">TPU</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Preço Pago (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={spoolPrice}
+                  onChange={(e) => setSpoolPrice(e.target.value)}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                  required
+                />
+              </div>
             </div>
 
             {/* Cores */}
@@ -983,6 +1054,124 @@ export default function App() {
               {nfcError}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal de Re-pesagem / Ajuste de Carretel */}
+      {editingSpool && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+          padding: 16,
+        }}>
+          <div style={{
+            background: "#1e293b",
+            border: "1px solid #38bdf8",
+            borderRadius: 12,
+            padding: 20,
+            maxWidth: 420,
+            width: "100%",
+            boxSizing: "border-box",
+          }}>
+            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>
+              ⚖️ Re-pesar / Ajustar Carretel
+            </h3>
+            <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8" }}>
+              {editingSpool.material} - {editingSpool.color_name} ({editingSpool.brand})
+            </p>
+
+            <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
+                  Peso Atual na Balança (g)
+                </label>
+                <input
+                  type="number"
+                  value={modalGross}
+                  onChange={(e) => setModalGross(e.target.value)}
+                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
+                    Tara do Carretel (g)
+                  </label>
+                  <input
+                    type="number"
+                    value={modalTare}
+                    onChange={(e) => setModalTare(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
+                    Preço Pago (R$)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={modalPrice}
+                    onChange={(e) => setModalPrice(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ background: "#0f172a", padding: 10, borderRadius: 6, textAlign: "center" }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>Novo Saldo Líquido:</span>
+                <div style={{ fontSize: 18, fontWeight: 900, color: "#38bdf8" }}>
+                  {Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0))}g
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingSpool(null)}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "#334155",
+                    color: "#cbd5e1",
+                    border: "none",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: "#0284c7",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Salvar Ajuste
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

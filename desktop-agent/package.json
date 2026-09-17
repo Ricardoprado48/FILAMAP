@@ -4,7 +4,10 @@
     "type": "module",
     "scripts": {
         "discovery": "tsx src/discovery.ts",
-        "mqtt": "tsx src/mqtt-client.ts"
+        "mqtt": "tsx src/mqtt-client.ts",
+        "dev": "tsx watch src/index.ts",
+        "start": "tsx src/index.ts",
+        "build": "tsc"
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.116.0",
@@ -13,9 +16,9 @@
         "node-ssdp": "^4.0.1"
     },
     "devDependencies": {
-        "@types/node": "^20.0.0",
+        "@types/node": "^20.19.43",
         "@types/node-ssdp": "^4.0.4",
-        "tsx": "^4.7.0",
-        "typescript": "^5.0.0"
+        "tsx": "^4.23.13",
+        "typescript": "^5.9.3"
     }
 }

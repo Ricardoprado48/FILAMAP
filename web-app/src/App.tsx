@@ -1,3 +1,4 @@
+// Build Version: 1789677016868
 ﻿import React, { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";

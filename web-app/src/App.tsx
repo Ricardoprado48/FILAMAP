@@ -1,4 +1,4 @@
-// Build Version: 1789677016868
+﻿// Build Version: 1789677016868
 ﻿import React, { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
@@ -40,6 +40,7 @@ interface FilamentPreset {
   material: string;
   brand: string;
   density: number;
+  color_hex?: string;
   nozzle_temperature_range?: string;
   bed_temperature?: string;
 }

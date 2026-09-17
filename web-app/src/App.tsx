@@ -31,6 +31,7 @@ interface Spool {
   color_hex: string;
   current_weight: number;
   initial_weight?: number;
+  spool_tare_weight?: number;
   price_paid?: number;
 }
 
@@ -347,9 +348,9 @@ export default function App() {
 
   function openWeighModal(spool: Spool) {
     setWeighingSpool(spool);
-    const defaultTare = spool.brand === "Voolt3D" ? "218" : "220";
-    setModalTare(defaultTare);
-    setModalGross((spool.current_weight + parseFloat(defaultTare)).toString());
+    const savedTare = (spool.spool_tare_weight || (spool.brand === "Voolt3D" ? 218 : 220)).toString();
+    setModalTare(savedTare);
+    setModalGross((spool.current_weight + parseFloat(savedTare)).toString());
   }
 
   async function handleSaveWeigh(e: React.FormEvent) {
@@ -360,7 +361,10 @@ export default function App() {
 
     await supabase
       .from("spools")
-      .update({ current_weight: net })
+      .update({ 
+        current_weight: net,
+        spool_tare_weight: parseFloat(modalTare) || 218
+      })
       .eq("id", weighingSpool.id);
 
     setWeighingSpool(null);
@@ -436,6 +440,7 @@ export default function App() {
         color_hex: colorHex,
         initial_weight: netWeight,
         current_weight: netWeight,
+        spool_tare_weight: parseFloat(tareWeight) || 218,
         price_paid: parseFloat(spoolPrice) || 85.00,
       },
       { onConflict: "nfc_uid" }

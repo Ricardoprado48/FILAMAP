@@ -27,6 +27,10 @@ export default function App() {
     0: null, 1: null, 2: null, 3: null
   });
 
+  // Estado PWA (Instalação no celular)
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+
   // Formulário do Criador / Gravador de Tags
   const [brand, setBrand] = useState("Voolt3D");
   const [material, setMaterial] = useState("PETG");
@@ -49,7 +53,28 @@ export default function App() {
     setWriteSuccess,
   } = useNfc();
 
-  // Gera código único sugerido na inicialização
+  // Escuta o evento nativo de instalação do Android / Chrome
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+  }, []);
+
+  async function handleInstallClick() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      setIsInstallable(false);
+    }
+    setDeferredPrompt(null);
+  }
+
   useEffect(() => {
     generateNewTagCode("PETG");
   }, []);
@@ -59,19 +84,16 @@ export default function App() {
     setCustomTagId(`FILA-${mat}-${randomCode}`);
   }
 
-  // Detecta se a página foi aberta diretamente por uma tag NFC (?tag=...)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tagFromUrl = params.get("tag");
     if (tagFromUrl) {
       setNfcUid(tagFromUrl);
       setActiveTab("ams");
-      // Limpa a URL sem recarregar a página
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [setNfcUid]);
 
-  // Carrega dados da Impressora e Slots do AMS
   async function loadData() {
     const { data: pData } = await supabase.from("printers").select("*");
     if (pData && pData.length > 0) {
@@ -99,7 +121,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Vincula carretel ao slot do AMS
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
 
@@ -110,7 +131,6 @@ export default function App() {
       .single();
 
     if (!spool) {
-      // Cadastra carretel temporário caso seja uma tag lida sem cadastro prévio
       const { data: created } = await supabase
         .from("spools")
         .insert({
@@ -142,7 +162,6 @@ export default function App() {
     }
   }
 
-  // Grava a URL na tag e salva no Supabase
   async function handleCreateAndWriteTag(e: React.FormEvent) {
     e.preventDefault();
     setFeedbackMsg(null);
@@ -152,10 +171,8 @@ export default function App() {
     const finalTagId = customTagId.trim() || `FILA-${Date.now()}`;
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
 
-    // 1. Grava no chip físico via Web NFC
     const wrote = await writeTagUrl(fullTargetUrl);
 
-    // 2. Salva no banco de dados
     const { error: dbError } = await supabase.from("spools").upsert(
       {
         nfc_uid: finalTagId,
@@ -175,7 +192,7 @@ export default function App() {
       setFeedbackMsg(`✅ Tag gravada com sucesso! Link: ${fullTargetUrl}`);
       generateNewTagCode(material);
     } else {
-      setFeedbackMsg(`ℹ️ Dados salvos no banco. (Gravação física cancelada ou em ambiente desktop). Link gerado: ${fullTargetUrl}`);
+      setFeedbackMsg(`ℹ️ Carretel salvo no estoque. (Gravação NFC não executada ou em desktop). Link: ${fullTargetUrl}`);
     }
   }
 
@@ -189,31 +206,50 @@ export default function App() {
   ];
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", padding: "20px 16px", minHeight: "100vh", boxSizing: "border-box" }}>
-      {/* Topo com Alternância de Abas */}
-      <header style={{ borderBottom: "1px solid #334155", paddingBottom: 16, marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+    <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
+      {/* Barra Superior */}
+      <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 24, color: "#38bdf8", fontWeight: 900, letterSpacing: "-0.02em" }}>FILAMAP</h1>
-            <p style={{ margin: "2px 0 0", color: "#94a3b8", fontSize: 13 }}>Gestão Inteligente de Filamento e AMS</p>
+            <p style={{ margin: "2px 0 0", color: "#94a3b8", fontSize: 12 }}>Gestão de Carretéis e AMS</p>
           </div>
-          <span
-            style={{
-              padding: "4px 10px",
-              borderRadius: 16,
-              fontSize: 11,
-              fontWeight: 700,
-              background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-              color: printers[0]?.is_online ? "#34d399" : "#f87171",
-              border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
-            }}
-          >
-            {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
-          </span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {isInstallable && (
+              <button
+                onClick={handleInstallClick}
+                style={{
+                  background: "#10b981",
+                  color: "#ffffff",
+                  border: "none",
+                  padding: "6px 12px",
+                  borderRadius: 16,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                📥 Baixar App
+              </button>
+            )}
+            <span
+              style={{
+                padding: "4px 10px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 700,
+                background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                color: printers[0]?.is_online ? "#34d399" : "#f87171",
+                border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
+              }}
+            >
+              {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
+            </span>
+          </div>
         </div>
 
-        {/* Botões das Abas */}
-        <div style={{ display: "flex", gap: 10 }}>
+        {/* Abas */}
+        <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
             style={{
@@ -228,7 +264,7 @@ export default function App() {
               color: activeTab === "ams" ? "#ffffff" : "#94a3b8",
             }}
           >
-            🖨️ Monitor AMS Lite
+            🖨️ Monitor AMS
           </button>
           <button
             onClick={() => setActiveTab("writer")}
@@ -244,29 +280,29 @@ export default function App() {
               color: activeTab === "writer" ? "#ffffff" : "#94a3b8",
             }}
           >
-            🏷️ Criador / Gravador de Tags
+            🏷️ Criador de Tags
           </button>
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS LITE */}
+      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, marginBottom: 20, border: "1px solid #334155" }}>
-            <div style={{ marginBottom: 14 }}>
-              <strong style={{ fontSize: 17, color: "#f8fafc" }}>
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
+            <div style={{ marginBottom: 12 }}>
+              <strong style={{ fontSize: 16, color: "#f8fafc" }}>
                 {printers[0]?.model ? `Bambu Lab ${printers[0].model}` : "Bambu Lab A1"}
               </strong>
-              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                 SN: {printers[0]?.serial || "--"} • IP: {printers[0]?.ip_address || "--"}
               </div>
             </div>
 
-            <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 10, fontWeight: 700 }}>
-              Bandejas do AMS (Slots 1 a 4)
+            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 10, fontWeight: 700 }}>
+              Bandejas do AMS Lite
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {[0, 1, 2, 3].map((slotIdx) => {
                 const spool = activeSlots[slotIdx];
                 const isTarget = nfcUid !== null;
@@ -278,19 +314,19 @@ export default function App() {
                     style={{
                       background: isTarget ? "#172554" : "#0f172a",
                       borderRadius: 8,
-                      padding: 14,
+                      padding: 12,
                       border: isTarget ? "2px dashed #38bdf8" : "1px solid #334155",
                       cursor: isTarget ? "pointer" : "default",
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "space-between",
-                      minHeight: 125,
+                      minHeight: 120,
                       boxSizing: "border-box",
                     }}
                   >
                     <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8" }}>SLOT {slotIdx + 1}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>SLOT {slotIdx + 1}</span>
                         <span
                           style={{
                             width: 14,
@@ -311,7 +347,7 @@ export default function App() {
                         </div>
                       ) : (
                         <div style={{ color: isTarget ? "#38bdf8" : "#475569", fontSize: 12, fontStyle: "italic", marginTop: 4 }}>
-                          {isTarget ? "👉 Toque para alocar" : "Vazio"}
+                          {isTarget ? "👉 Toque para fixar" : "Vazio"}
                         </div>
                       )}
                     </div>
@@ -329,10 +365,10 @@ export default function App() {
           </div>
 
           {/* Leitor Rápido */}
-          <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-            <h3 style={{ fontSize: 16, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
-            <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-              Aproxime o celular da tag para carregar o filamento em um dos slots.
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
+            <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
+            <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
+              Aproxime o celular do clipe NFC para apontar qual filamento você está colocando no AMS.
             </p>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -375,9 +411,9 @@ export default function App() {
             {nfcUid && (
               <div style={{ marginTop: 14, padding: 12, background: "#1e3a8a", border: "1px solid #3b82f6", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <span style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Tag Pronta:</span>
+                  <span style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Tag Carregada:</span>
                   <div style={{ fontSize: 15, fontWeight: 800, color: "#ffffff" }}>{nfcUid}</div>
-                  <div style={{ fontSize: 11, color: "#bfdbfe", marginTop: 2 }}>Toque em um dos slots do AMS acima para fixar o carretel.</div>
+                  <div style={{ fontSize: 11, color: "#bfdbfe", marginTop: 2 }}>Toque no slot do AMS acima para fixar o carretel.</div>
                 </div>
                 <button
                   onClick={() => setNfcUid(null)}
@@ -399,17 +435,16 @@ export default function App() {
 
       {/* ABA 2: CRIADOR E GRAVADOR DE TAGS */}
       {activeTab === "writer" && (
-        <div style={{ background: "#1e293b", padding: 20, borderRadius: 12, border: "1px solid #334155" }}>
-          <h2 style={{ fontSize: 18, color: "#f8fafc", margin: "0 0 6px" }}>Gerador e Gravador de Tags NFC</h2>
-          <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 16px" }}>
-            Gere a URL oficial e grave no adesivo NFC fixado no clipe 3D do carretel.
+        <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
+          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
+          <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
+            Cadastre o carretel e encoste o adesivo NFC para gravar o link permanente.
           </p>
 
-          <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Tag ID & URL Preview */}
-            <div style={{ background: "#0f172a", padding: 14, borderRadius: 8, border: "1px solid #334155" }}>
+          <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <label style={{ fontSize: 12, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO ÚNICO DA TAG</label>
+                <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO ÚNICO DA TAG</label>
                 <button
                   type="button"
                   onClick={() => generateNewTagCode(material)}
@@ -422,15 +457,14 @@ export default function App() {
                 type="text"
                 value={customTagId}
                 onChange={(e) => setCustomTagId(e.target.value)}
-                style={{ width: "100%", padding: "8px 12px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700, fontSize: 15, boxSizing: "border-box" }}
+                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700, fontSize: 14, boxSizing: "border-box" }}
                 required
               />
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 6, wordBreak: "break-all" }}>
-                Link gravado: <strong>https://filamap.pages.dev/?tag={customTagId}</strong>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, wordBreak: "break-all" }}>
+                Link: https://filamap.pages.dev/?tag={customTagId}
               </div>
             </div>
 
-            {/* Marca e Material */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
                 <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca</label>
@@ -438,7 +472,7 @@ export default function App() {
                   type="text"
                   value={brand}
                   onChange={(e) => setBrand(e.target.value)}
-                  style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                   required
                 />
               </div>
@@ -451,7 +485,7 @@ export default function App() {
                     setMaterial(e.target.value);
                     generateNewTagCode(e.target.value);
                   }}
-                  style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                 >
                   <option value="PETG">PETG</option>
                   <option value="PLA">PLA</option>
@@ -461,7 +495,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Cor */}
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>Cor do Filamento</label>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
@@ -491,40 +524,38 @@ export default function App() {
                 type="text"
                 value={colorName}
                 onChange={(e) => setColorName(e.target.value)}
-                placeholder="Nome da cor (ex: Azul Cobalto)"
-                style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                placeholder="Ex: Preto Fosco"
+                style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                 required
               />
             </div>
 
-            {/* Peso Bruto vs Tara */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#0f172a", padding: 12, borderRadius: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#0f172a", padding: 10, borderRadius: 8 }}>
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso na Balança (g)</label>
+                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso Balança (g)</label>
                 <input
                   type="number"
                   value={grossWeight}
                   onChange={(e) => setGrossWeight(e.target.value)}
-                  style={{ width: "100%", padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                   required
                 />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara Carretel Vazio (g)</label>
+                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara Vazio (g)</label>
                 <input
                   type="number"
                   value={tareWeight}
                   onChange={(e) => setTareWeight(e.target.value)}
-                  style={{ width: "100%", padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                   required
                 />
               </div>
               <div style={{ gridColumn: "span 2", textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>
-                Líquido Real: {Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0))}g
+                Saldo Líquido: {Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0))}g
               </div>
             </div>
 
-            {/* Botão de Gravação */}
             <button
               type="submit"
               disabled={isWriting}
@@ -534,24 +565,24 @@ export default function App() {
                 border: "none",
                 padding: "14px",
                 borderRadius: 8,
-                fontSize: 15,
+                fontSize: 14,
                 fontWeight: 700,
                 cursor: isWriting ? "not-allowed" : "pointer",
-                marginTop: 6,
+                marginTop: 4,
               }}
             >
-              {isWriting ? "📡 Aproxime o chip do celular agora..." : "📲 Salvar e Gravar na Tag NFC"}
+              {isWriting ? "📡 Aproxime a tag do celular..." : "📲 Gravar Tag NFC & Salvar"}
             </button>
           </form>
 
           {feedbackMsg && (
-            <div style={{ marginTop: 14, padding: 12, background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 8, fontSize: 13, color: "#f8fafc" }}>
+            <div style={{ marginTop: 12, padding: 10, background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 8, fontSize: 12, color: "#f8fafc" }}>
               {feedbackMsg}
             </div>
           )}
 
           {nfcError && (
-            <div style={{ marginTop: 10, color: "#f87171", fontSize: 12 }}>
+            <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>
               {nfcError}
             </div>
           )}

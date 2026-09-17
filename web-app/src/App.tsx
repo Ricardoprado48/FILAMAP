@@ -214,7 +214,7 @@ export default function App() {
       }
     }
 
-    const { data: invData } = await supabase.from("spools").select("*").order("created_at", { ascending: false });
+    const { data: invData } = await supabase.from("spools").select("*").order("color_name", { ascending: true });
     if (invData) setInventory(invData);
 
     const { data: presetsData } = await supabase.from("filament_presets").select("*").order("name");
@@ -933,7 +933,9 @@ export default function App() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {sortedMaterialKeys.map((mat) => {
-                const spools = groupedByMaterial[mat];
+                const spools = (groupedByMaterial[mat] || []).slice().sort((a, b) =>
+  a.color_name.localeCompare(b.color_name, "pt-BR", { sensitivity: "base" })
+);
                 const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
                 const totalValue = spools.reduce((acc, s) => {
                   const cpg = (s.price_paid || 85) / 1000;

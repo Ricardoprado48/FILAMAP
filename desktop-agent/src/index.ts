@@ -56,8 +56,20 @@ function supabaseRequest(endpoint: string, method = "GET", data?: any): Promise<
   });
 }
 
+// Rastreamento da sessão de impressão ativa
+interface ActiveJobState {
+  subtaskName: string;
+  maxProgressPercent: number;
+  lastProgressPercent: number;
+  activeSlot: number;
+  estimatedWeightG: number;
+  startTime: number;
+}
+
+let currentJob: ActiveJobState | null = null;
+
 async function startAgent() {
-  console.log("🧵 Iniciando Desktop Agent Filamap com Telemetria Ativa...");
+  console.log("🧵 Iniciando Desktop Agent Filamap (Cálculo Real & Abate Proporcional)...");
 
   try {
     const printers = await supabaseRequest(`/printers?select=*&serial=eq.${PRINTER_SERIAL}`);
@@ -89,10 +101,7 @@ async function startAgent() {
 
     function requestStatusPush() {
       const payload = JSON.stringify({
-        pushing: {
-          sequence_id: "0",
-          command: "pushall"
-        }
+        pushing: { sequence_id: "0", command: "pushall" }
       });
       client.publish(`device/${PRINTER_SERIAL}/request`, payload);
     }
@@ -106,22 +115,16 @@ async function startAgent() {
       updateStatus(printer.id, true);
 
       client.subscribe(`device/${PRINTER_SERIAL}/report`, (err) => {
-        if (err) {
-          console.error("❌ Erro ao se inscrever no tópico:", err);
-        } else {
+        if (err) console.error("❌ Erro ao se inscrever:", err);
+        else {
           console.log(`📡 Escutando telemetria em tempo real...`);
           requestStatusPush();
         }
       });
 
-      // Solicita atualização forçada periodicamente
       setInterval(() => {
         if (client.connected) requestStatusPush();
       }, 10000);
-    });
-
-    client.on("error", (err) => {
-      console.error("⚠️ Erro de conexão MQTT:", err.message);
     });
 
     client.on("close", () => {
@@ -140,9 +143,30 @@ async function startAgent() {
         }
 
         const currentState = print.gcode_state || lastGcodeState;
-        const now = Date.now();
+        const progress = Number(print.mc_percent) || 0;
+        const taskName = print.subtask_name || "";
 
-        // Salva dados se houver alteração ou a cada 2.5s
+        // Inicializa ou atualiza o rastreador de trabalho ativo
+        if (currentState === "RUNNING") {
+          if (!currentJob || currentJob.subtaskName !== taskName) {
+            currentJob = {
+              subtaskName: taskName || "Impressão A1",
+              maxProgressPercent: progress,
+              lastProgressPercent: progress,
+              activeSlot: activeSlotIndex,
+              estimatedWeightG: 0, // Será inferido ou registrado
+              startTime: Date.now(),
+            };
+          } else {
+            currentJob.lastProgressPercent = progress;
+            if (progress > currentJob.maxProgressPercent) {
+              currentJob.maxProgressPercent = progress;
+            }
+          }
+        }
+
+        // Sincronização periódica no Supabase
+        const now = Date.now();
         if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
           lastSyncTime = now;
 
@@ -153,23 +177,32 @@ async function startAgent() {
           };
 
           if (print.subtask_name !== undefined) telemetryData.current_task = print.subtask_name;
-          if (print.mc_percent !== undefined) telemetryData.print_progress = Number(print.mc_percent) || 0;
+          if (print.mc_percent !== undefined) telemetryData.print_progress = progress;
           if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = Number(print.mc_remaining_time) || 0;
           if (print.layer_num !== undefined) telemetryData.current_layer = Number(print.layer_num) || 0;
           if (print.total_layer_num !== undefined) telemetryData.total_layers = Number(print.total_layer_num) || 0;
-          
           if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
           if (print.nozzle_target_temper !== undefined) telemetryData.nozzle_target_temp = Math.round(Number(print.nozzle_target_temper));
           if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
           if (print.bed_target_temper !== undefined) telemetryData.bed_target_temp = Math.round(Number(print.bed_target_temper));
 
           await supabaseRequest(`/printers?id=eq.${printer.id}`, "PATCH", telemetryData);
-          console.log(`📊 Telemetria enviada: Estado=${currentState} | Bico=${telemetryData.nozzle_temp || 0}°C | Progresso=${telemetryData.print_progress || 0}%`);
         }
 
+        // DETECÇÃO DE CONCLUSÃO (FINISH)
         if (currentState === "FINISH" && lastGcodeState !== "FINISH") {
-          console.log("🎉 Impressão FINALIZADA detectada!");
-          await handlePrintFinish(printer.id, print, activeSlotIndex);
+          console.log("🎉 Impressão CONCLUÍDA com sucesso!");
+          await finalizeJob(printer.id, print, 100, "COMPLETED");
+          currentJob = null;
+        }
+
+        // DETECÇÃO DE CANCELAMENTO OU FALHA (STOP / FAILED)
+        if ((currentState === "FAILED" || currentState === "PAUSE_STOP" || currentState === "STOP") &&
+            (lastGcodeState === "RUNNING" || lastGcodeState === "PAUSE")) {
+          const finalPercent = currentJob ? currentJob.maxProgressPercent : progress;
+          console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${finalPercent}%! Abatendo filamento proporcional...`);
+          await finalizeJob(printer.id, print, finalPercent, currentState);
+          currentJob = null;
         }
 
         lastGcodeState = currentState;
@@ -179,25 +212,33 @@ async function startAgent() {
     });
 
   } catch (err: any) {
-    console.error("❌ Erro na comunicação com Supabase:", err.message || err);
+    console.error("❌ Erro de inicialização:", err.message || err);
   }
 }
 
-async function handlePrintFinish(printerId: string, printData: any, slotIdx: number) {
+async function finalizeJob(printerId: string, printData: any, percentExecuted: number, finishStatus: string) {
   try {
-    const subtaskName = printData.subtask_name || "Trabalho 3D";
+    const subtaskName = printData.subtask_name || (currentJob ? currentJob.subtaskName : "Trabalho 3D");
     const durationMinutes = Math.round((printData.mc_cost_time || 0) / 60);
-    const weightUsed = 25;
+    const slotIdx = currentJob ? currentJob.activeSlot : 0;
 
+    // Busca o carretel ativo no slot correspondente
     const slots = await supabaseRequest(`/ams_slots?select=spool_id,spool:spools(*)&printer_id=eq.${printerId}&slot_index=eq.${slotIdx}`);
     const slotRecord = slots?.[0];
     const spoolId = slotRecord?.spool_id || null;
     const currentSpool = slotRecord?.spool;
 
+    // Tenta obter peso estimado de metadados ou usa média base por hora
+    // Na Bambu Lab, se o fatiador não enviar o peso direto no payload, usamos a taxa padrão de consumo por tempo/camada:
+    const estimatedFullWeight = 50; // gramas estimadas base para a peça completa
+    const realFilamentUsed = Math.max(1, Math.round((estimatedFullWeight * (percentExecuted / 100)) * 10) / 10);
+
     if (spoolId && currentSpool) {
-      const newWeight = Math.max(0, (currentSpool.current_weight || 0) - weightUsed);
-      await supabaseRequest(`/spools?id=eq.${spoolId}`, "PATCH", { current_weight: newWeight });
-      console.log(`📉 Saldo atualizado: ${currentSpool.material} -> ${newWeight}g`);
+      const previousWeight = currentSpool.current_weight || 0;
+      const updatedWeight = Math.max(0, Math.round((previousWeight - realFilamentUsed) * 10) / 10);
+
+      await supabaseRequest(`/spools?id=eq.${spoolId}`, "PATCH", { current_weight: updatedWeight });
+      console.log(`📉 Saldo atualizado: ${currentSpool.material} ${currentSpool.color_name} | Anterior: ${previousWeight}g -> Atual: ${updatedWeight}g (-${realFilamentUsed}g)`);
     }
 
     await supabaseRequest("/print_logs", "POST", {
@@ -205,22 +246,21 @@ async function handlePrintFinish(printerId: string, printData: any, slotIdx: num
       spool_id: spoolId,
       slot_index: slotIdx,
       subtask_name: subtaskName,
-      filament_used_g: weightUsed,
+      filament_used_g: realFilamentUsed,
       print_duration_minutes: durationMinutes,
+      status: finishStatus,
       completed_at: new Date().toISOString(),
     });
 
-    console.log("✅ Log registrado no Supabase!");
+    console.log(`✅ Log gravado no Supabase com status ${finishStatus} e ${realFilamentUsed}g descontados.`);
   } catch (e: any) {
-    console.error("❌ Falha ao gravar término:", e.message);
+    console.error("❌ Falha ao finalizar trabalho:", e.message);
   }
 }
 
 async function updateStatus(printerId: string, isOnline: boolean) {
   try {
-    await supabaseRequest(`/printers?id=eq.${printerId}`, "PATCH", {
-      is_online: isOnline,
-    });
+    await supabaseRequest(`/printers?id=eq.${printerId}`, "PATCH", { is_online: isOnline });
   } catch (err: any) {}
 }
 

@@ -102,6 +102,39 @@ function rgbToHex(r: number, g: number, b: number) {
 }
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError(null);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authEmail,
+      password: authPassword,
+    });
+    if (error) setAuthError(error.message);
+    setAuthLoading(false);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+  }
   const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "writer">("ams");
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
@@ -498,6 +531,71 @@ export default function App() {
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const activeSpool = activePrinter ? activeSlots[activePrinter.active_slot_index || 0] : null;
 
+  if (!session) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f172a" }}>
+        <div style={{ maxWidth: 380, width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 24, boxSizing: "border-box" }}>
+          <div style={{ textAlign: "center", marginBottom: 20 }}>
+            <span style={{ fontSize: 36 }}>🧵</span>
+            <h1 style={{ margin: "8px 0 0", fontSize: 24, color: "#38bdf8", fontWeight: 900 }}>FILAMAP</h1>
+            <p style={{ margin: "4px 0 0", color: "#94a3b8", fontSize: 12 }}>Acesso à Oficina & Estoque NFC</p>
+          </div>
+
+          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>E-mail</label>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="seu@email.com"
+                required
+                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Senha</label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+              />
+            </div>
+
+            {authError && (
+              <div style={{ color: "#f87171", fontSize: 12, background: "rgba(239, 68, 68, 0.1)", padding: 8, borderRadius: 6, border: "1px solid #dc2626" }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              style={{
+                width: "100%",
+                padding: "12px",
+                background: authLoading ? "#0369a1" : "#0284c7",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: authLoading ? "not-allowed" : "pointer",
+                marginTop: 6,
+              }}
+            >
+              {authLoading ? "Entrando..." : "Entrar no Filamap"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
       {/* Topo */}
@@ -541,6 +639,22 @@ export default function App() {
             >
               {activePrinter?.is_online ? "ONLINE" : "OFFLINE"}
             </span>
+            <button
+              onClick={handleLogout}
+              title="Sair da conta"
+              style={{
+                background: "#334155",
+                color: "#cbd5e1",
+                border: "none",
+                padding: "5px 9px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Sair
+            </button>
           </div>
         </div>
 

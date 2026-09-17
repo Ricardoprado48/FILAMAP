@@ -18,6 +18,17 @@ interface Spool {
   color_name: string;
   color_hex: string;
   current_weight: number;
+  initial_weight?: number;
+}
+
+interface PrintLog {
+  id: string;
+  subtask_name: string;
+  filament_used_g: number;
+  print_duration_minutes: number;
+  slot_index: number;
+  completed_at: string;
+  spool?: Spool;
 }
 
 const POPULAR_BRANDS = [
@@ -41,7 +52,6 @@ const POPULAR_BRANDS = [
   "Outra..."
 ];
 
-// Utilitários de conversão HEX <-> RGB
 function hexToRgb(hex: string) {
   const clean = hex.replace("#", "");
   if (clean.length !== 6) return { r: 17, g: 24, b: 39 };
@@ -59,22 +69,29 @@ function rgbToHex(r: number, g: number, b: number) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"ams" | "writer">("ams");
+  const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "writer">("ams");
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
     0: null, 1: null, 2: null, 3: null
   });
 
+  // Histórico de Impressões
+  const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
+
+  // Estoque
+  const [inventory, setInventory] = useState<Spool[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterMaterial, setFilterMaterial] = useState("TODOS");
+
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Formulário do Criador de Tags
+  // Form Criador
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
   const [customBrandName, setCustomBrandName] = useState("");
   const [material, setMaterial] = useState("PETG");
   const [colorName, setColorName] = useState("Preto");
   const [colorHex, setColorHex] = useState("#111827");
   const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
-
   const [grossWeight, setGrossWeight] = useState("1220");
   const [tareWeight, setTareWeight] = useState("220");
   const [customTagId, setCustomTagId] = useState("");
@@ -129,6 +146,7 @@ export default function App() {
   }, [setNfcUid]);
 
   async function loadData() {
+    // 1. Impressora e Slots
     const { data: pData } = await supabase.from("printers").select("*");
     if (pData && pData.length > 0) {
       setPrinters(pData);
@@ -147,6 +165,18 @@ export default function App() {
         setActiveSlots(slotsMap);
       }
     }
+
+    // 2. Almoxarifado
+    const { data: invData } = await supabase.from("spools").select("*").order("created_at", { ascending: false });
+    if (invData) setInventory(invData);
+
+    // 3. Histórico de Impressões
+    const { data: logsData } = await supabase
+      .from("print_logs")
+      .select("*, spool:spools(*)")
+      .order("completed_at", { ascending: false })
+      .limit(6);
+    if (logsData) setPrintLogs(logsData);
   }
 
   useEffect(() => {
@@ -155,7 +185,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Sincronizações de Cor
   function updateFromHex(newHex: string, defaultName?: string) {
     setColorHex(newHex);
     setRgb(hexToRgb(newHex));
@@ -210,6 +239,19 @@ export default function App() {
     }
   }
 
+  async function handleEjectSlot(e: React.MouseEvent, slotIdx: number) {
+    e.stopPropagation();
+    if (printers.length === 0) return;
+
+    await supabase
+      .from("ams_slots")
+      .update({ spool_id: null, updated_at: new Date().toISOString() })
+      .eq("printer_id", printers[0].id)
+      .eq("slot_index", slotIdx);
+
+    await loadData();
+  }
+
   async function handleCreateAndWriteTag(e: React.FormEvent) {
     e.preventDefault();
     setFeedbackMsg(null);
@@ -243,7 +285,17 @@ export default function App() {
     } else {
       setFeedbackMsg(`ℹ️ Carretel salvo no banco de dados. Link: ${fullTargetUrl}`);
     }
+    await loadData();
   }
+
+  const filteredInventory = inventory.filter((item) => {
+    const matchesSearch =
+      item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.nfc_uid.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesMat = filterMaterial === "TODOS" || item.material === filterMaterial;
+    return matchesSearch && matchesMat;
+  });
 
   const colorPresets = [
     { name: "Preto", hex: "#111827" },
@@ -258,6 +310,7 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
+      {/* Barra de Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -299,6 +352,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* 3 Abas Principais */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
@@ -317,6 +371,22 @@ export default function App() {
             🖨️ Monitor AMS
           </button>
           <button
+            onClick={() => setActiveTab("inventory")}
+            style={{
+              flex: 1,
+              padding: "10px",
+              borderRadius: 8,
+              border: "none",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+              background: activeTab === "inventory" ? "#0284c7" : "#1e293b",
+              color: activeTab === "inventory" ? "#ffffff" : "#94a3b8",
+            }}
+          >
+            📦 Almoxarifado ({inventory.length})
+          </button>
+          <button
             onClick={() => setActiveTab("writer")}
             style={{
               flex: 1,
@@ -330,14 +400,15 @@ export default function App() {
               color: activeTab === "writer" ? "#ffffff" : "#94a3b8",
             }}
           >
-            🏷️ Criador de Tags
+            🏷️ Criar Tag
           </button>
         </div>
       </header>
 
-      {/* MONITOR AMS */}
+      {/* ABA 1: MONITOR AMS + HISTÓRICO DE IMPRESSÕES */}
       {activeTab === "ams" && (
         <div>
+          {/* Slots AMS Lite */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ marginBottom: 12 }}>
               <strong style={{ fontSize: 16, color: "#f8fafc" }}>
@@ -370,7 +441,7 @@ export default function App() {
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "space-between",
-                      minHeight: 120,
+                      minHeight: 130,
                       boxSizing: "border-box",
                     }}
                   >
@@ -403,9 +474,29 @@ export default function App() {
                     </div>
 
                     {spool && (
-                      <div style={{ marginTop: 8, borderTop: "1px solid #1e293b", paddingTop: 6, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                        <span style={{ color: "#94a3b8" }}>Saldo:</span>
-                        <strong style={{ color: "#38bdf8" }}>{spool.current_weight}g</strong>
+                      <div style={{ marginTop: 8, borderTop: "1px solid #1e293b", paddingTop: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, marginBottom: 6 }}>
+                          <span style={{ color: "#94a3b8" }}>Saldo:</span>
+                          <strong style={{ color: spool.current_weight < 150 ? "#f87171" : "#38bdf8" }}>
+                            {spool.current_weight}g
+                          </strong>
+                        </div>
+                        <button
+                          onClick={(e) => handleEjectSlot(e, slotIdx)}
+                          style={{
+                            width: "100%",
+                            padding: "4px",
+                            background: "#334155",
+                            color: "#cbd5e1",
+                            border: "none",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            cursor: "pointer",
+                            fontWeight: 600,
+                          }}
+                        >
+                          ⏏️ Ejetar / Liberar
+                        </button>
                       </div>
                     )}
                   </div>
@@ -414,6 +505,71 @@ export default function App() {
             </div>
           </div>
 
+          {/* Histórico Recente de Impressões */}
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ fontSize: 15, margin: 0, color: "#f8fafc" }}>📋 Histórico Recente de Impressões</h3>
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>Bambu Lab A1 Telemetria</span>
+            </div>
+
+            {printLogs.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "16px", color: "#64748b", fontSize: 12 }}>
+                Nenhuma impressão registrada ainda.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {printLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    style={{
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span
+                        style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: "50%",
+                          backgroundColor: log.spool?.color_hex || "#38bdf8",
+                          border: "1px solid #64748b",
+                          display: "inline-block",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
+                          {log.subtask_name || "Trabalho 3D"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#64748b" }}>
+                          Slot {(log.slot_index ?? 0) + 1} ({log.spool?.material || "PETG"} {log.spool?.color_name || ""}) •{" "}
+                          {log.completed_at ? new Date(log.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: "right" }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
+                        -{log.filament_used_g}g
+                      </span>
+                      <div style={{ fontSize: 10, color: "#94a3b8" }}>
+                        {log.print_duration_minutes ? `${log.print_duration_minutes} min` : "Finalizado"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Leitor Rápido NFC */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
             <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
             <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
@@ -482,7 +638,118 @@ export default function App() {
         </div>
       )}
 
-      {/* CRIADOR DE TAGS */}
+      {/* ABA 2: ALMOXARIFADO */}
+      {activeTab === "inventory" && (
+        <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Todos os rolos cadastrados com clipe NFC</p>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar cor, marca ou tag..."
+                style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }}
+              />
+              <select
+                value={filterMaterial}
+                onChange={(e) => setFilterMaterial(e.target.value)}
+                style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }}
+              >
+                <option value="TODOS">Todos</option>
+                <option value="PETG">PETG</option>
+                <option value="PLA">PLA</option>
+                <option value="ABS">ABS</option>
+                <option value="TPU">TPU</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {filteredInventory.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 30, color: "#64748b", fontSize: 13 }}>
+                Nenhum carretel encontrado no estoque.
+              </div>
+            ) : (
+              filteredInventory.map((spool) => {
+                const isLow = spool.current_weight < 150;
+                return (
+                  <div
+                    key={spool.id}
+                    style={{
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                      borderRadius: 8,
+                      padding: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: "50%",
+                          backgroundColor: spool.color_hex,
+                          border: "2px solid #475569",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <strong style={{ fontSize: 14, color: "#f8fafc" }}>{spool.material}</strong>
+                          <span style={{ fontSize: 12, color: "#cbd5e1" }}>- {spool.color_name}</span>
+                          {isLow && (
+                            <span style={{ fontSize: 10, background: "#ef4444", color: "#fff", padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>
+                              FIM DE ROLO
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                          Marca: {spool.brand} • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: isLow ? "#ef4444" : "#38bdf8" }}>
+                        {spool.current_weight}g
+                      </div>
+                      <button
+                        onClick={() => {
+                          setNfcUid(spool.nfc_uid);
+                          setActiveTab("ams");
+                        }}
+                        style={{
+                          marginTop: 4,
+                          background: "#0284c7",
+                          color: "#fff",
+                          border: "none",
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        👉 Alocar no AMS
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA 3: CRIADOR DE TAGS */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
@@ -562,7 +829,7 @@ export default function App() {
               </select>
             </div>
 
-            {/* Configuração Avançada de Cor (Paleta + Picker + RGB + HEX) */}
+            {/* Cores */}
             <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <label style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 700 }}>Cor do Filamento</label>
@@ -580,7 +847,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Paleta rápida */}
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
                 {colorPresets.map((c) => (
                   <button
@@ -605,10 +871,9 @@ export default function App() {
                 />
               </div>
 
-              {/* Seletor RGB numérico exato */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 2 }}>R (Vermelho)</label>
+                  <label style={{ display: "block", fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 2 }}>R</label>
                   <input
                     type="number"
                     min="0"
@@ -619,7 +884,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 2 }}>G (Verde)</label>
+                  <label style={{ display: "block", fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 2 }}>G</label>
                   <input
                     type="number"
                     min="0"
@@ -630,7 +895,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#3b82f6", fontWeight: 700, marginBottom: 2 }}>B (Azul)</label>
+                  <label style={{ display: "block", fontSize: 11, color: "#3b82f6", fontWeight: 700, marginBottom: 2 }}>B</label>
                   <input
                     type="number"
                     min="0"
@@ -655,7 +920,7 @@ export default function App() {
                 type="text"
                 value={colorName}
                 onChange={(e) => setColorName(e.target.value)}
-                placeholder="Nome da cor (ex: Azul Cobalto, Cinza Espacial)"
+                placeholder="Nome da cor..."
                 style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                 required
               />

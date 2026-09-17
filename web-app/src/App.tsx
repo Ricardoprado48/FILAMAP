@@ -103,6 +103,12 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMaterial, setFilterMaterial] = useState("TODOS");
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true
+    );
+  });
 
   // Modais
   const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
@@ -145,8 +151,18 @@ export default function App() {
       e.preventDefault();
       setDeferredPrompt(e);
     };
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    };
+
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
   }, []);
 
   async function handleInstallApp() {
@@ -447,21 +463,23 @@ export default function App() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              onClick={handleInstallApp}
-              style={{
-                background: "#059669",
-                color: "#ffffff",
-                border: "none",
-                padding: "6px 12px",
-                borderRadius: 16,
-                fontWeight: 700,
-                fontSize: 11,
-                cursor: "pointer",
-              }}
-            >
-              📥 Instalar App
-            </button>
+            {!isInstalled && deferredPrompt && (
+              <button
+                onClick={handleInstallApp}
+                style={{
+                  background: "#059669",
+                  color: "#ffffff",
+                  border: "none",
+                  padding: "6px 12px",
+                  borderRadius: 16,
+                  fontWeight: 700,
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                📥 Instalar App
+              </button>
+            )}
             <span
               style={{
                 padding: "4px 10px",

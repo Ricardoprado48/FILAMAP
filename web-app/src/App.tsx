@@ -293,7 +293,6 @@ export default function App() {
     await loadData();
   }
 
-  // Abertura de Modais
   function openWeighModal(spool: Spool) {
     setWeighingSpool(spool);
     setModalTare("220");
@@ -349,10 +348,7 @@ export default function App() {
     const confirm = window.confirm(`Tem certeza que deseja apagar o carretel "${spool.color_name}" (${spool.brand})?`);
     if (!confirm) return;
 
-    // Remove referências no ams_slots se estiver montado
     await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
-    
-    // Remove o carretel
     const { error } = await supabase.from("spools").delete().eq("id", spool.id);
     if (error) {
       alert("Erro ao excluir: " + error.message);
@@ -398,6 +394,7 @@ export default function App() {
     await loadData();
   }
 
+  // Filtragem e Agrupamento por Material
   const filteredInventory = inventory.filter((item) => {
     const matchesSearch =
       item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -405,6 +402,24 @@ export default function App() {
       item.nfc_uid.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesMat = filterMaterial === "TODOS" || item.material === filterMaterial;
     return matchesSearch && matchesMat;
+  });
+
+  const groupedByMaterial = filteredInventory.reduce((acc, spool) => {
+    const mat = (spool.material || "OUTROS").toUpperCase();
+    if (!acc[mat]) acc[mat] = [];
+    acc[mat].push(spool);
+    return acc;
+  }, {} as Record<string, Spool[]>);
+
+  // Ordem de exibição dos materiais
+  const materialOrder = ["PLA", "PETG", "TPU", "ABS", "OUTROS"];
+  const sortedMaterialKeys = Object.keys(groupedByMaterial).sort((a, b) => {
+    const idxA = materialOrder.indexOf(a);
+    const idxB = materialOrder.indexOf(b);
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return a.localeCompare(b);
   });
 
   const colorPresets = [
@@ -757,13 +772,13 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: ALMOXARIFADO COM EDITAR E EXCLUIR */}
+      {/* ABA 2: ALMOXARIFADO AGRUPADO POR MATERIAL */}
       {activeTab === "inventory" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div>
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
-              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Controle de peso, valores e edição de cadastro</p>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Separado por tipo de filamento com saldos individuais</p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input
@@ -778,153 +793,200 @@ export default function App() {
                 onChange={(e) => setFilterMaterial(e.target.value)}
                 style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }}
               >
-                <option value="TODOS">Todos</option>
-                <option value="PETG">PETG</option>
+                <option value="TODOS">Todos os Materiais</option>
                 <option value="PLA">PLA</option>
-                <option value="ABS">ABS</option>
+                <option value="PETG">PETG</option>
                 <option value="TPU">TPU</option>
+                <option value="ABS">ABS</option>
               </select>
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filteredInventory.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 30, color: "#64748b", fontSize: 13 }}>
-                Nenhum carretel encontrado no estoque.
-              </div>
-            ) : (
-              filteredInventory.map((spool) => {
-                const isLow = spool.current_weight < 150;
-                const price = spool.price_paid || 85.00;
-                const costPerGram = price / 1000;
-                const currentAssetValue = (spool.current_weight * costPerGram).toFixed(2);
+          {filteredInventory.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 30, color: "#64748b", fontSize: 13 }}>
+              Nenhum carretel encontrado no estoque.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {sortedMaterialKeys.map((mat) => {
+                const spools = groupedByMaterial[mat];
+                const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
+                const totalValue = spools.reduce((acc, s) => {
+                  const cpg = (s.price_paid || 85) / 1000;
+                  return acc + ((s.current_weight || 0) * cpg);
+                }, 0);
+
+                const badgeColor = mat === "PLA" ? "#38bdf8" : mat === "PETG" ? "#f59e0b" : mat === "TPU" ? "#a855f7" : "#10b981";
 
                 return (
-                  <div
-                    key={spool.id}
-                    style={{
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                      borderRadius: 8,
-                      padding: 12,
+                  <div key={mat} style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #334155", overflow: "hidden" }}>
+                    {/* Header da Categoria de Material */}
+                    <div style={{
+                      padding: "10px 14px",
+                      background: "rgba(30, 41, 59, 0.7)",
+                      borderBottom: "1px solid #334155",
                       display: "flex",
-                      alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      alignItems: "center",
                       flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: "50%",
-                          backgroundColor: spool.color_hex,
-                          border: "2px solid #475569",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <strong style={{ fontSize: 14, color: "#f8fafc" }}>{spool.material}</strong>
-                          <span style={{ fontSize: 13, color: "#cbd5e1" }}>- {spool.color_name}</span>
-                          {isLow && (
-                            <span style={{ fontSize: 10, background: "#ef4444", color: "#fff", padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>
-                              FIM DE ROLO
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                          Marca: <span style={{ color: "#94a3b8" }}>{spool.brand}</span> • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
-                        </div>
-                        <div style={{ fontSize: 11, color: "#10b981", marginTop: 2 }}>
-                          Custo: R$ {costPerGram.toFixed(3)}/g (R$ {price.toFixed(2)}/kg) • Restante: <strong>R$ {currentAssetValue}</strong>
-                        </div>
+                      gap: 8,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          background: badgeColor,
+                          color: "#0f172a",
+                          padding: "2px 8px",
+                          borderRadius: 6,
+                          fontWeight: 900,
+                          fontSize: 12,
+                          letterSpacing: "0.04em"
+                        }}>
+                          {mat}
+                        </span>
+                        <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 600 }}>
+                          {spools.length} {spools.length === 1 ? "carretel" : "carretéis"}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: 12 }}>
+                        <span>Total: <strong style={{ color: "#f8fafc" }}>{(totalWeight / 1000).toFixed(2)} kg</strong></span>
+                        <span>Valor: <strong style={{ color: "#34d399" }}>R$ {totalValue.toFixed(2)}</strong></span>
                       </div>
                     </div>
 
-                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
-                      <div style={{ fontSize: 15, fontWeight: 900, color: isLow ? "#ef4444" : "#38bdf8" }}>
-                        {spool.current_weight}g
-                      </div>
-                      
-                      {/* Ações de Edição, Pesagem e Exclusão */}
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        <button
-                          onClick={() => openEditModal(spool)}
-                          title="Editar Carretel"
-                          style={{
-                            background: "#1e293b",
-                            color: "#38bdf8",
-                            border: "1px solid #334155",
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
-                          onClick={() => openWeighModal(spool)}
-                          title="Re-pesar rápido"
-                          style={{
-                            background: "#334155",
-                            color: "#e2e8f0",
-                            border: "1px solid #475569",
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          ⚖️ Pesar
-                        </button>
-                        <button
-                          onClick={() => {
-                            setNfcUid(spool.nfc_uid);
-                            setActiveTab("ams");
-                          }}
-                          title="Carregar no AMS"
-                          style={{
-                            background: "#0284c7",
-                            color: "#fff",
-                            border: "none",
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          👉 AMS
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSpool(spool)}
-                          title="Excluir carretel"
-                          style={{
-                            background: "rgba(239, 68, 68, 0.15)",
-                            color: "#f87171",
-                            border: "1px solid #dc2626",
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          🗑️
-                        </button>
-                      </div>
+                    {/* Lista de Carretéis daquele Material */}
+                    <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {spools.map((spool) => {
+                        const isLow = spool.current_weight < 150;
+                        const price = spool.price_paid || 85.00;
+                        const costPerGram = price / 1000;
+                        const currentAssetValue = (spool.current_weight * costPerGram).toFixed(2);
+
+                        return (
+                          <div
+                            key={spool.id}
+                            style={{
+                              background: "#1e293b",
+                              border: "1px solid #334155",
+                              borderRadius: 8,
+                              padding: 10,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <div
+                                style={{
+                                  width: 32,
+                                  height: 32,
+                                  borderRadius: "50%",
+                                  backgroundColor: spool.color_hex,
+                                  border: "2px solid #64748b",
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
+                                  {isLow && (
+                                    <span style={{ fontSize: 9, background: "#ef4444", color: "#fff", padding: "1px 5px", borderRadius: 8, fontWeight: 700 }}>
+                                      FIM DE ROLO
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
+                                  Marca: <span style={{ color: "#cbd5e1" }}>{spool.brand}</span> • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
+                                </div>
+                                <div style={{ fontSize: 10, color: "#10b981", marginTop: 1 }}>
+                                  R$ {price.toFixed(2)}/kg • Restante: <strong>R$ {currentAssetValue}</strong>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                              <div style={{ fontSize: 14, fontWeight: 900, color: isLow ? "#ef4444" : "#38bdf8" }}>
+                                {spool.current_weight}g
+                              </div>
+
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button
+                                  onClick={() => openEditModal(spool)}
+                                  title="Editar Carretel"
+                                  style={{
+                                    background: "#0f172a",
+                                    color: "#38bdf8",
+                                    border: "1px solid #334155",
+                                    padding: "3px 6px",
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  ✏️
+                                </button>
+                                <button
+                                  onClick={() => openWeighModal(spool)}
+                                  title="Re-pesar rápido"
+                                  style={{
+                                    background: "#334155",
+                                    color: "#e2e8f0",
+                                    border: "1px solid #475569",
+                                    padding: "3px 6px",
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  ⚖️
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setNfcUid(spool.nfc_uid);
+                                    setActiveTab("ams");
+                                  }}
+                                  title="Carregar no AMS"
+                                  style={{
+                                    background: "#0284c7",
+                                    color: "#fff",
+                                    border: "none",
+                                    padding: "3px 8px",
+                                    borderRadius: 4,
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  👉 AMS
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSpool(spool)}
+                                  title="Excluir carretel"
+                                  style={{
+                                    background: "rgba(239, 68, 68, 0.15)",
+                                    color: "#f87171",
+                                    border: "1px solid #dc2626",
+                                    padding: "3px 6px",
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
-              })
-            )}
-          </div>
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -937,7 +999,6 @@ export default function App() {
           </p>
 
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Seletor de Perfil do Bambu Studio */}
             {presets.length > 0 && (
               <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #0284c7" }}>
                 <label style={{ display: "block", fontSize: 11, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>

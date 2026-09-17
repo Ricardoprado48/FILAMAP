@@ -41,6 +41,23 @@ const POPULAR_BRANDS = [
   "Outra..."
 ];
 
+// Utilitários de conversão HEX <-> RGB
+function hexToRgb(hex: string) {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return { r: 17, g: 24, b: 39 };
+  return {
+    r: parseInt(clean.substring(0, 2), 16) || 0,
+    g: parseInt(clean.substring(2, 4), 16) || 0,
+    b: parseInt(clean.substring(4, 6), 16) || 0,
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  const clamp = (val: number) => Math.max(0, Math.min(255, isNaN(val) ? 0 : val));
+  const toHex = (n: number) => clamp(n).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"ams" | "writer">("ams");
   const [printers, setPrinters] = useState<Printer[]>([]);
@@ -48,9 +65,7 @@ export default function App() {
     0: null, 1: null, 2: null, 3: null
   });
 
-  // PWA Prompt
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   // Formulário do Criador de Tags
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
@@ -58,6 +73,8 @@ export default function App() {
   const [material, setMaterial] = useState("PETG");
   const [colorName, setColorName] = useState("Preto");
   const [colorHex, setColorHex] = useState("#111827");
+  const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
+
   const [grossWeight, setGrossWeight] = useState("1220");
   const [tareWeight, setTareWeight] = useState("220");
   const [customTagId, setCustomTagId] = useState("");
@@ -73,28 +90,22 @@ export default function App() {
     setNfcUid,
   } = useNfc();
 
-  // Escuta o evento nativo de instalação
   useEffect(() => {
     const handleBeforeInstall = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      setShowInstallBanner(true);
     };
-
     window.addEventListener("beforeinstallprompt", handleBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
   }, []);
 
   async function handleInstallApp() {
     if (!deferredPrompt) {
-      alert("Para instalar: toque nos 3 pontinhos do Chrome (canto superior direito) e selecione 'Adicionar à tela inicial' ou 'Instalar aplicativo'.");
+      alert("Para instalar: toque nos 3 pontinhos do Chrome e selecione 'Adicionar à tela inicial'.");
       return;
     }
     deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === "accepted") {
-      setShowInstallBanner(false);
-    }
+    await deferredPrompt.userChoice;
     setDeferredPrompt(null);
   }
 
@@ -143,6 +154,20 @@ export default function App() {
     const interval = setInterval(loadData, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  // Sincronizações de Cor
+  function updateFromHex(newHex: string, defaultName?: string) {
+    setColorHex(newHex);
+    setRgb(hexToRgb(newHex));
+    if (defaultName) setColorName(defaultName);
+  }
+
+  function updateFromRgb(part: "r" | "g" | "b", valStr: string) {
+    const val = parseInt(valStr, 10) || 0;
+    const newRgb = { ...rgb, [part]: Math.max(0, Math.min(255, val)) };
+    setRgb(newRgb);
+    setColorHex(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
+  }
 
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
@@ -227,11 +252,12 @@ export default function App() {
     { name: "Laranja", hex: "#F97316" },
     { name: "Azul", hex: "#2563EB" },
     { name: "Vermelho", hex: "#DC2626" },
+    { name: "Amarelo", hex: "#EAB308" },
+    { name: "Verde", hex: "#16A34A" },
   ];
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
-      {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -253,9 +279,6 @@ export default function App() {
                 fontWeight: 700,
                 fontSize: 11,
                 cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
               }}
             >
               📥 Instalar App
@@ -276,7 +299,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Abas */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
@@ -313,7 +335,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS */}
+      {/* MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
@@ -395,7 +417,7 @@ export default function App() {
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
             <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
             <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
-              Aproxime o celular do clipe NFC para apontar qual filamento você está colocando no AMS.
+              Aproxime o celular do clipe NFC para carregar o filamento em um dos slots.
             </p>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -460,15 +482,15 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: CRIADOR E GRAVADOR DE TAGS */}
+      {/* CRIADOR DE TAGS */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-            Cadastre o carretel e encoste o adesivo NFC para gravar o link permanente.
+            Cadastre o carretel com cor exata e grave no chip adesivo do clipe 3D.
           </p>
 
-          <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO ÚNICO DA TAG</label>
@@ -492,7 +514,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Menu de Marcas Ampliado */}
+            {/* Marca */}
             <div style={{ display: "grid", gridTemplateColumns: selectedBrand === "Outra..." ? "1fr 1fr" : "1fr", gap: 10 }}>
               <div>
                 <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca do Filamento</label>
@@ -522,6 +544,7 @@ export default function App() {
               )}
             </div>
 
+            {/* Material */}
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
               <select
@@ -539,20 +562,37 @@ export default function App() {
               </select>
             </div>
 
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>Cor do Filamento</label>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            {/* Configuração Avançada de Cor (Paleta + Picker + RGB + HEX) */}
+            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 700 }}>Cor do Filamento</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "#94a3b8" }}>Visual:</span>
+                  <div
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 6,
+                      backgroundColor: colorHex,
+                      border: "2px solid #ffffff",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Paleta rápida */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
                 {colorPresets.map((c) => (
                   <button
                     type="button"
                     key={c.hex}
-                    onClick={() => { setColorHex(c.hex); setColorName(c.name); }}
+                    onClick={() => updateFromHex(c.hex, c.name)}
                     style={{
-                      width: 28,
-                      height: 28,
+                      width: 26,
+                      height: 26,
                       borderRadius: "50%",
                       backgroundColor: c.hex,
-                      border: colorHex === c.hex ? "2px solid #38bdf8" : "1px solid #475569",
+                      border: colorHex.toUpperCase() === c.hex ? "2px solid #38bdf8" : "1px solid #475569",
                       cursor: "pointer",
                     }}
                   />
@@ -560,20 +600,68 @@ export default function App() {
                 <input
                   type="color"
                   value={colorHex}
-                  onChange={(e) => setColorHex(e.target.value)}
-                  style={{ width: 32, height: 32, border: "none", background: "transparent", cursor: "pointer" }}
+                  onChange={(e) => updateFromHex(e.target.value)}
+                  style={{ width: 30, height: 30, border: "none", background: "transparent", cursor: "pointer" }}
                 />
               </div>
+
+              {/* Seletor RGB numérico exato */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 2 }}>R (Vermelho)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="255"
+                    value={rgb.r}
+                    onChange={(e) => updateFromRgb("r", e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #ef4444", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 2 }}>G (Verde)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="255"
+                    value={rgb.g}
+                    onChange={(e) => updateFromRgb("g", e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #22c55e", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#3b82f6", fontWeight: 700, marginBottom: 2 }}>B (Azul)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="255"
+                    value={rgb.b}
+                    onChange={(e) => updateFromRgb("b", e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #3b82f6", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 2 }}>HEX</label>
+                  <input
+                    type="text"
+                    value={colorHex}
+                    onChange={(e) => updateFromHex(e.target.value)}
+                    style={{ width: "100%", padding: "6px 6px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", boxSizing: "border-box", textAlign: "center", fontWeight: 700, fontSize: 12 }}
+                  />
+                </div>
+              </div>
+
               <input
                 type="text"
                 value={colorName}
                 onChange={(e) => setColorName(e.target.value)}
-                placeholder="Ex: Preto Fosco"
-                style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                placeholder="Nome da cor (ex: Azul Cobalto, Cinza Espacial)"
+                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                 required
               />
             </div>
 
+            {/* Pesagem */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#0f172a", padding: 10, borderRadius: 8 }}>
               <div>
                 <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso Balança (g)</label>

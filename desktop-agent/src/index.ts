@@ -1,5 +1,9 @@
 ﻿import https from "node:https";
 import dns from "node:dns";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+
 dns.setDefaultResultOrder("ipv4first");
 
 import mqtt from "mqtt";
@@ -56,11 +60,97 @@ function supabaseRequest(endpoint: string, method = "GET", data?: any): Promise<
   });
 }
 
+// Escaneia EXCLUSIVAMENTE a pasta user do Bambu Studio (perfis criados por você)
+async function syncCustomUserPresets() {
+  console.log("🔍 Buscando seus filamentos personalizados no Bambu Studio...");
+  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  const userDir = path.join(appData, "BambuStudio", "user");
+
+  if (!fs.existsSync(userDir)) {
+    console.log("ℹ️ Pasta de usuário do Bambu Studio não encontrada.");
+    return;
+  }
+
+  const customPresets: any[] = [];
+
+  try {
+    const userFolders = fs.readdirSync(userDir);
+
+    for (const folder of userFolders) {
+      const filDir = path.join(userDir, folder, "filament");
+      if (!fs.existsSync(filDir)) continue;
+
+      const files = fs.readdirSync(filDir).filter(f => f.endsWith(".json") || f.endsWith(".info"));
+
+      for (const file of files) {
+        try {
+          const filePath = path.join(filDir, file);
+          const raw = fs.readFileSync(filePath, "utf-8");
+          const json = JSON.parse(raw);
+
+          // Pega o nome do perfil salvo
+          const name = json.name || path.basename(file, path.extname(file));
+          
+          // Detecta material
+          const rawMat = (json.filament_type?.[0] || json.material || "").toUpperCase();
+          let material = "PETG";
+          if (rawMat.includes("PLA") || name.toUpperCase().includes("PLA")) material = "PLA";
+          else if (rawMat.includes("PETG") || name.toUpperCase().includes("PETG")) material = "PETG";
+          else if (rawMat.includes("ABS") || name.toUpperCase().includes("ABS")) material = "ABS";
+          else if (rawMat.includes("TPU") || name.toUpperCase().includes("TPU")) material = "TPU";
+
+          // Detecta marca comum brasileira ou o próprio nome
+          let brand = "Personalizado";
+          const lower = name.toLowerCase();
+          if (lower.includes("voolt")) brand = "Voolt3D";
+          else if (lower.includes("3d fila") || lower.includes("3dfila")) brand = "3D Fila";
+          else if (lower.includes("esun")) brand = "Esun";
+          else if (lower.includes("creality")) brand = "Creality";
+          else if (lower.includes("gtmax")) brand = "GTMax3D";
+          else if (lower.includes("printalot")) brand = "PrintaLot";
+          else if (lower.includes("masterprint")) brand = "MasterPrint";
+
+          const density = parseFloat(json.filament_density?.[0]) || (material === "PETG" ? 1.27 : 1.24);
+          const minTemp = json.nozzle_temperature_range_low?.[0] || "";
+          const maxTemp = json.nozzle_temperature_range_high?.[0] || "";
+          const bedTemp = json.hot_plate_temp?.[0] || "";
+
+          customPresets.push({
+            name,
+            material,
+            brand,
+            density,
+            nozzle_temperature_range: minTemp && maxTemp ? `${minTemp}°C - ${maxTemp}°C` : null,
+            bed_temperature: bedTemp ? `${bedTemp}°C` : null,
+            source: "bambu_user_custom",
+          });
+        } catch (e) {}
+      }
+    }
+  } catch (err: any) {
+    console.error("Erro ao ler pasta user:", err.message);
+  }
+
+  console.log(`📦 Filamentos personalizados encontrados: ${customPresets.length}`);
+
+  for (const preset of customPresets) {
+    try {
+      const existing = await supabaseRequest(`/filament_presets?select=id&name=eq.${encodeURIComponent(preset.name)}`);
+      if (!existing || existing.length === 0) {
+        await supabaseRequest("/filament_presets", "POST", preset);
+        console.log(`  ⭐ Importado: ${preset.name} (${preset.brand} - ${preset.material})`);
+      }
+    } catch {}
+  }
+}
+
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap...");
   console.log("🌐 Conectando ao banco Supabase via HTTPS...");
 
   try {
+    await syncCustomUserPresets();
+
     const printers = await supabaseRequest(`/printers?select=*&serial=eq.${PRINTER_SERIAL}`);
     let printer = printers?.[0];
 

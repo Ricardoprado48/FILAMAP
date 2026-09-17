@@ -22,6 +22,16 @@ interface Spool {
   price_paid?: number;
 }
 
+interface FilamentPreset {
+  id: string;
+  name: string;
+  material: string;
+  brand: string;
+  density: number;
+  nozzle_temperature_range?: string;
+  bed_temperature?: string;
+}
+
 interface PrintLog {
   id: string;
   subtask_name: string;
@@ -78,15 +88,24 @@ export default function App() {
 
   const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
   const [inventory, setInventory] = useState<Spool[]>([]);
+  const [presets, setPresets] = useState<FilamentPreset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMaterial, setFilterMaterial] = useState("TODOS");
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Modal de Re-pesagem / Ajuste
-  const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
+  // Modal de Re-pesagem rápida
+  const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
   const [modalGross, setModalGross] = useState("");
   const [modalTare, setModalTare] = useState("220");
-  const [modalPrice, setModalPrice] = useState("85.00");
+
+  // Modal de Edição Completa de Carretel
+  const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
+  const [editBrand, setEditBrand] = useState("");
+  const [editMaterial, setEditMaterial] = useState("PETG");
+  const [editColorName, setEditColorName] = useState("");
+  const [editColorHex, setEditColorHex] = useState("#111827");
+  const [editWeight, setEditWeight] = useState("");
+  const [editPrice, setEditPrice] = useState("");
 
   // Form Criador de Tags
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
@@ -122,7 +141,7 @@ export default function App() {
 
   async function handleInstallApp() {
     if (!deferredPrompt) {
-      alert("Para instalar: toque nos 3 pontinhos do Chrome e selecione 'Adicionar à tela inicial'.");
+      alert("Toque nos 3 pontinhos do navegador e selecione 'Adicionar à tela inicial'.");
       return;
     }
     deferredPrompt.prompt();
@@ -172,6 +191,9 @@ export default function App() {
     const { data: invData } = await supabase.from("spools").select("*").order("created_at", { ascending: false });
     if (invData) setInventory(invData);
 
+    const { data: presetsData } = await supabase.from("filament_presets").select("*").order("name");
+    if (presetsData) setPresets(presetsData);
+
     const { data: logsData } = await supabase
       .from("print_logs")
       .select("*, spool:spools(*)")
@@ -185,6 +207,23 @@ export default function App() {
     const interval = setInterval(loadData, 4000);
     return () => clearInterval(interval);
   }, []);
+
+  function handleSelectPreset(e: React.ChangeEvent<HTMLSelectElement>) {
+    const presetId = e.target.value;
+    if (!presetId) return;
+
+    const chosen = presets.find((p) => p.id === presetId);
+    if (chosen) {
+      setMaterial(chosen.material);
+      if (chosen.brand) setSelectedBrand(chosen.brand);
+      if (chosen.color_hex) {
+        setColorHex(chosen.color_hex);
+        setRgb(hexToRgb(chosen.color_hex));
+      }
+      setColorName(chosen.name);
+      generateNewTagCode(chosen.material);
+    }
+  }
 
   function updateFromHex(newHex: string, defaultName?: string) {
     setColorHex(newHex);
@@ -254,27 +293,72 @@ export default function App() {
     await loadData();
   }
 
+  // Abertura de Modais
   function openWeighModal(spool: Spool) {
-    setEditingSpool(spool);
+    setWeighingSpool(spool);
     setModalTare("220");
     setModalGross((spool.current_weight + 220).toString());
-    setModalPrice((spool.price_paid || 85).toString());
   }
 
   async function handleSaveWeigh(e: React.FormEvent) {
     e.preventDefault();
-    if (!editingSpool) return;
+    if (!weighingSpool) return;
 
     const net = Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0));
-    const price = parseFloat(modalPrice) || 85.00;
 
     await supabase
       .from("spools")
-      .update({ current_weight: net, price_paid: price })
+      .update({ current_weight: net })
+      .eq("id", weighingSpool.id);
+
+    setWeighingSpool(null);
+    await loadData();
+  }
+
+  function openEditModal(spool: Spool) {
+    setEditingSpool(spool);
+    setEditBrand(spool.brand);
+    setEditMaterial(spool.material);
+    setEditColorName(spool.color_name);
+    setEditColorHex(spool.color_hex);
+    setEditWeight(spool.current_weight.toString());
+    setEditPrice((spool.price_paid || 85).toString());
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingSpool) return;
+
+    await supabase
+      .from("spools")
+      .update({
+        brand: editBrand,
+        material: editMaterial,
+        color_name: editColorName,
+        color_hex: editColorHex,
+        current_weight: parseFloat(editWeight) || 0,
+        price_paid: parseFloat(editPrice) || 85.00,
+      })
       .eq("id", editingSpool.id);
 
     setEditingSpool(null);
     await loadData();
+  }
+
+  async function handleDeleteSpool(spool: Spool) {
+    const confirm = window.confirm(`Tem certeza que deseja apagar o carretel "${spool.color_name}" (${spool.brand})?`);
+    if (!confirm) return;
+
+    // Remove referências no ams_slots se estiver montado
+    await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
+    
+    // Remove o carretel
+    const { error } = await supabase.from("spools").delete().eq("id", spool.id);
+    if (error) {
+      alert("Erro ao excluir: " + error.message);
+    } else {
+      await loadData();
+    }
   }
 
   async function handleCreateAndWriteTag(e: React.FormEvent) {
@@ -343,7 +427,7 @@ export default function App() {
             <span style={{ fontSize: 26 }}>🧵</span>
             <div>
               <h1 style={{ margin: 0, fontSize: 22, color: "#38bdf8", fontWeight: 900, letterSpacing: "-0.02em" }}>FILAMAP</h1>
-              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11 }}>Gestão de Carretéis e AMS</p>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11 }}>Bambu Lab A1 & Estoque NFC</p>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -530,7 +614,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Histórico com Custo em R$ */}
+          {/* Histórico Recente */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <h3 style={{ fontSize: 15, margin: 0, color: "#f8fafc" }}>📋 Histórico Recente de Impressões</h3>
@@ -608,7 +692,7 @@ export default function App() {
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
             <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
             <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
-              Aproxime o celular do clipe NFC para carregar o filamento em um dos slots.
+              Aproxime o celular do adesivo NFC para carregar o filamento em um dos slots.
             </p>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -673,13 +757,13 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: ALMOXARIFADO */}
+      {/* ABA 2: ALMOXARIFADO COM EDITAR E EXCLUIR */}
       {activeTab === "inventory" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
             <div>
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
-              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Controle de peso líquido e valor em estoque</p>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Controle de peso, valores e edição de cadastro</p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input
@@ -727,13 +811,14 @@ export default function App() {
                       alignItems: "center",
                       justifyContent: "space-between",
                       gap: 12,
+                      flexWrap: "wrap",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <div
                         style={{
-                          width: 34,
-                          height: 34,
+                          width: 36,
+                          height: 36,
                           borderRadius: "50%",
                           backgroundColor: spool.color_hex,
                           border: "2px solid #475569",
@@ -743,7 +828,7 @@ export default function App() {
                       <div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <strong style={{ fontSize: 14, color: "#f8fafc" }}>{spool.material}</strong>
-                          <span style={{ fontSize: 12, color: "#cbd5e1" }}>- {spool.color_name}</span>
+                          <span style={{ fontSize: 13, color: "#cbd5e1" }}>- {spool.color_name}</span>
                           {isLow && (
                             <span style={{ fontSize: 10, background: "#ef4444", color: "#fff", padding: "1px 6px", borderRadius: 10, fontWeight: 700 }}>
                               FIM DE ROLO
@@ -751,51 +836,87 @@ export default function App() {
                           )}
                         </div>
                         <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
-                          Marca: {spool.brand} • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
+                          Marca: <span style={{ color: "#94a3b8" }}>{spool.brand}</span> • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
                         </div>
-                        <div style={{ fontSize: 10, color: "#10b981", marginTop: 2 }}>
-                          Custo: R$ {costPerGram.toFixed(3)}/g (R$ {price.toFixed(2)}/kg) • Restante: R$ {currentAssetValue}
+                        <div style={{ fontSize: 11, color: "#10b981", marginTop: 2 }}>
+                          Custo: R$ {costPerGram.toFixed(3)}/g (R$ {price.toFixed(2)}/kg) • Restante: <strong>R$ {currentAssetValue}</strong>
                         </div>
                       </div>
                     </div>
 
-                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: isLow ? "#ef4444" : "#38bdf8" }}>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: isLow ? "#ef4444" : "#38bdf8" }}>
                         {spool.current_weight}g
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      
+                      {/* Ações de Edição, Pesagem e Exclusão */}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => openEditModal(spool)}
+                          title="Editar Carretel"
+                          style={{
+                            background: "#1e293b",
+                            color: "#38bdf8",
+                            border: "1px solid #334155",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          ✏️ Editar
+                        </button>
                         <button
                           onClick={() => openWeighModal(spool)}
+                          title="Re-pesar rápido"
                           style={{
                             background: "#334155",
                             color: "#e2e8f0",
                             border: "1px solid #475569",
                             padding: "4px 8px",
                             borderRadius: 4,
-                            fontSize: 10,
+                            fontSize: 11,
                             fontWeight: 700,
                             cursor: "pointer",
                           }}
                         >
-                          ⚖️ Re-pesar
+                          ⚖️ Pesar
                         </button>
                         <button
                           onClick={() => {
                             setNfcUid(spool.nfc_uid);
                             setActiveTab("ams");
                           }}
+                          title="Carregar no AMS"
                           style={{
                             background: "#0284c7",
                             color: "#fff",
                             border: "none",
                             padding: "4px 8px",
                             borderRadius: 4,
-                            fontSize: 10,
+                            fontSize: 11,
                             fontWeight: 700,
                             cursor: "pointer",
                           }}
                         >
                           👉 AMS
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSpool(spool)}
+                          title="Excluir carretel"
+                          style={{
+                            background: "rgba(239, 68, 68, 0.15)",
+                            color: "#f87171",
+                            border: "1px solid #dc2626",
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          🗑️
                         </button>
                       </div>
                     </div>
@@ -812,10 +933,40 @@ export default function App() {
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-            Cadastre o carretel com cor, custo e peso no clipe 3D.
+            Cadastre o carretel com cor, custo e peso no adesivo.
           </p>
 
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Seletor de Perfil do Bambu Studio */}
+            {presets.length > 0 && (
+              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #0284c7" }}>
+                <label style={{ display: "block", fontSize: 11, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
+                  ⚡ IMPORTAR DEFINIÇÃO DO BAMBU STUDIO ({presets.length} perfis)
+                </label>
+                <select
+                  onChange={handleSelectPreset}
+                  defaultValue=""
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    background: "#1e293b",
+                    border: "1px solid #475569",
+                    borderRadius: 6,
+                    color: "#f8fafc",
+                    fontSize: 13,
+                    boxSizing: "border-box"
+                  }}
+                >
+                  <option value="">Selecione um preset para autocompletar...</option>
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.brand} - {p.material})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO ÚNICO DA TAG</label>
@@ -1057,8 +1208,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal de Re-pesagem / Ajuste de Carretel */}
-      {editingSpool && (
+      {/* Modal 1: Re-pesagem rápida */}
+      {weighingSpool && (
         <div style={{
           position: "fixed",
           top: 0,
@@ -1082,10 +1233,10 @@ export default function App() {
             boxSizing: "border-box",
           }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>
-              ⚖️ Re-pesar / Ajustar Carretel
+              ⚖️ Re-pesar Carretel
             </h3>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8" }}>
-              {editingSpool.material} - {editingSpool.color_name} ({editingSpool.brand})
+              {weighingSpool.material} - {weighingSpool.color_name} ({weighingSpool.brand})
             </p>
 
             <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1102,32 +1253,17 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
-                    Tara do Carretel (g)
-                  </label>
-                  <input
-                    type="number"
-                    value={modalTare}
-                    onChange={(e) => setModalTare(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
-                    Preço Pago (R$)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={modalPrice}
-                    onChange={(e) => setModalPrice(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
+                  Tara do Carretel (g)
+                </label>
+                <input
+                  type="number"
+                  value={modalTare}
+                  onChange={(e) => setModalTare(e.target.value)}
+                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  required
+                />
               </div>
 
               <div style={{ background: "#0f172a", padding: 10, borderRadius: 6, textAlign: "center" }}>
@@ -1140,34 +1276,151 @@ export default function App() {
               <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                 <button
                   type="button"
-                  onClick={() => setEditingSpool(null)}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    background: "#334155",
-                    color: "#cbd5e1",
-                    border: "none",
-                    borderRadius: 6,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
+                  onClick={() => setWeighingSpool(null)}
+                  style={{ flex: 1, padding: "10px", background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    background: "#0284c7",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 6,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
+                  style={{ flex: 1, padding: "10px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
                 >
-                  Salvar Ajuste
+                  Salvar Peso
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Edição Completa do Carretel */}
+      {editingSpool && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.75)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+          padding: 16,
+        }}>
+          <div style={{
+            background: "#1e293b",
+            border: "1px solid #38bdf8",
+            borderRadius: 12,
+            padding: 20,
+            maxWidth: 440,
+            width: "100%",
+            boxSizing: "border-box",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h3 style={{ margin: 0, fontSize: 16, color: "#f8fafc" }}>
+                ✏️ Editar Carretel
+              </h3>
+              <span style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>
+                {editingSpool.nfc_uid}
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Marca</label>
+                  <input
+                    type="text"
+                    value={editBrand}
+                    onChange={(e) => setEditBrand(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+                  <select
+                    value={editMaterial}
+                    onChange={(e) => setEditMaterial(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  >
+                    <option value="PETG">PETG</option>
+                    <option value="PLA">PLA</option>
+                    <option value="ABS">ABS</option>
+                    <option value="TPU">TPU</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Nome da Cor / Descrição</label>
+                <input
+                  type="text"
+                  value={editColorName}
+                  onChange={(e) => setEditColorName(e.target.value)}
+                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Cor HEX</label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={editColorHex}
+                      onChange={(e) => setEditColorHex(e.target.value)}
+                      style={{ width: 34, height: 34, border: "none", background: "transparent", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={editColorHex}
+                      onChange={(e) => setEditColorHex(e.target.value)}
+                      style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#38bdf8", fontWeight: 700, boxSizing: "border-box" }}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Saldo Líquido Atual (g)</label>
+                  <input
+                    type="number"
+                    value={editWeight}
+                    onChange={(e) => setEditWeight(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Preço Pago por 1kg (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingSpool(null)}
+                  style={{ flex: 1, padding: "10px", background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{ flex: 1, padding: "10px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Salvar Alterações
                 </button>
               </div>
             </form>

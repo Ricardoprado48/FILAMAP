@@ -1,0 +1,62 @@
+﻿[
+    {
+        "file_name":  "Bambu PLA Basic @BBL A1 - Copiar.json",
+        "user_id":  "838867154",
+        "name":  "Bambu PLA Basic @BBL A1 - Copiar",
+        "inherits":  "Bambu PLA Basic @BBL A1",
+        "filament_type":  "PETG",
+        "filament_density":  "1.27",
+        "nozzle_temperature_range_low":  "230",
+        "nozzle_temperature_range_high":  "250",
+        "hot_plate_temp":  "75",
+        "default_filament_colour":  "#111827"
+    },
+    {
+        "file_name":  "Creality PLA BRANCO Flow Rate Calibrated.json",
+        "user_id":  "838867154",
+        "name":  "Creality PLA BRANCO Flow Rate Calibrated",
+        "inherits":  "Creality PLA BRANCO @Bambu Lab A1 0.4 nozzle",
+        "filament_type":  "PETG",
+        "filament_density":  "1.27",
+        "nozzle_temperature_range_low":  "230",
+        "nozzle_temperature_range_high":  "250",
+        "hot_plate_temp":  "75",
+        "default_filament_colour":  "#111827"
+    },
+    {
+        "file_name":  "PLA BRANCO VOOLT3D PLA VELVET2.json",
+        "user_id":  "838867154",
+        "name":  "PLA BRANCO VOOLT3D PLA VELVET2",
+        "inherits":  "PLA BRANCO VOOLT3D PLA VELVET @Bambu Lab A1 0.4 nozzle",
+        "filament_type":  "PETG",
+        "filament_density":  "1.27",
+        "nozzle_temperature_range_low":  "230",
+        "nozzle_temperature_range_high":  "250",
+        "hot_plate_temp":  "75",
+        "default_filament_colour":  "#111827"
+    },
+    {
+        "file_name":  "PLA PRETO VOOLT3D PLA VELVET .json",
+        "user_id":  "838867154",
+        "name":  "PLA PRETO VOOLT3D PLA VELVET ",
+        "inherits":  "PLA PRETO VOOLT3D PLA VELVET @Bambu Lab A1 0.4 nozzle",
+        "filament_type":  "PETG",
+        "filament_density":  "1.27",
+        "nozzle_temperature_range_low":  "230",
+        "nozzle_temperature_range_high":  "250",
+        "hot_plate_temp":  "75",
+        "default_filament_colour":  "#111827"
+    },
+    {
+        "file_name":  "PLA VERMELHO VOOLT3D CALIBRADO.json",
+        "user_id":  "838867154",
+        "name":  "PLA VERMELHO VOOLT3D CALIBRADO",
+        "inherits":  "PLA VERMELHO PLA VELVET VOOLT3D @Bambu Lab A1 0.4 nozzle",
+        "filament_type":  "PETG",
+        "filament_density":  "1.27",
+        "nozzle_temperature_range_low":  "230",
+        "nozzle_temperature_range_high":  "250",
+        "hot_plate_temp":  "75",
+        "default_filament_colour":  "#111827"
+    }
+]

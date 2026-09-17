@@ -8,6 +8,17 @@ interface Printer {
   model: string;
   ip_address: string;
   is_online: boolean;
+  current_task?: string;
+  print_progress?: number;
+  remaining_time_min?: number;
+  current_layer?: number;
+  total_layers?: number;
+  nozzle_temp?: number;
+  nozzle_target_temp?: number;
+  bed_temp?: number;
+  bed_target_temp?: number;
+  gcode_state?: string;
+  active_slot_index?: number;
 }
 
 interface Spool {
@@ -93,12 +104,11 @@ export default function App() {
   const [filterMaterial, setFilterMaterial] = useState("TODOS");
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Modal de Re-pesagem rápida
+  // Modais
   const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
   const [modalGross, setModalGross] = useState("");
   const [modalTare, setModalTare] = useState("220");
 
-  // Modal de Edição Completa de Carretel
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
   const [editBrand, setEditBrand] = useState("");
   const [editMaterial, setEditMaterial] = useState("PETG");
@@ -204,7 +214,7 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 4000);
+    const interval = setInterval(loadData, 2500);
     return () => clearInterval(interval);
   }, []);
 
@@ -394,7 +404,6 @@ export default function App() {
     await loadData();
   }
 
-  // Filtragem e Agrupamento por Material
   const filteredInventory = inventory.filter((item) => {
     const matchesSearch =
       item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -411,7 +420,6 @@ export default function App() {
     return acc;
   }, {} as Record<string, Spool[]>);
 
-  // Ordem de exibição dos materiais
   const materialOrder = ["PLA", "PETG", "TPU", "ABS", "OUTROS"];
   const sortedMaterialKeys = Object.keys(groupedByMaterial).sort((a, b) => {
     const idxA = materialOrder.indexOf(a);
@@ -422,16 +430,9 @@ export default function App() {
     return a.localeCompare(b);
   });
 
-  const colorPresets = [
-    { name: "Preto", hex: "#111827" },
-    { name: "Branco", hex: "#FFFFFF" },
-    { name: "Cinza", hex: "#64748B" },
-    { name: "Laranja", hex: "#F97316" },
-    { name: "Azul", hex: "#2563EB" },
-    { name: "Vermelho", hex: "#DC2626" },
-    { name: "Amarelo", hex: "#EAB308" },
-    { name: "Verde", hex: "#16A34A" },
-  ];
+  const activePrinter = printers[0];
+  const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
+  const activeSpool = activePrinter ? activeSlots[activePrinter.active_slot_index || 0] : null;
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
@@ -467,12 +468,12 @@ export default function App() {
                 borderRadius: 16,
                 fontSize: 11,
                 fontWeight: 700,
-                background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-                color: printers[0]?.is_online ? "#34d399" : "#f87171",
-                border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
+                background: activePrinter?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                color: activePrinter?.is_online ? "#34d399" : "#f87171",
+                border: `1px solid ${activePrinter?.is_online ? "#059669" : "#dc2626"}`,
               }}
             >
-              {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
+              {activePrinter?.is_online ? "ONLINE" : "OFFLINE"}
             </span>
           </div>
         </div>
@@ -530,45 +531,150 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS */}
+      {/* ABA 1: MONITOR AMS COM JANELA AO VIVO */}
       {activeTab === "ams" && (
         <div>
-          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
+          {/* JANELA DE TELEMETRIA AO VIVO (O QUE ESTÁ SENDO IMPRESSO) */}
+          <div style={{
+            background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b",
+            border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`,
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+            boxShadow: isPrinting ? "0 4px 20px rgba(56, 189, 248, 0.15)" : "none",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{
+                  display: "inline-block",
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  background: isPrinting ? "#22c55e" : "#94a3b8",
+                  boxShadow: isPrinting ? "0 0 10px #22c55e" : "none",
+                }} />
+                <strong style={{ fontSize: 15, color: "#f8fafc" }}>
+                  {isPrinting ? "IMPRESSÃO AO VIVO" : "STATUS DA IMPRESSORA"}
+                </strong>
+              </div>
+              <span style={{
+                background: isPrinting ? "rgba(34, 197, 94, 0.2)" : "#334155",
+                color: isPrinting ? "#4ade80" : "#94a3b8",
+                padding: "2px 8px",
+                borderRadius: 12,
+                fontSize: 11,
+                fontWeight: 700,
+              }}>
+                {activePrinter?.gcode_state || "OCIOSA"}
+              </span>
+            </div>
+
+            {/* Nome da Tarefa */}
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#ffffff", marginBottom: 12, wordBreak: "break-all" }}>
+              {activePrinter?.current_task ? activePrinter.current_task : "Nenhum arquivo em impressão"}
+            </div>
+
+            {/* Barra de Progresso */}
             <div style={{ marginBottom: 12 }}>
-              <strong style={{ fontSize: 16, color: "#f8fafc" }}>
-                {printers[0]?.model ? `Bambu Lab ${printers[0].model}` : "Bambu Lab A1"}
-              </strong>
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                SN: {printers[0]?.serial || "--"} • IP: {printers[0]?.ip_address || "--"}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#cbd5e1" }}>
+                <span>Progresso: <strong style={{ color: "#38bdf8" }}>{activePrinter?.print_progress || 0}%</strong></span>
+                <span>Tempo Restante: <strong style={{ color: "#f8fafc" }}>{activePrinter?.remaining_time_min || 0} min</strong></span>
+              </div>
+              <div style={{ width: "100%", height: 10, background: "#0f172a", borderRadius: 5, overflow: "hidden", border: "1px solid #334155" }}>
+                <div style={{
+                  width: `${activePrinter?.print_progress || 0}%`,
+                  height: "100%",
+                  background: "linear-gradient(90deg, #0284c7, #38bdf8)",
+                  transition: "width 0.4s ease-in-out",
+                }} />
               </div>
             </div>
 
+            {/* Grid de Detalhes Técnicos */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, background: "#0f172a", padding: 10, borderRadius: 8 }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Camada</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#f8fafc" }}>
+                  {activePrinter?.current_layer || 0} / {activePrinter?.total_layers || 0}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Bico (Nozzle)</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>
+                  {activePrinter?.nozzle_temp || 0}°C <span style={{ fontSize: 11, color: "#64748b" }}>({activePrinter?.nozzle_target_temp || 0}°C)</span>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Mesa (Bed)</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b" }}>
+                  {activePrinter?.bed_temp || 0}°C <span style={{ fontSize: 11, color: "#64748b" }}>({activePrinter?.bed_target_temp || 0}°C)</span>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Slot em Uso</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", display: "flex", alignItems: "center", gap: 4 }}>
+                  {activeSpool ? (
+                    <>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: activeSpool.color_hex, display: "inline-block" }} />
+                      Slot {(activePrinter?.active_slot_index || 0) + 1}
+                    </>
+                  ) : (
+                    `Slot ${(activePrinter?.active_slot_index || 0) + 1}`
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Bandejas do AMS Lite */}
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 10, fontWeight: 700 }}>
-              Bandejas do AMS Lite
+              Bandejas do AMS Lite (Bambu Lab A1)
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {[0, 1, 2, 3].map((slotIdx) => {
                 const spool = activeSlots[slotIdx];
                 const isTarget = nfcUid !== null;
+                const isCurrentlyExtruding = activePrinter?.active_slot_index === slotIdx && isPrinting;
 
                 return (
                   <div
                     key={slotIdx}
                     onClick={() => isTarget && handleAssignSlot(slotIdx)}
                     style={{
-                      background: isTarget ? "#172554" : "#0f172a",
+                      background: isTarget ? "#172554" : isCurrentlyExtruding ? "rgba(56, 189, 248, 0.08)" : "#0f172a",
                       borderRadius: 8,
                       padding: 12,
-                      border: isTarget ? "2px dashed #38bdf8" : "1px solid #334155",
+                      border: isCurrentlyExtruding ? "2px solid #38bdf8" : isTarget ? "2px dashed #38bdf8" : "1px solid #334155",
                       cursor: isTarget ? "pointer" : "default",
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "space-between",
                       minHeight: 130,
                       boxSizing: "border-box",
+                      position: "relative",
                     }}
                   >
+                    {isCurrentlyExtruding && (
+                      <span style={{
+                        position: "absolute",
+                        top: -8,
+                        right: 8,
+                        background: "#38bdf8",
+                        color: "#0f172a",
+                        fontSize: 9,
+                        fontWeight: 900,
+                        padding: "1px 6px",
+                        borderRadius: 8,
+                      }}>
+                        EXTRUSANDO
+                      </span>
+                    )}
+
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>SLOT {slotIdx + 1}</span>
@@ -820,7 +926,6 @@ export default function App() {
 
                 return (
                   <div key={mat} style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #334155", overflow: "hidden" }}>
-                    {/* Header da Categoria de Material */}
                     <div style={{
                       padding: "10px 14px",
                       background: "rgba(30, 41, 59, 0.7)",
@@ -854,7 +959,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Lista de Carretéis daquele Material */}
                     <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
                       {spools.map((spool) => {
                         const isLow = spool.current_weight < 150;
@@ -1269,42 +1373,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal 1: Re-pesagem rápida */}
+      {/* Modais */}
       {weighingSpool && (
         <div style={{
           position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
+          top: 0, left: 0, right: 0, bottom: 0,
           background: "rgba(0, 0, 0, 0.75)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000,
-          padding: 16,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 1000, padding: 16,
         }}>
           <div style={{
-            background: "#1e293b",
-            border: "1px solid #38bdf8",
-            borderRadius: 12,
-            padding: 20,
-            maxWidth: 420,
-            width: "100%",
-            boxSizing: "border-box",
+            background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12,
+            padding: 20, maxWidth: 420, width: "100%", boxSizing: "border-box",
           }}>
-            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>
-              ⚖️ Re-pesar Carretel
-            </h3>
+            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>⚖️ Re-pesar Carretel</h3>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8" }}>
               {weighingSpool.material} - {weighingSpool.color_name} ({weighingSpool.brand})
             </p>
 
             <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
-                  Peso Atual na Balança (g)
-                </label>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Peso na Balança (g)</label>
                 <input
                   type="number"
                   value={modalGross}
@@ -1315,9 +1404,7 @@ export default function App() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
-                  Tara do Carretel (g)
-                </label>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Tara do Carretel (g)</label>
                 <input
                   type="number"
                   value={modalTare}
@@ -1354,37 +1441,21 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal 2: Edição Completa do Carretel */}
       {editingSpool && (
         <div style={{
           position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
+          top: 0, left: 0, right: 0, bottom: 0,
           background: "rgba(0, 0, 0, 0.75)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 1000,
-          padding: 16,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 1000, padding: 16,
         }}>
           <div style={{
-            background: "#1e293b",
-            border: "1px solid #38bdf8",
-            borderRadius: 12,
-            padding: 20,
-            maxWidth: 440,
-            width: "100%",
-            boxSizing: "border-box",
+            background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12,
+            padding: 20, maxWidth: 440, width: "100%", boxSizing: "border-box",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <h3 style={{ margin: 0, fontSize: 16, color: "#f8fafc" }}>
-                ✏️ Editar Carretel
-              </h3>
-              <span style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>
-                {editingSpool.nfc_uid}
-              </span>
+              <h3 style={{ margin: 0, fontSize: 16, color: "#f8fafc" }}>✏️ Editar Carretel</h3>
+              <span style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>{editingSpool.nfc_uid}</span>
             </div>
 
             <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1415,7 +1486,7 @@ export default function App() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Nome da Cor / Descrição</label>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Nome da Cor</label>
                 <input
                   type="text"
                   value={editColorName}
@@ -1446,7 +1517,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Saldo Líquido Atual (g)</label>
+                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Saldo Líquido (g)</label>
                   <input
                     type="number"
                     value={editWeight}

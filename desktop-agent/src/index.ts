@@ -1,9 +1,5 @@
 ﻿import https from "node:https";
 import dns from "node:dns";
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
-
 dns.setDefaultResultOrder("ipv4first");
 
 import mqtt from "mqtt";
@@ -60,102 +56,14 @@ function supabaseRequest(endpoint: string, method = "GET", data?: any): Promise<
   });
 }
 
-// Escaneia EXCLUSIVAMENTE a pasta user do Bambu Studio (perfis criados por você)
-async function syncCustomUserPresets() {
-  console.log("🔍 Buscando seus filamentos personalizados no Bambu Studio...");
-  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-  const userDir = path.join(appData, "BambuStudio", "user");
-
-  if (!fs.existsSync(userDir)) {
-    console.log("ℹ️ Pasta de usuário do Bambu Studio não encontrada.");
-    return;
-  }
-
-  const customPresets: any[] = [];
-
-  try {
-    const userFolders = fs.readdirSync(userDir);
-
-    for (const folder of userFolders) {
-      const filDir = path.join(userDir, folder, "filament");
-      if (!fs.existsSync(filDir)) continue;
-
-      const files = fs.readdirSync(filDir).filter(f => f.endsWith(".json") || f.endsWith(".info"));
-
-      for (const file of files) {
-        try {
-          const filePath = path.join(filDir, file);
-          const raw = fs.readFileSync(filePath, "utf-8");
-          const json = JSON.parse(raw);
-
-          // Pega o nome do perfil salvo
-          const name = json.name || path.basename(file, path.extname(file));
-          
-          // Detecta material
-          const rawMat = (json.filament_type?.[0] || json.material || "").toUpperCase();
-          let material = "PETG";
-          if (rawMat.includes("PLA") || name.toUpperCase().includes("PLA")) material = "PLA";
-          else if (rawMat.includes("PETG") || name.toUpperCase().includes("PETG")) material = "PETG";
-          else if (rawMat.includes("ABS") || name.toUpperCase().includes("ABS")) material = "ABS";
-          else if (rawMat.includes("TPU") || name.toUpperCase().includes("TPU")) material = "TPU";
-
-          // Detecta marca comum brasileira ou o próprio nome
-          let brand = "Personalizado";
-          const lower = name.toLowerCase();
-          if (lower.includes("voolt")) brand = "Voolt3D";
-          else if (lower.includes("3d fila") || lower.includes("3dfila")) brand = "3D Fila";
-          else if (lower.includes("esun")) brand = "Esun";
-          else if (lower.includes("creality")) brand = "Creality";
-          else if (lower.includes("gtmax")) brand = "GTMax3D";
-          else if (lower.includes("printalot")) brand = "PrintaLot";
-          else if (lower.includes("masterprint")) brand = "MasterPrint";
-
-          const density = parseFloat(json.filament_density?.[0]) || (material === "PETG" ? 1.27 : 1.24);
-          const minTemp = json.nozzle_temperature_range_low?.[0] || "";
-          const maxTemp = json.nozzle_temperature_range_high?.[0] || "";
-          const bedTemp = json.hot_plate_temp?.[0] || "";
-
-          customPresets.push({
-            name,
-            material,
-            brand,
-            density,
-            nozzle_temperature_range: minTemp && maxTemp ? `${minTemp}°C - ${maxTemp}°C` : null,
-            bed_temperature: bedTemp ? `${bedTemp}°C` : null,
-            source: "bambu_user_custom",
-          });
-        } catch (e) {}
-      }
-    }
-  } catch (err: any) {
-    console.error("Erro ao ler pasta user:", err.message);
-  }
-
-  console.log(`📦 Filamentos personalizados encontrados: ${customPresets.length}`);
-
-  for (const preset of customPresets) {
-    try {
-      const existing = await supabaseRequest(`/filament_presets?select=id&name=eq.${encodeURIComponent(preset.name)}`);
-      if (!existing || existing.length === 0) {
-        await supabaseRequest("/filament_presets", "POST", preset);
-        console.log(`  ⭐ Importado: ${preset.name} (${preset.brand} - ${preset.material})`);
-      }
-    } catch {}
-  }
-}
-
 async function startAgent() {
-  console.log("🧵 Iniciando Desktop Agent Filamap...");
-  console.log("🌐 Conectando ao banco Supabase via HTTPS...");
+  console.log("🧵 Iniciando Desktop Agent Filamap com Telemetria Ativa...");
 
   try {
-    await syncCustomUserPresets();
-
     const printers = await supabaseRequest(`/printers?select=*&serial=eq.${PRINTER_SERIAL}`);
     let printer = printers?.[0];
 
     if (!printer) {
-      console.log("ℹ️ Registrando Bambu Lab A1 no Supabase...");
       const inserted = await supabaseRequest("/printers", "POST", {
         serial: PRINTER_SERIAL,
         model: "A1",
@@ -163,23 +71,14 @@ async function startAgent() {
         is_online: true,
       });
       printer = inserted?.[0];
-      console.log("✅ Impressora cadastrada com sucesso!");
     } else {
-      console.log("✅ Impressora localizada no Supabase!");
       await supabaseRequest(`/printers?id=eq.${printer.id}`, "PATCH", {
         ip_address: PRINTER_IP,
         is_online: true,
       });
     }
 
-    for (let i = 0; i < 4; i++) {
-      await supabaseRequest("/ams_slots?on_conflict=printer_id,slot_index", "POST", {
-        printer_id: printer.id,
-        slot_index: i,
-      }).catch(() => {});
-    }
-
-    console.log(`🖨️ Conectando à Bambu Lab A1 em ${PRINTER_IP}:8883 (Serial: ${PRINTER_SERIAL})...`);
+    console.log(`🖨️ Conectando à Bambu Lab A1 em ${PRINTER_IP}:8883...`);
 
     const client = mqtt.connect(`mqtts://${PRINTER_IP}:8883`, {
       username: "bblp",
@@ -190,14 +89,15 @@ async function startAgent() {
 
     let lastGcodeState = "IDLE";
     let activeSlotIndex = 0;
+    let lastSyncTime = 0;
 
     client.on("connect", () => {
-      console.log("✅ Conectado com sucesso ao broker MQTT da Bambu Lab A1!");
+      console.log("✅ Conectado ao broker MQTT da Bambu Lab A1!");
       updateStatus(printer.id, true);
 
       client.subscribe(`device/${PRINTER_SERIAL}/report`, (err) => {
         if (err) console.error("❌ Erro ao se inscrever no tópico:", err);
-        else console.log(`📡 Escutando telemetria em: device/${PRINTER_SERIAL}/report`);
+        else console.log(`📡 Escutando telemetria em tempo real...`);
       });
     });
 
@@ -221,6 +121,30 @@ async function startAgent() {
         }
 
         const currentState = print.gcode_state || lastGcodeState;
+        const now = Date.now();
+
+        // Envia telemetria para o banco no máximo a cada 2.5 segundos (ou na mudança de estado)
+        if (now - lastSyncTime > 2500 || currentState !== lastGcodeState) {
+          lastSyncTime = now;
+
+          const telemetryData: any = {
+            is_online: true,
+            gcode_state: currentState,
+            active_slot_index: activeSlotIndex,
+          };
+
+          if (print.subtask_name !== undefined) telemetryData.current_task = print.subtask_name;
+          if (print.mc_percent !== undefined) telemetryData.print_progress = print.mc_percent;
+          if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = print.mc_remaining_time;
+          if (print.layer_num !== undefined) telemetryData.current_layer = print.layer_num;
+          if (print.total_layer_num !== undefined) telemetryData.total_layers = print.total_layer_num;
+          if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(print.nozzle_temper);
+          if (print.nozzle_target_temper !== undefined) telemetryData.nozzle_target_temp = Math.round(print.nozzle_target_temper);
+          if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(print.bed_temper);
+          if (print.bed_target_temper !== undefined) telemetryData.bed_target_temp = Math.round(print.bed_target_temper);
+
+          await supabaseRequest(`/printers?id=eq.${printer.id}`, "PATCH", telemetryData).catch(() => {});
+        }
 
         if (currentState === "FINISH" && lastGcodeState !== "FINISH") {
           console.log("🎉 Impressão FINALIZADA detectada!");
@@ -276,10 +200,7 @@ async function updateStatus(printerId: string, isOnline: boolean) {
     await supabaseRequest(`/printers?id=eq.${printerId}`, "PATCH", {
       is_online: isOnline,
     });
-    console.log(`🔄 Status sincronizado: ${isOnline ? "ONLINE 🟢" : "OFFLINE 🔴"}`);
-  } catch (err: any) {
-    console.error("Erro ao atualizar status:", err.message);
-  }
+  } catch (err: any) {}
 }
 
 startAgent();

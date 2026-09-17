@@ -1,0 +1,21 @@
+{
+    "name": "desktop-agent",
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "discovery": "tsx src/discovery.ts",
+        "mqtt": "tsx src/mqtt-client.ts"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.116.0",
+        "dotenv": "^17.4.2",
+        "mqtt": "^5.16.0",
+        "node-ssdp": "^4.0.1"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@types/node-ssdp": "^4.0.4",
+        "tsx": "^4.7.0",
+        "typescript": "^5.0.0"
+    }
+}

@@ -74,6 +74,14 @@ const POPULAR_BRANDS = [
   "Outra..."
 ];
 
+const TARE_PRESETS = [
+  { label: "Voolt Vazado (218g)", val: "218" },
+  { label: "Voolt Fechado/Antigo (250g)", val: "250" },
+  { label: "Voolt Transparente (195g)", val: "195" },
+  { label: "MasterPrint (230g)", val: "230" },
+  { label: "Padrão (220g)", val: "220" }
+];
+
 function hexToRgb(hex: string) {
   const clean = hex.replace("#", "");
   if (clean.length !== 6) return { r: 17, g: 24, b: 39 };
@@ -113,7 +121,7 @@ export default function App() {
   // Modais
   const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
   const [modalGross, setModalGross] = useState("");
-  const [modalTare, setModalTare] = useState("220");
+  const [modalTare, setModalTare] = useState("218");
 
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
   const [editBrand, setEditBrand] = useState("");
@@ -130,8 +138,8 @@ export default function App() {
   const [colorName, setColorName] = useState("Preto");
   const [colorHex, setColorHex] = useState("#111827");
   const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
-  const [grossWeight, setGrossWeight] = useState("1220");
-  const [tareWeight, setTareWeight] = useState("220");
+  const [grossWeight, setGrossWeight] = useState("1218");
+  const [tareWeight, setTareWeight] = useState("218");
   const [spoolPrice, setSpoolPrice] = useState("85.00");
   const [customTagId, setCustomTagId] = useState("");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
@@ -321,8 +329,9 @@ export default function App() {
 
   function openWeighModal(spool: Spool) {
     setWeighingSpool(spool);
-    setModalTare("220");
-    setModalGross((spool.current_weight + 220).toString());
+    const defaultTare = spool.brand === "Voolt3D" ? "218" : "220";
+    setModalTare(defaultTare);
+    setModalGross((spool.current_weight + parseFloat(defaultTare)).toString());
   }
 
   async function handleSaveWeigh(e: React.FormEvent) {
@@ -446,6 +455,17 @@ export default function App() {
     return a.localeCompare(b);
   });
 
+  const colorPresets = [
+    { name: "Preto", hex: "#111827" },
+    { name: "Branco", hex: "#FFFFFF" },
+    { name: "Cinza", hex: "#64748B" },
+    { name: "Laranja", hex: "#F97316" },
+    { name: "Azul", hex: "#2563EB" },
+    { name: "Vermelho", hex: "#DC2626" },
+    { name: "Amarelo", hex: "#EAB308" },
+    { name: "Verde", hex: "#16A34A" },
+  ];
+
   const activePrinter = printers[0];
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const activeSpool = activePrinter ? activeSlots[activePrinter.active_slot_index || 0] : null;
@@ -549,10 +569,10 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS COM JANELA AO VIVO */}
+      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          {/* JANELA DE TELEMETRIA AO VIVO (O QUE ESTÁ SENDO IMPRESSO) */}
+          {/* PAINEL AO VIVO */}
           <div style={{
             background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b",
             border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`,
@@ -587,12 +607,10 @@ export default function App() {
               </span>
             </div>
 
-            {/* Nome da Tarefa */}
             <div style={{ fontSize: 16, fontWeight: 800, color: "#ffffff", marginBottom: 12, wordBreak: "break-all" }}>
               {activePrinter?.current_task ? activePrinter.current_task : "Nenhum arquivo em impressão"}
             </div>
 
-            {/* Barra de Progresso */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#cbd5e1" }}>
                 <span>Progresso: <strong style={{ color: "#38bdf8" }}>{activePrinter?.print_progress || 0}%</strong></span>
@@ -608,7 +626,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Grid de Detalhes Técnicos */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, background: "#0f172a", padding: 10, borderRadius: 8 }}>
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Camada</div>
@@ -896,13 +913,13 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: ALMOXARIFADO AGRUPADO POR MATERIAL */}
+      {/* ABA 2: ALMOXARIFADO */}
       {activeTab === "inventory" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div>
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
-              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Separado por tipo de filamento com saldos individuais</p>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Separado por material e ordenado de A a Z</p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input
@@ -934,8 +951,9 @@ export default function App() {
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {sortedMaterialKeys.map((mat) => {
                 const spools = (groupedByMaterial[mat] || []).slice().sort((a, b) =>
-  a.color_name.localeCompare(b.color_name, "pt-BR", { sensitivity: "base" })
-);
+                  a.color_name.localeCompare(b.color_name, "pt-BR", { sensitivity: "base" })
+                );
+
                 const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
                 const totalValue = spools.reduce((acc, s) => {
                   const cpg = (s.price_paid || 85) / 1000;
@@ -1333,29 +1351,56 @@ export default function App() {
               />
             </div>
 
-            {/* Pesagem */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#0f172a", padding: 10, borderRadius: 8 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso Balança (g)</label>
-                <input
-                  type="number"
-                  value={grossWeight}
-                  onChange={(e) => setGrossWeight(e.target.value)}
-                  style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
+            {/* Pesagem com Seletores Rápidos de Tara */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso na Balança (g)</label>
+                  <input
+                    type="number"
+                    value={grossWeight}
+                    onChange={(e) => setGrossWeight(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara do Carretel (g)</label>
+                  <input
+                    type="number"
+                    value={tareWeight}
+                    onChange={(e) => setTareWeight(e.target.value)}
+                    style={{ width: "100%", padding: "8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
               </div>
+
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara Vazio (g)</label>
-                <input
-                  type="number"
-                  value={tareWeight}
-                  onChange={(e) => setTareWeight(e.target.value)}
-                  style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
+                <span style={{ fontSize: 10, color: "#cbd5e1", display: "block", marginBottom: 4 }}>Taras Rápidas:</span>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {TARE_PRESETS.map((t) => (
+                    <button
+                      type="button"
+                      key={t.val}
+                      onClick={() => setTareWeight(t.val)}
+                      style={{
+                        background: tareWeight === t.val ? "#0284c7" : "#1e293b",
+                        color: tareWeight === t.val ? "#fff" : "#94a3b8",
+                        border: "1px solid #334155",
+                        borderRadius: 4,
+                        padding: "3px 6px",
+                        fontSize: 10,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div style={{ gridColumn: "span 2", textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>
+
+              <div style={{ textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700, borderTop: "1px solid #1e293b", paddingTop: 6 }}>
                 Saldo Líquido: {Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0))}g
               </div>
             </div>
@@ -1393,7 +1438,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modais */}
+      {/* Modal 1: Re-pesagem rápida com atalhos de tara */}
       {weighingSpool && (
         <div style={{
           position: "fixed",
@@ -1404,7 +1449,7 @@ export default function App() {
         }}>
           <div style={{
             background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12,
-            padding: 20, maxWidth: 420, width: "100%", boxSizing: "border-box",
+            padding: 20, maxWidth: 430, width: "100%", boxSizing: "border-box",
           }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>⚖️ Re-pesar Carretel</h3>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8" }}>
@@ -1424,7 +1469,30 @@ export default function App() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Tara do Carretel (g)</label>
+                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
+                  Tara do Carretel (g) - Escolha rápida:
+                </label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                  {TARE_PRESETS.map((t) => (
+                    <button
+                      type="button"
+                      key={t.val}
+                      onClick={() => setModalTare(t.val)}
+                      style={{
+                        background: modalTare === t.val ? "#0284c7" : "#0f172a",
+                        color: modalTare === t.val ? "#fff" : "#94a3b8",
+                        border: "1px solid #334155",
+                        borderRadius: 4,
+                        padding: "4px 8px",
+                        fontSize: 10,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
                 <input
                   type="number"
                   value={modalTare}
@@ -1461,6 +1529,7 @@ export default function App() {
         </div>
       )}
 
+      {/* Modal 2: Edição Completa */}
       {editingSpool && (
         <div style={{
           position: "fixed",

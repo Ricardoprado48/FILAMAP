@@ -55,6 +55,7 @@ interface PrintLog {
   completed_at: string;
   status: string;
   needs_weighing?: boolean;
+  spool_id?: string;
   spool?: Spool;
 }
 

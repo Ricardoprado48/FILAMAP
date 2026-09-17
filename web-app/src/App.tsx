@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 
@@ -20,6 +20,19 @@ interface Spool {
   current_weight: number;
 }
 
+const POPULAR_BRANDS = [
+  "Voolt3D",
+  "3D Fila",
+  "Bambu Lab",
+  "Creality",
+  "PrintaLot",
+  "Suntop",
+  "Esun",
+  "PolyMaker",
+  "TopRecicla",
+  "Outra..."
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<"ams" | "writer">("ams");
   const [printers, setPrinters] = useState<Printer[]>([]);
@@ -27,12 +40,9 @@ export default function App() {
     0: null, 1: null, 2: null, 3: null
   });
 
-  // Estado PWA (Instalação no celular)
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
-
-  // Formulário do Criador / Gravador de Tags
-  const [brand, setBrand] = useState("Voolt3D");
+  // Formulário do Criador de Tags
+  const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
+  const [customBrandName, setCustomBrandName] = useState("");
   const [material, setMaterial] = useState("PETG");
   const [colorName, setColorName] = useState("Preto");
   const [colorHex, setColorHex] = useState("#111827");
@@ -44,36 +54,12 @@ export default function App() {
   const {
     isReading,
     isWriting,
-    writeSuccess,
     nfcUid,
     error: nfcError,
     startScanning,
     writeTagUrl,
     setNfcUid,
-    setWriteSuccess,
   } = useNfc();
-
-  // Escuta o evento nativo de instalação do Android / Chrome
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setIsInstallable(true);
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-  }, []);
-
-  async function handleInstallClick() {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === "accepted") {
-      setIsInstallable(false);
-    }
-    setDeferredPrompt(null);
-  }
 
   useEffect(() => {
     generateNewTagCode("PETG");
@@ -135,7 +121,7 @@ export default function App() {
         .from("spools")
         .insert({
           nfc_uid: nfcUid,
-          brand: "Genérico",
+          brand: "Voolt3D",
           material: "PETG",
           color_name: "Preto",
           color_hex: "#111827",
@@ -165,8 +151,8 @@ export default function App() {
   async function handleCreateAndWriteTag(e: React.FormEvent) {
     e.preventDefault();
     setFeedbackMsg(null);
-    setWriteSuccess(false);
 
+    const finalBrand = selectedBrand === "Outra..." ? (customBrandName.trim() || "Outra") : selectedBrand;
     const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
     const finalTagId = customTagId.trim() || `FILA-${Date.now()}`;
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
@@ -176,7 +162,7 @@ export default function App() {
     const { error: dbError } = await supabase.from("spools").upsert(
       {
         nfc_uid: finalTagId,
-        brand,
+        brand: finalBrand,
         material,
         color_name: colorName,
         color_hex: colorHex,
@@ -191,8 +177,9 @@ export default function App() {
     } else if (wrote) {
       setFeedbackMsg(`✅ Tag gravada com sucesso! Link: ${fullTargetUrl}`);
       generateNewTagCode(material);
+      if (selectedBrand === "Outra...") setCustomBrandName("");
     } else {
-      setFeedbackMsg(`ℹ️ Carretel salvo no estoque. (Gravação NFC não executada ou em desktop). Link: ${fullTargetUrl}`);
+      setFeedbackMsg(`ℹ️ Carretel salvo no banco de dados. Link: ${fullTargetUrl}`);
     }
   }
 
@@ -207,48 +194,30 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
-      {/* Barra Superior */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 24, color: "#38bdf8", fontWeight: 900, letterSpacing: "-0.02em" }}>FILAMAP</h1>
-            <p style={{ margin: "2px 0 0", color: "#94a3b8", fontSize: 12 }}>Gestão de Carretéis e AMS</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 26 }}>🧵</span>
+            <div>
+              <h1 style={{ margin: 0, fontSize: 22, color: "#38bdf8", fontWeight: 900, letterSpacing: "-0.02em" }}>FILAMAP</h1>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11 }}>Gestão de Carretéis e AMS</p>
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {isInstallable && (
-              <button
-                onClick={handleInstallClick}
-                style={{
-                  background: "#10b981",
-                  color: "#ffffff",
-                  border: "none",
-                  padding: "6px 12px",
-                  borderRadius: 16,
-                  fontWeight: 700,
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                📥 Baixar App
-              </button>
-            )}
-            <span
-              style={{
-                padding: "4px 10px",
-                borderRadius: 16,
-                fontSize: 11,
-                fontWeight: 700,
-                background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-                color: printers[0]?.is_online ? "#34d399" : "#f87171",
-                border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
-              }}
-            >
-              {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
-            </span>
-          </div>
+          <span
+            style={{
+              padding: "4px 10px",
+              borderRadius: 16,
+              fontSize: 11,
+              fontWeight: 700,
+              background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+              color: printers[0]?.is_online ? "#34d399" : "#f87171",
+              border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
+            }}
+          >
+            {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
+          </span>
         </div>
 
-        {/* Abas */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
@@ -285,7 +254,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
@@ -364,7 +332,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Leitor Rápido */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
             <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
             <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
@@ -433,7 +400,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: CRIADOR E GRAVADOR DE TAGS */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
@@ -465,34 +431,51 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {/* Menu Suspenso de Marcas Brasileiras */}
+            <div style={{ display: "grid", gridTemplateColumns: selectedBrand === "Outra..." ? "1fr 1fr" : "1fr", gap: 10 }}>
               <div>
-                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca</label>
-                <input
-                  type="text"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca do Filamento</label>
                 <select
-                  value={material}
-                  onChange={(e) => {
-                    setMaterial(e.target.value);
-                    generateNewTagCode(e.target.value);
-                  }}
-                  style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
                 >
-                  <option value="PETG">PETG</option>
-                  <option value="PLA">PLA</option>
-                  <option value="ABS">ABS</option>
-                  <option value="TPU">TPU</option>
+                  {POPULAR_BRANDS.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
                 </select>
               </div>
+
+              {selectedBrand === "Outra..." && (
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Digite o Nome da Marca</label>
+                  <input
+                    type="text"
+                    value={customBrandName}
+                    onChange={(e) => setCustomBrandName(e.target.value)}
+                    placeholder="Ex: Taulman, Polymaker..."
+                    style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+              <select
+                value={material}
+                onChange={(e) => {
+                  setMaterial(e.target.value);
+                  generateNewTagCode(e.target.value);
+                }}
+                style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+              >
+                <option value="PETG">PETG</option>
+                <option value="PLA">PLA</option>
+                <option value="ABS">ABS</option>
+                <option value="TPU">TPU</option>
+              </select>
             </div>
 
             <div>

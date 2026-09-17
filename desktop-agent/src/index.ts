@@ -87,6 +87,16 @@ async function startAgent() {
       reconnectPeriod: 5000,
     });
 
+    function requestStatusPush() {
+      const payload = JSON.stringify({
+        pushing: {
+          sequence_id: "0",
+          command: "pushall"
+        }
+      });
+      client.publish(`device/${PRINTER_SERIAL}/request`, payload);
+    }
+
     let lastGcodeState = "IDLE";
     let activeSlotIndex = 0;
     let lastSyncTime = 0;
@@ -96,9 +106,18 @@ async function startAgent() {
       updateStatus(printer.id, true);
 
       client.subscribe(`device/${PRINTER_SERIAL}/report`, (err) => {
-        if (err) console.error("❌ Erro ao se inscrever no tópico:", err);
-        else console.log(`📡 Escutando telemetria em tempo real...`);
+        if (err) {
+          console.error("❌ Erro ao se inscrever no tópico:", err);
+        } else {
+          console.log(`📡 Escutando telemetria em tempo real...`);
+          requestStatusPush();
+        }
       });
+
+      // Solicita atualização forçada periodicamente
+      setInterval(() => {
+        if (client.connected) requestStatusPush();
+      }, 10000);
     });
 
     client.on("error", (err) => {
@@ -110,10 +129,10 @@ async function startAgent() {
       updateStatus(printer.id, false);
     });
 
-    client.on("message", async (topic, payload) => {
+    client.on("message", async (_topic, payload) => {
       try {
-        const data = JSON.parse(payload.toString());
-        const print = data.print;
+        const raw = JSON.parse(payload.toString());
+        const print = raw.print;
         if (!print) return;
 
         if (print.ams?.ams?.[0]?.tray_tar !== undefined) {
@@ -123,8 +142,8 @@ async function startAgent() {
         const currentState = print.gcode_state || lastGcodeState;
         const now = Date.now();
 
-        // Envia telemetria para o banco no máximo a cada 2.5 segundos (ou na mudança de estado)
-        if (now - lastSyncTime > 2500 || currentState !== lastGcodeState) {
+        // Salva dados se houver alteração ou a cada 2.5s
+        if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
           lastSyncTime = now;
 
           const telemetryData: any = {
@@ -134,16 +153,18 @@ async function startAgent() {
           };
 
           if (print.subtask_name !== undefined) telemetryData.current_task = print.subtask_name;
-          if (print.mc_percent !== undefined) telemetryData.print_progress = print.mc_percent;
-          if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = print.mc_remaining_time;
-          if (print.layer_num !== undefined) telemetryData.current_layer = print.layer_num;
-          if (print.total_layer_num !== undefined) telemetryData.total_layers = print.total_layer_num;
-          if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(print.nozzle_temper);
-          if (print.nozzle_target_temper !== undefined) telemetryData.nozzle_target_temp = Math.round(print.nozzle_target_temper);
-          if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(print.bed_temper);
-          if (print.bed_target_temper !== undefined) telemetryData.bed_target_temp = Math.round(print.bed_target_temper);
+          if (print.mc_percent !== undefined) telemetryData.print_progress = Number(print.mc_percent) || 0;
+          if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = Number(print.mc_remaining_time) || 0;
+          if (print.layer_num !== undefined) telemetryData.current_layer = Number(print.layer_num) || 0;
+          if (print.total_layer_num !== undefined) telemetryData.total_layers = Number(print.total_layer_num) || 0;
+          
+          if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
+          if (print.nozzle_target_temper !== undefined) telemetryData.nozzle_target_temp = Math.round(Number(print.nozzle_target_temper));
+          if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
+          if (print.bed_target_temper !== undefined) telemetryData.bed_target_temp = Math.round(Number(print.bed_target_temper));
 
-          await supabaseRequest(`/printers?id=eq.${printer.id}`, "PATCH", telemetryData).catch(() => {});
+          await supabaseRequest(`/printers?id=eq.${printer.id}`, "PATCH", telemetryData);
+          console.log(`📊 Telemetria enviada: Estado=${currentState} | Bico=${telemetryData.nozzle_temp || 0}°C | Progresso=${telemetryData.print_progress || 0}%`);
         }
 
         if (currentState === "FINISH" && lastGcodeState !== "FINISH") {

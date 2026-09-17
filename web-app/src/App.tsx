@@ -25,10 +25,18 @@ const POPULAR_BRANDS = [
   "3D Fila",
   "Bambu Lab",
   "Creality",
-  "PrintaLot",
-  "Suntop",
+  "Anycubic",
+  "Elegoo",
+  "Easy Print",
   "Esun",
+  "Fusion",
+  "GTMax3D",
+  "MasterPrint",
+  "Multifila",
   "PolyMaker",
+  "PrintaLot",
+  "Sulun",
+  "Suntop",
   "TopRecicla",
   "Outra..."
 ];
@@ -39,6 +47,10 @@ export default function App() {
   const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
     0: null, 1: null, 2: null, 3: null
   });
+
+  // PWA Prompt
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   // Formulário do Criador de Tags
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
@@ -60,6 +72,31 @@ export default function App() {
     writeTagUrl,
     setNfcUid,
   } = useNfc();
+
+  // Escuta o evento nativo de instalação
+  useEffect(() => {
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
+    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+  }, []);
+
+  async function handleInstallApp() {
+    if (!deferredPrompt) {
+      alert("Para instalar: toque nos 3 pontinhos do Chrome (canto superior direito) e selecione 'Adicionar à tela inicial' ou 'Instalar aplicativo'.");
+      return;
+    }
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      setShowInstallBanner(false);
+    }
+    setDeferredPrompt(null);
+  }
 
   useEffect(() => {
     generateNewTagCode("PETG");
@@ -194,6 +231,7 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
+      {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -203,21 +241,42 @@ export default function App() {
               <p style={{ margin: 0, color: "#94a3b8", fontSize: 11 }}>Gestão de Carretéis e AMS</p>
             </div>
           </div>
-          <span
-            style={{
-              padding: "4px 10px",
-              borderRadius: 16,
-              fontSize: 11,
-              fontWeight: 700,
-              background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-              color: printers[0]?.is_online ? "#34d399" : "#f87171",
-              border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
-            }}
-          >
-            {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
-          </span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={handleInstallApp}
+              style={{
+                background: "#059669",
+                color: "#ffffff",
+                border: "none",
+                padding: "6px 12px",
+                borderRadius: 16,
+                fontWeight: 700,
+                fontSize: 11,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              📥 Instalar App
+            </button>
+            <span
+              style={{
+                padding: "4px 10px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 700,
+                background: printers[0]?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                color: printers[0]?.is_online ? "#34d399" : "#f87171",
+                border: `1px solid ${printers[0]?.is_online ? "#059669" : "#dc2626"}`,
+              }}
+            >
+              {printers[0]?.is_online ? "ONLINE" : "OFFLINE"}
+            </span>
+          </div>
         </div>
 
+        {/* Abas */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => setActiveTab("ams")}
@@ -254,6 +313,7 @@ export default function App() {
         </div>
       </header>
 
+      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
@@ -400,6 +460,7 @@ export default function App() {
         </div>
       )}
 
+      {/* ABA 2: CRIADOR E GRAVADOR DE TAGS */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
@@ -431,7 +492,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Menu Suspenso de Marcas Brasileiras */}
+            {/* Menu de Marcas Ampliado */}
             <div style={{ display: "grid", gridTemplateColumns: selectedBrand === "Outra..." ? "1fr 1fr" : "1fr", gap: 10 }}>
               <div>
                 <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca do Filamento</label>
@@ -453,7 +514,7 @@ export default function App() {
                     type="text"
                     value={customBrandName}
                     onChange={(e) => setCustomBrandName(e.target.value)}
-                    placeholder="Ex: Taulman, Polymaker..."
+                    placeholder="Nome da marca..."
                     style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
                     required
                   />

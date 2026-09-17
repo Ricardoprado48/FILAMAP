@@ -23,12 +23,18 @@ interface Spool {
 export default function App() {
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
-    0: null,
-    1: null,
-    2: null,
-    3: null,
+    0: null, 1: null, 2: null, 3: null
   });
-  const [loading, setLoading] = useState(true);
+  
+  // Modal de cadastro
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [targetSlot, setTargetSlot] = useState<number | null>(null);
+  const [formBrand, setFormBrand] = useState("Voolt3D");
+  const [formMaterial, setFormMaterial] = useState("PETG");
+  const [formColorName, setFormColorName] = useState("Preto");
+  const [formColorHex, setFormColorHex] = useState("#111827");
+  const [formTotalWeight, setFormTotalWeight] = useState("1200");
+  const [formTareWeight, setFormTareWeight] = useState("220");
 
   const { isReading, nfcUid, error: nfcError, startScanning, setNfcUid } = useNfc();
 
@@ -51,16 +57,14 @@ export default function App() {
         setActiveSlots(slotsMap);
       }
     }
-    setLoading(false);
   }
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(loadData, 4000);
     return () => clearInterval(interval);
   }, []);
 
-  // Feedback háptico no celular ao detectar tag
   useEffect(() => {
     if (nfcUid && "vibrate" in navigator) {
       try {
@@ -69,61 +73,82 @@ export default function App() {
     }
   }, [nfcUid]);
 
-  async function handleAssignToSlot(slotIndex: number) {
-    if (!nfcUid || printers.length === 0) return;
-    const printerId = printers[0].id;
+  // Ao clicar em um slot com a tag identificada
+  async function handleSlotClick(slotIndex: number) {
+    if (!nfcUid) return;
 
-    let { data: spool } = await supabase
+    // Checa se o carretel já existe no banco
+    const { data: existingSpool } = await supabase
       .from("spools")
       .select("*")
       .eq("nfc_uid", nfcUid)
       .single();
 
-    if (!spool) {
-      const demoPalettes = [
-        { name: "Branco Neve", hex: "#FFFFFF", mat: "PETG" },
-        { name: "Preto Matte", hex: "#161616", mat: "PLA" },
-        { name: "Laranja", hex: "#FF6B00", mat: "PETG" },
-        { name: "Azul Cobalto", hex: "#0088FF", mat: "PLA" },
-      ];
-      const selected = demoPalettes[slotIndex % demoPalettes.length];
-
-      const { data: newSpool } = await supabase
-        .from("spools")
-        .insert({
-          nfc_uid: nfcUid,
-          brand: "Filamap",
-          material: selected.mat,
-          color_name: selected.name,
-          color_hex: selected.hex,
-          initial_weight: 1000,
-          current_weight: 920,
-        })
-        .select()
-        .single();
-
-      spool = newSpool;
-    }
-
-    if (spool) {
-      await supabase.from("ams_slots").upsert(
-        {
-          printer_id: printerId,
-          slot_index: slotIndex,
-          spool_id: spool.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "printer_id,slot_index" }
-      );
-
-      setNfcUid(null);
-      await loadData();
+    if (existingSpool) {
+      // Já cadastrado: vincula direto ao slot
+      await assignSpoolToSlot(existingSpool.id, slotIndex);
+    } else {
+      // Novo carretel: abre o modal para configurar dados reais
+      setTargetSlot(slotIndex);
+      setIsModalOpen(true);
     }
   }
 
+  async function assignSpoolToSlot(spoolId: string, slotIndex: number) {
+    if (printers.length === 0) return;
+    await supabase.from("ams_slots").upsert(
+      {
+        printer_id: printers[0].id,
+        slot_index: slotIndex,
+        spool_id: spoolId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "printer_id,slot_index" }
+    );
+    setNfcUid(null);
+    setIsModalOpen(false);
+    await loadData();
+  }
+
+  async function handleSaveNewSpool(e: React.FormEvent) {
+    e.preventDefault();
+    if (!nfcUid || targetSlot === null) return;
+
+    const total = parseFloat(formTotalWeight) || 1000;
+    const tare = parseFloat(formTareWeight) || 0;
+    const netWeight = Math.max(0, total - tare);
+
+    const { data: newSpool, error } = await supabase
+      .from("spools")
+      .insert({
+        nfc_uid: nfcUid,
+        brand: formBrand,
+        material: formMaterial,
+        color_name: formColorName,
+        color_hex: formColorHex,
+        initial_weight: netWeight,
+        current_weight: netWeight,
+      })
+      .select()
+      .single();
+
+    if (!error && newSpool) {
+      await assignSpoolToSlot(newSpool.id, targetSlot);
+    }
+  }
+
+  const colorPresets = [
+    { name: "Preto", hex: "#111827" },
+    { name: "Branco", hex: "#F9FAFB" },
+    { name: "Cinza", hex: "#6B7280" },
+    { name: "Laranja", hex: "#F97316" },
+    { name: "Azul", hex: "#2563EB" },
+    { name: "Vermelho", hex: "#DC2626" },
+  ];
+
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "20px 16px", minHeight: "100vh", boxSizing: "border-box" }}>
-      {/* Cabeçalho */}
+      {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 16, marginBottom: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
@@ -148,7 +173,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Card da Máquina */}
+      {/* Card da Impressora */}
       <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, marginBottom: 20, border: "1px solid #334155" }}>
         <div style={{ marginBottom: 14 }}>
           <strong style={{ fontSize: 17, color: "#f8fafc" }}>
@@ -163,7 +188,6 @@ export default function App() {
           Slots do AMS Lite
         </div>
 
-        {/* Grade responsiva: 2 colunas no celular, 4 no desktop */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
           {[0, 1, 2, 3].map((slotIdx) => {
             const spool = activeSlots[slotIdx];
@@ -172,7 +196,7 @@ export default function App() {
             return (
               <div
                 key={slotIdx}
-                onClick={() => isTarget && handleAssignToSlot(slotIdx)}
+                onClick={() => isTarget && handleSlotClick(slotIdx)}
                 style={{
                   background: isTarget ? "#172554" : "#0f172a",
                   borderRadius: 8,
@@ -182,7 +206,7 @@ export default function App() {
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: "space-between",
-                  minHeight: 120,
+                  minHeight: 125,
                   boxSizing: "border-box",
                 }}
               >
@@ -205,6 +229,7 @@ export default function App() {
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 14, color: "#f1f5f9" }}>{spool.material}</div>
                       <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.color_name}</div>
+                      <div style={{ fontSize: 10, color: "#64748b" }}>{spool.brand}</div>
                     </div>
                   ) : (
                     <div style={{ color: isTarget ? "#38bdf8" : "#475569", fontSize: 12, fontStyle: "italic", marginTop: 4 }}>
@@ -227,13 +252,12 @@ export default function App() {
 
       {/* Ações de Leitura NFC */}
       <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-        <h3 style={{ fontSize: 16, margin: "0 0 6px", color: "#f8fafc" }}>Vincular Carretel (NFC)</h3>
+        <h3 style={{ fontSize: 16, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Carretel (NFC)</h3>
         <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-          Aproxime o celular do clipe do carretel ou use o botão de simulação no desktop.
+          Aproxime o celular do clipe ou use a simulação no desktop.
         </p>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {/* Botão para Celular */}
           <button
             onClick={startScanning}
             disabled={isReading}
@@ -249,10 +273,9 @@ export default function App() {
               cursor: isReading ? "not-allowed" : "pointer",
             }}
           >
-            {isReading ? "📡 Aproxime do clipe..." : "📱 Ler NFC (Celular)"}
+            {isReading ? "📡 Aproxime da Tag..." : "📱 Ler NFC (Celular)"}
           </button>
 
-          {/* Botão para Desktop */}
           <button
             onClick={() => setNfcUid(`NFC_${Math.floor(Math.random() * 89999 + 10000)}`)}
             style={{
@@ -267,7 +290,7 @@ export default function App() {
               cursor: "pointer",
             }}
           >
-            💻 Simular (Desktop)
+            💻 Simular Tag (Desktop)
           </button>
         </div>
 
@@ -276,7 +299,7 @@ export default function App() {
             <div>
               <span style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Tag Detectada</span>
               <div style={{ fontSize: 15, fontWeight: 800, color: "#ffffff" }}>{nfcUid}</div>
-              <div style={{ fontSize: 11, color: "#bfdbfe", marginTop: 2 }}>Toque em um dos slots do AMS acima para fixar.</div>
+              <div style={{ fontSize: 11, color: "#bfdbfe", marginTop: 2 }}>Toque no slot do AMS para encaixar.</div>
             </div>
             <button
               onClick={() => setNfcUid(null)}
@@ -293,6 +316,123 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Modal de Cadastro de Novo Carretel */}
+      {isModalOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 999 }}>
+          <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 24, maxWidth: 440, width: "100%" }}>
+            <h3 style={{ margin: "0 0 4px", fontSize: 18, color: "#f8fafc" }}>Cadastrar Novo Carretel</h3>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: "#94a3b8" }}>Tag: <strong style={{ color: "#38bdf8" }}>{nfcUid}</strong> | Vinculando ao Slot {(targetSlot ?? 0) + 1}</p>
+
+            <form onSubmit={handleSaveNewSpool} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca</label>
+                <input
+                  type="text"
+                  value={formBrand}
+                  onChange={(e) => setFormBrand(e.target.value)}
+                  style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  required
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+                  <select
+                    value={formMaterial}
+                    onChange={(e) => setFormMaterial(e.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  >
+                    <option value="PETG">PETG</option>
+                    <option value="PLA">PLA</option>
+                    <option value="ABS">ABS</option>
+                    <option value="TPU">TPU</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Nome da Cor</label>
+                  <input
+                    type="text"
+                    value={formColorName}
+                    onChange={(e) => setFormColorName(e.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 6 }}>Tom da Cor</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {colorPresets.map((c) => (
+                    <button
+                      type="button"
+                      key={c.hex}
+                      onClick={() => { setFormColorHex(c.hex); setFormColorName(c.name); }}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: "50%",
+                        backgroundColor: c.hex,
+                        border: formColorHex === c.hex ? "2px solid #38bdf8" : "1px solid #475569",
+                        cursor: "pointer",
+                      }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={formColorHex}
+                    onChange={(e) => setFormColorHex(e.target.value)}
+                    style={{ width: 32, height: 32, border: "none", background: "transparent", cursor: "pointer" }}
+                  />
+                </div>
+              </div>
+
+              {/* Cálculo Tara vs Bruto */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, background: "#0f172a", padding: 12, borderRadius: 8 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso na Balança (g)</label>
+                  <input
+                    type="number"
+                    value={formTotalWeight}
+                    onChange={(e) => setFormTotalWeight(e.target.value)}
+                    style={{ width: "100%", padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara Carretel Vazio (g)</label>
+                  <input
+                    type="number"
+                    value={formTareWeight}
+                    onChange={(e) => setFormTareWeight(e.target.value)}
+                    style={{ width: "100%", padding: "6px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div style={{ gridColumn: "span 2", textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>
+                  Filamento Líquido Estimado: {Math.max(0, (parseFloat(formTotalWeight) || 0) - (parseFloat(formTareWeight) || 0))}g
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  style={{ flex: 1, padding: "10px", background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{ flex: 1, padding: "10px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}
+                >
+                  Salvar Carretel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

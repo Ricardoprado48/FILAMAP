@@ -183,14 +183,15 @@ export default function App() {
     setDeferredPrompt(null);
   }
 
-  useEffect(() => {
-    generateNewTagCode("PETG");
-  }, []);
-
-  function generateNewTagCode(mat: string) {
-    const randomCode = Math.floor(1000 + Math.random() * 9000);
-    setCustomTagId(`FILA-${mat}-${randomCode}`);
+  function generateAutoTagId(mat: string, col: string) {
+    const cleanCol = col.trim().toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-");
+    const rnd = Math.floor(1000 + Math.random() * 9000);
+    return `FILA-${mat.toUpperCase()}-${cleanCol || "COR"}-${rnd}`;
   }
+
+  useEffect(() => {
+    setCustomTagId(generateAutoTagId("PETG", "PRETO"));
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -242,6 +243,24 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  function handleSelectExistingSpool(e: React.ChangeEvent<HTMLSelectElement>) {
+    const spoolId = e.target.value;
+    if (!spoolId) return;
+
+    const chosen = inventory.find((s) => s.id === spoolId);
+    if (chosen) {
+      setCustomTagId(chosen.nfc_uid);
+      setMaterial(chosen.material);
+      setSelectedBrand(chosen.brand);
+      setColorName(chosen.color_name);
+      updateFromHex(chosen.color_hex);
+      setSpoolPrice((chosen.price_paid || 85).toString());
+      setTareWeight("218");
+      setGrossWeight((chosen.current_weight + 218).toString());
+      setFeedbackMsg(`📦 Dados carregados do estoque para: ${chosen.color_name} (${chosen.brand})`);
+    }
+  }
+
   function handleSelectPreset(e: React.ChangeEvent<HTMLSelectElement>) {
     const presetId = e.target.value;
     if (!presetId) return;
@@ -250,12 +269,9 @@ export default function App() {
     if (chosen) {
       setMaterial(chosen.material);
       if (chosen.brand) setSelectedBrand(chosen.brand);
-      if (chosen.color_hex) {
-        setColorHex(chosen.color_hex);
-        setRgb(hexToRgb(chosen.color_hex));
-      }
+      if (chosen.color_hex) updateFromHex(chosen.color_hex);
       setColorName(chosen.name);
-      generateNewTagCode(chosen.material);
+      setCustomTagId(generateAutoTagId(chosen.material, chosen.name));
     }
   }
 
@@ -392,13 +408,19 @@ export default function App() {
     }
   }
 
+  function copyTagUrl(tagId: string) {
+    const url = `https://filamap.pages.dev/?tag=${encodeURIComponent(tagId)}`;
+    navigator.clipboard.writeText(url);
+    alert(`📋 Link copiado para a área de transferência!\n\n${url}\n\nCole no campo URI do app NFC Tools para gravar.`);
+  }
+
   async function handleCreateAndWriteTag(e: React.FormEvent) {
     e.preventDefault();
     setFeedbackMsg(null);
 
     const finalBrand = selectedBrand === "Outra..." ? (customBrandName.trim() || "Outra") : selectedBrand;
     const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
-    const finalTagId = customTagId.trim() || `FILA-${Date.now()}`;
+    const finalTagId = customTagId.trim() || generateAutoTagId(material, colorName);
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
 
     const wrote = await writeTagUrl(fullTargetUrl);
@@ -421,10 +443,9 @@ export default function App() {
       setFeedbackMsg("Erro no banco: " + dbError.message);
     } else if (wrote) {
       setFeedbackMsg(`✅ Tag gravada com sucesso! Link: ${fullTargetUrl}`);
-      generateNewTagCode(material);
-      if (selectedBrand === "Outra...") setCustomBrandName("");
+      setCustomTagId(generateAutoTagId(material, colorName));
     } else {
-      setFeedbackMsg(`ℹ️ Carretel salvo no banco de dados. Link: ${fullTargetUrl}`);
+      setFeedbackMsg(`ℹ️ Carretel salvo no banco! Você pode copiar o link da tag abaixo para usar no NFC Tools.`);
     }
     await loadData();
   }
@@ -564,7 +585,7 @@ export default function App() {
               color: activeTab === "writer" ? "#ffffff" : "#94a3b8",
             }}
           >
-            🏷️ Criar Tag
+            🏷️ Gravar / Gerar Tag
           </button>
         </div>
       </header>
@@ -572,7 +593,7 @@ export default function App() {
       {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          {/* PAINEL AO VIVO */}
+          {/* Painel ao Vivo */}
           <div style={{
             background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b",
             border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`,
@@ -913,7 +934,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 2: ALMOXARIFADO */}
+      {/* ABA 2: ALMOXARIFADO COM BOTAO DE COPIAR LINK NFC */}
       {activeTab === "inventory" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
@@ -1053,7 +1074,23 @@ export default function App() {
                                 {spool.current_weight}g
                               </div>
 
-                              <div style={{ display: "flex", gap: 6 }}>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                <button
+                                  onClick={() => copyTagUrl(spool.nfc_uid)}
+                                  title="Copiar Link NFC completo para usar no NFC Tools"
+                                  style={{
+                                    background: "#0369a1",
+                                    color: "#fff",
+                                    border: "none",
+                                    padding: "3px 7px",
+                                    borderRadius: 4,
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  📋 Copiar Link NFC
+                                </button>
                                 <button
                                   onClick={() => openEditModal(spool)}
                                   title="Editar Carretel"
@@ -1132,19 +1169,50 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 3: CRIADOR DE TAGS */}
+      {/* ABA 3: CRIADOR / VINCULADOR DE TAGS */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar Nova Tag NFC</h2>
+          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar / Gerar Tag NFC</h2>
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-            Cadastre o carretel com cor, custo e peso no adesivo.
+            Vincule um carretel já existente do Almoxarifado ou crie uma tag nova padronizada.
           </p>
 
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {presets.length > 0 && (
-              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #0284c7" }}>
+            {/* Opção 1: Vincular carretel já existente no estoque */}
+            {inventory.length > 0 && (
+              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #38bdf8" }}>
                 <label style={{ display: "block", fontSize: 11, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
-                  ⚡ IMPORTAR DEFINIÇÃO DO BAMBU STUDIO ({presets.length} perfis)
+                  📦 VINCULAR CARRETEL JÁ EXISTENTE DO ALMOXARIFADO ({inventory.length} carretéis)
+                </label>
+                <select
+                  onChange={handleSelectExistingSpool}
+                  defaultValue=""
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    background: "#1e293b",
+                    border: "1px solid #475569",
+                    borderRadius: 6,
+                    color: "#f8fafc",
+                    fontSize: 13,
+                    boxSizing: "border-box"
+                  }}
+                >
+                  <option value="">Selecione um carretel do seu estoque...</option>
+                  {inventory.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.color_name} ({s.brand} - {s.material}) • Saldo: {s.current_weight}g
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Opção 2: Importar do Bambu Studio */}
+            {presets.length > 0 && (
+              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 4 }}>
+                  ⚡ OU IMPORTAR PERFIL DO BAMBU STUDIO ({presets.length} perfis)
                 </label>
                 <select
                   onChange={handleSelectPreset}
@@ -1170,15 +1238,16 @@ export default function App() {
               </div>
             )}
 
+            {/* Código e Link da Tag */}
             <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO ÚNICO DA TAG</label>
+                <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO PADRÃO DA TAG</label>
                 <button
                   type="button"
-                  onClick={() => generateNewTagCode(material)}
+                  onClick={() => setCustomTagId(generateAutoTagId(material, colorName))}
                   style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11 }}
                 >
-                  🔄 Gerar outro
+                  🔄 Gerar Novo ID
                 </button>
               </div>
               <input
@@ -1188,8 +1257,26 @@ export default function App() {
                 style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700, fontSize: 14, boxSizing: "border-box" }}
                 required
               />
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, wordBreak: "break-all" }}>
-                Link: https://filamap.pages.dev/?tag={customTagId}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 6 }}>
+                <div style={{ fontSize: 11, color: "#64748b", wordBreak: "break-all" }}>
+                  Link: https://filamap.pages.dev/?tag={customTagId}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyTagUrl(customTagId)}
+                  style={{
+                    background: "#0369a1",
+                    color: "#fff",
+                    border: "none",
+                    padding: "4px 10px",
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  📋 Copiar Link p/ NFC Tools
+                </button>
               </div>
             </div>
 
@@ -1231,7 +1318,7 @@ export default function App() {
                   value={material}
                   onChange={(e) => {
                     setMaterial(e.target.value);
-                    generateNewTagCode(e.target.value);
+                    setCustomTagId(generateAutoTagId(e.target.value, colorName));
                   }}
                   style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
                 >
@@ -1344,7 +1431,10 @@ export default function App() {
               <input
                 type="text"
                 value={colorName}
-                onChange={(e) => setColorName(e.target.value)}
+                onChange={(e) => {
+                  setColorName(e.target.value);
+                  setCustomTagId(generateAutoTagId(material, e.target.value));
+                }}
                 placeholder="Nome da cor..."
                 style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
                 required
@@ -1438,7 +1528,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal 1: Re-pesagem rápida com atalhos de tara */}
+      {/* Modal 1: Re-pesagem rápida */}
       {weighingSpool && (
         <div style={{
           position: "fixed",

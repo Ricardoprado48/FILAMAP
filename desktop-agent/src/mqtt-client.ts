@@ -1,4 +1,5 @@
 ﻿import * as mqtt from "mqtt";
+import { registerOrUpdatePrinter, processJobFinish } from "./sync-service.js";
 
 const PRINTER_IP = "192.168.15.15";
 const ACCESS_CODE = "11325200";
@@ -17,10 +18,15 @@ const client = mqtt.connect(`mqtts://${PRINTER_IP}:8883`, {
 });
 
 let lastState = "";
+let currentSubtask = "";
 let lastPercent = -1;
 
-client.on("connect", () => {
+client.on("connect", async () => {
   console.log("✅ [Filamap Agent] Conectado ao broker local da Bambu!");
+
+  // Registra ou atualiza o status online da impressora no Supabase
+  await registerOrUpdatePrinter(SERIAL, PRINTER_IP, "A1");
+  console.log("☁️  [Supabase] Impressora sincronizada na nuvem.");
 
   const reportTopic = `device/${SERIAL}/report`;
   const requestTopic = `device/${SERIAL}/request`;
@@ -31,40 +37,48 @@ client.on("connect", () => {
       return;
     }
 
-    // Solicita o estado atual inicial
     client.publish(requestTopic, JSON.stringify({
       pushing: { sequence_id: "0", command: "pushall" }
     }));
   });
 });
 
-client.on("message", (_topic, message) => {
+client.on("message", async (_topic, message) => {
   try {
     const payload = JSON.parse(message.toString());
     if (!payload.print) return;
 
     const p = payload.print;
 
-    // Detecta mudança de status (RUNNING -> FINISH / FAILED / PAUSE)
+    if (p.subtask_name) {
+      currentSubtask = p.subtask_name;
+    }
+
+    // Detecta mudança de estado
     if (p.gcode_state && p.gcode_state !== lastState) {
-      console.log(`\n🔔 [MUDANÇA DE ESTADO] De "${lastState || "INICIAL"}" para -> "${p.gcode_state}"`);
-      
+      console.log(`\n🔔 [MUDANÇA DE ESTADO] ${lastState || "INICIAL"} -> ${p.gcode_state}`);
+
       if (p.gcode_state === "FINISH") {
-        console.log("🎉 IMPRESSÃO FINALIZADA COM SUCESSO!");
-        console.log("📦 Preparando payload para abater gramas no banco de dados...");
-      } else if (p.gcode_state === "FAILED") {
-        console.log("⚠️ A impressão falhou ou foi cancelada pelo usuário.");
+        console.log("🎉 [Filamap] Impressão finalizada com sucesso!");
+
+        // Slot ativo (fallback para o slot 0 / Bandeja 1 se não vier explícito)
+        const activeSlot = p.ams?.tray_now != null ? parseInt(p.ams.tray_now, 10) : 0;
+        
+        // Peso padrão estimado ou extraído do job (ex: 50g para teste se não vier no delta)
+        const estimatedGrams = 50.0;
+
+        console.log(`📦 Enviando baixa para o Supabase (Slot ${activeSlot + 1})...`);
+        await processJobFinish(SERIAL, currentSubtask || "Job Desconhecido", estimatedGrams, activeSlot);
       }
-      
+
       lastState = p.gcode_state;
     }
 
-    // Exibe progresso a cada 5% para manter o terminal limpo
+    // Progresso a cada 5%
     if (p.mc_percent != null && p.mc_percent !== lastPercent && p.mc_percent % 5 === 0) {
       lastPercent = p.mc_percent;
-      console.log(`⏳ Progresso: ${p.mc_percent}% | Tempo restante estimado: ${p.mc_remaining_time || 0} min`);
+      console.log(`⏳ Progresso: ${p.mc_percent}% | Tempo restante: ${p.mc_remaining_time || 0} min`);
     }
-
   } catch {
     // Ignora pacotes de controle
   }

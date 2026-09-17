@@ -1,4 +1,3 @@
-﻿// Build Version: 1789677016868
 ﻿import React, { useEffect, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
@@ -57,24 +56,9 @@ interface PrintLog {
 }
 
 const POPULAR_BRANDS = [
-  "Voolt3D",
-  "3D Fila",
-  "Bambu Lab",
-  "Creality",
-  "Anycubic",
-  "Elegoo",
-  "Easy Print",
-  "Esun",
-  "Fusion",
-  "GTMax3D",
-  "MasterPrint",
-  "Multifila",
-  "PolyMaker",
-  "PrintaLot",
-  "Sulun",
-  "Suntop",
-  "TopRecicla",
-  "Outra..."
+  "Voolt3D", "3D Fila", "Bambu Lab", "Creality", "Anycubic", "Elegoo",
+  "Easy Print", "Esun", "Fusion", "GTMax3D", "MasterPrint", "Multifila",
+  "PolyMaker", "PrintaLot", "Sulun", "Suntop", "TopRecicla", "Outra..."
 ];
 
 const TARE_PRESETS = [
@@ -108,6 +92,78 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "writer" | "calc">("ams");
+  const [printers, setPrinters] = useState<Printer[]>([]);
+  const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
+    0: null, 1: null, 2: null, 3: null
+  });
+
+  const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
+  const [inventory, setInventory] = useState<Spool[]>([]);
+  const [presets, setPresets] = useState<FilamentPreset[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterMaterial, setFilterMaterial] = useState("TODOS");
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      (window.navigator as any).standalone === true
+    );
+  });
+
+  // Modais de Spool
+  const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
+  const [modalGross, setModalGross] = useState("");
+  const [modalTare, setModalTare] = useState("218");
+
+  const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
+  const [editBrand, setEditBrand] = useState("");
+  const [editMaterial, setEditMaterial] = useState("PETG");
+  const [editColorName, setEditColorName] = useState("");
+  const [editColorHex, setEditColorHex] = useState("#111827");
+  const [editWeight, setEditWeight] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+
+  // Form Criador de Tags
+  const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
+  const [customBrandName, setCustomBrandName] = useState("");
+  const [material, setMaterial] = useState("PETG");
+  const [colorName, setColorName] = useState("Preto");
+  const [colorHex, setColorHex] = useState("#111827");
+  const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
+  const [grossWeight, setGrossWeight] = useState("1218");
+  const [tareWeight, setTareWeight] = useState("218");
+  const [spoolPrice, setSpoolPrice] = useState("85.00");
+  const [customTagId, setCustomTagId] = useState("");
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // CALCULADORA
+  const [energyTariff, setEnergyTariff] = useState(() => localStorage.getItem("filamap_energy_tariff") || "1.13");
+  const [printerPowerW, setPrinterPowerW] = useState(() => localStorage.getItem("filamap_power_w") || "150");
+  const [printerCost, setPrinterCost] = useState(() => localStorage.getItem("filamap_printer_cost") || "4500");
+  const [printerLifespanH, setPrinterLifespanH] = useState(() => localStorage.getItem("filamap_lifespan_h") || "10000");
+  const [markupMultiplier, setMarkupMultiplier] = useState(() => localStorage.getItem("filamap_markup") || "3.0");
+
+  const [calcPartName, setCalcPartName] = useState("Nova Peça 3D");
+  const [calcPrintHours, setCalcPrintHours] = useState("1.5");
+  const [calcExtraCosts, setCalcExtraCosts] = useState("0.50");
+  const [showConfigPanel, setShowConfigPanel] = useState(false);
+
+  const [calcFilaments, setCalcFilaments] = useState<Array<{ spoolId: string; weightG: string; manualPricePerKg: string }>>([
+    { spoolId: "", weightG: "25", manualPricePerKg: "85.00" },
+    { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
+    { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
+    { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
+  ]);
+
+  useEffect(() => {
+    localStorage.setItem("filamap_energy_tariff", energyTariff);
+    localStorage.setItem("filamap_power_w", printerPowerW);
+    localStorage.setItem("filamap_printer_cost", printerCost);
+    localStorage.setItem("filamap_lifespan_h", printerLifespanH);
+    localStorage.setItem("filamap_markup", markupMultiplier);
+  }, [energyTariff, printerPowerW, printerCost, printerLifespanH, markupMultiplier]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -135,50 +191,6 @@ export default function App() {
   async function handleLogout() {
     await supabase.auth.signOut();
   }
-  const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "writer">("ams");
-  const [printers, setPrinters] = useState<Printer[]>([]);
-  const [activeSlots, setActiveSlots] = useState<Record<number, Spool | null>>({
-    0: null, 1: null, 2: null, 3: null
-  });
-
-  const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
-  const [inventory, setInventory] = useState<Spool[]>([]);
-  const [presets, setPresets] = useState<FilamentPreset[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterMaterial, setFilterMaterial] = useState("TODOS");
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
-    return (
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true
-    );
-  });
-
-  // Modais
-  const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
-  const [modalGross, setModalGross] = useState("");
-  const [modalTare, setModalTare] = useState("218");
-
-  const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
-  const [editBrand, setEditBrand] = useState("");
-  const [editMaterial, setEditMaterial] = useState("PETG");
-  const [editColorName, setEditColorName] = useState("");
-  const [editColorHex, setEditColorHex] = useState("#111827");
-  const [editWeight, setEditWeight] = useState("");
-  const [editPrice, setEditPrice] = useState("");
-
-  // Form Criador de Tags
-  const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
-  const [customBrandName, setCustomBrandName] = useState("");
-  const [material, setMaterial] = useState("PETG");
-  const [colorName, setColorName] = useState("Preto");
-  const [colorHex, setColorHex] = useState("#111827");
-  const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
-  const [grossWeight, setGrossWeight] = useState("1218");
-  const [tareWeight, setTareWeight] = useState("218");
-  const [spoolPrice, setSpoolPrice] = useState("85.00");
-  const [customTagId, setCustomTagId] = useState("");
-  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   const {
     isReading,
@@ -240,6 +252,8 @@ export default function App() {
   }, [setNfcUid]);
 
   async function loadData() {
+    if (!session) return;
+
     const { data: pData } = await supabase.from("printers").select("*");
     if (pData && pData.length > 0) {
       setPrinters(pData);
@@ -274,10 +288,12 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 2500);
-    return () => clearInterval(interval);
-  }, []);
+    if (session) {
+      loadData();
+      const interval = setInterval(loadData, 2500);
+      return () => clearInterval(interval);
+    }
+  }, [session]);
 
   function handleSelectExistingSpool(e: React.ChangeEvent<HTMLSelectElement>) {
     const spoolId = e.target.value;
@@ -291,9 +307,9 @@ export default function App() {
       setColorName(chosen.color_name);
       updateFromHex(chosen.color_hex);
       setSpoolPrice((chosen.price_paid || 85).toString());
-      setTareWeight("218");
-      setGrossWeight((chosen.current_weight + 218).toString());
-      setFeedbackMsg(`📦 Dados carregados do estoque para: ${chosen.color_name} (${chosen.brand})`);
+      setTareWeight((chosen.spool_tare_weight || 218).toString());
+      setGrossWeight((chosen.current_weight + (chosen.spool_tare_weight || 218)).toString());
+      setFeedbackMsg(`📦 Dados carregados: ${chosen.color_name} (${chosen.brand})`);
     }
   }
 
@@ -344,6 +360,7 @@ export default function App() {
           color_hex: "#111827",
           initial_weight: 1000,
           current_weight: 1000,
+          spool_tare_weight: 218,
           price_paid: 85.00,
         })
         .select()
@@ -435,22 +452,19 @@ export default function App() {
   }
 
   async function handleDeleteSpool(spool: Spool) {
-    const confirm = window.confirm(`Tem certeza que deseja apagar o carretel "${spool.color_name}" (${spool.brand})?`);
+    const confirm = window.confirm(`Excluir carretel "${spool.color_name}" (${spool.brand})?`);
     if (!confirm) return;
 
     await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
     const { error } = await supabase.from("spools").delete().eq("id", spool.id);
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-    } else {
-      await loadData();
-    }
+    if (error) alert("Erro ao excluir: " + error.message);
+    else await loadData();
   }
 
   function copyTagUrl(tagId: string) {
     const url = `https://filamap.pages.dev/?tag=${encodeURIComponent(tagId)}`;
     navigator.clipboard.writeText(url);
-    alert(`📋 Link copiado para a área de transferência!\n\n${url}\n\nCole no campo URI do app NFC Tools para gravar.`);
+    alert(`📋 Link copiado!\n\n${url}\n\nCole no NFC Tools.`);
   }
 
   async function handleCreateAndWriteTag(e: React.FormEvent) {
@@ -485,10 +499,43 @@ export default function App() {
       setFeedbackMsg(`✅ Tag gravada com sucesso! Link: ${fullTargetUrl}`);
       setCustomTagId(generateAutoTagId(material, colorName));
     } else {
-      setFeedbackMsg(`ℹ️ Carretel salvo no banco! Você pode copiar o link da tag abaixo para usar no NFC Tools.`);
+      setFeedbackMsg(`ℹ️ Carretel salvo no banco! Link: ${fullTargetUrl}`);
     }
     await loadData();
   }
+
+  // CÁLCULOS DA CALCULADORA DE PRECIFICAÇÃO
+  const hours = parseFloat(calcPrintHours) || 0;
+  const powerKw = (parseFloat(printerPowerW) || 150) / 1000;
+  const tariffKwh = parseFloat(energyTariff) || 1.13;
+  const machineCostVal = parseFloat(printerCost) || 4500;
+  const lifespanHours = parseFloat(printerLifespanH) || 10000;
+  const markup = parseFloat(markupMultiplier) || 3.0;
+  const extrasCost = parseFloat(calcExtraCosts) || 0;
+
+  const energyPerHour = powerKw * tariffKwh;
+  const depreciationPerHour = lifespanHours > 0 ? (machineCostVal / lifespanHours) : 0;
+  const machineCostTotal = (energyPerHour + depreciationPerHour) * hours;
+
+  let totalFilamentWeight = 0;
+  let totalFilamentCost = 0;
+
+  calcFilaments.forEach((f) => {
+    const w = parseFloat(f.weightG) || 0;
+    if (w > 0) {
+      totalFilamentWeight += w;
+      let priceKg = parseFloat(f.manualPricePerKg) || 85.00;
+      if (f.spoolId) {
+        const found = inventory.find((s) => s.id === f.spoolId);
+        if (found && found.price_paid) priceKg = found.price_paid;
+      }
+      totalFilamentCost += (w / 1000) * priceKg;
+    }
+  });
+
+  const totalProductionCost = totalFilamentCost + machineCostTotal + extrasCost;
+  const suggestedSalePrice = totalProductionCost * markup;
+  const netEarnings = suggestedSalePrice - totalProductionCost;
 
   const filteredInventory = inventory.filter((item) => {
     const matchesSearch =
@@ -531,6 +578,7 @@ export default function App() {
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const activeSpool = activePrinter ? activeSlots[activePrinter.active_slot_index || 0] : null;
 
+  // SE NÃO HOUVER SESSÃO LOGADA: EXIBE TELA DE LOGIN
   if (!session) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f172a" }}>
@@ -659,11 +707,11 @@ export default function App() {
         </div>
 
         {/* Abas */}
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             onClick={() => setActiveTab("ams")}
             style={{
-              flex: 1,
+              flex: "1 1 120px",
               padding: "10px",
               borderRadius: 8,
               border: "none",
@@ -679,7 +727,7 @@ export default function App() {
           <button
             onClick={() => setActiveTab("inventory")}
             style={{
-              flex: 1,
+              flex: "1 1 120px",
               padding: "10px",
               borderRadius: 8,
               border: "none",
@@ -693,9 +741,25 @@ export default function App() {
             📦 Almoxarifado ({inventory.length})
           </button>
           <button
+            onClick={() => setActiveTab("calc")}
+            style={{
+              flex: "1 1 120px",
+              padding: "10px",
+              borderRadius: 8,
+              border: "none",
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: "pointer",
+              background: activeTab === "calc" ? "#0284c7" : "#1e293b",
+              color: activeTab === "calc" ? "#ffffff" : "#94a3b8",
+            }}
+          >
+            🧮 Orçamento
+          </button>
+          <button
             onClick={() => setActiveTab("writer")}
             style={{
-              flex: 1,
+              flex: "1 1 120px",
               padding: "10px",
               borderRadius: 8,
               border: "none",
@@ -706,7 +770,7 @@ export default function App() {
               color: activeTab === "writer" ? "#ffffff" : "#94a3b8",
             }}
           >
-            🏷️ Gravar / Gerar Tag
+            🏷️ Gravar Tag
           </button>
         </div>
       </header>
@@ -714,7 +778,6 @@ export default function App() {
       {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          {/* Painel ao Vivo */}
           <div style={{
             background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b",
             border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`,
@@ -775,38 +838,28 @@ export default function App() {
                   {activePrinter?.current_layer || 0} / {activePrinter?.total_layers || 0}
                 </div>
               </div>
-
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Bico (Nozzle)</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>
                   {activePrinter?.nozzle_temp || 0}°C <span style={{ fontSize: 11, color: "#64748b" }}>({activePrinter?.nozzle_target_temp || 0}°C)</span>
                 </div>
               </div>
-
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Mesa (Bed)</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b" }}>
                   {activePrinter?.bed_temp || 0}°C <span style={{ fontSize: 11, color: "#64748b" }}>({activePrinter?.bed_target_temp || 0}°C)</span>
                 </div>
               </div>
-
               <div>
                 <div style={{ fontSize: 10, color: "#94a3b8", textTransform: "uppercase" }}>Slot em Uso</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", display: "flex", alignItems: "center", gap: 4 }}>
-                  {activeSpool ? (
-                    <>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: activeSpool.color_hex, display: "inline-block" }} />
-                      Slot {(activePrinter?.active_slot_index || 0) + 1}
-                    </>
-                  ) : (
-                    `Slot ${(activePrinter?.active_slot_index || 0) + 1}`
-                  )}
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8" }}>
+                  Slot {(activePrinter?.active_slot_index || 0) + 1}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Bandejas do AMS Lite */}
+          {/* Bandejas */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "#64748b", marginBottom: 10, fontWeight: 700 }}>
               Bandejas do AMS Lite (Bambu Lab A1)
@@ -837,17 +890,7 @@ export default function App() {
                     }}
                   >
                     {isCurrentlyExtruding && (
-                      <span style={{
-                        position: "absolute",
-                        top: -8,
-                        right: 8,
-                        background: "#38bdf8",
-                        color: "#0f172a",
-                        fontSize: 9,
-                        fontWeight: 900,
-                        padding: "1px 6px",
-                        borderRadius: 8,
-                      }}>
+                      <span style={{ position: "absolute", top: -8, right: 8, background: "#38bdf8", color: "#0f172a", fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>
                         EXTRUSANDO
                       </span>
                     )}
@@ -855,16 +898,7 @@ export default function App() {
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8" }}>SLOT {slotIdx + 1}</span>
-                        <span
-                          style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: "50%",
-                            backgroundColor: spool ? spool.color_hex : "#334155",
-                            border: "1px solid #64748b",
-                            display: "inline-block",
-                          }}
-                        />
+                        <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? spool.color_hex : "#334155", border: "1px solid #64748b", display: "inline-block" }} />
                       </div>
 
                       {spool ? (
@@ -884,25 +918,13 @@ export default function App() {
                       <div style={{ marginTop: 8, borderTop: "1px solid #1e293b", paddingTop: 6 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, marginBottom: 6 }}>
                           <span style={{ color: "#94a3b8" }}>Saldo:</span>
-                          <strong style={{ color: spool.current_weight < 150 ? "#f87171" : "#38bdf8" }}>
-                            {spool.current_weight}g
-                          </strong>
+                          <strong style={{ color: spool.current_weight < 150 ? "#f87171" : "#38bdf8" }}>{spool.current_weight}g</strong>
                         </div>
                         <button
                           onClick={(e) => handleEjectSlot(e, slotIdx)}
-                          style={{
-                            width: "100%",
-                            padding: "4px",
-                            background: "#334155",
-                            color: "#cbd5e1",
-                            border: "none",
-                            borderRadius: 4,
-                            fontSize: 10,
-                            cursor: "pointer",
-                            fontWeight: 600,
-                          }}
+                          style={{ width: "100%", padding: "4px", background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer", fontWeight: 600 }}
                         >
-                          ⏏️ Ejetar / Liberar
+                          ⏏️ Ejetar
                         </button>
                       </div>
                     )}
@@ -913,149 +935,34 @@ export default function App() {
           </div>
 
           {/* Histórico Recente */}
-          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, marginBottom: 16, border: "1px solid #334155" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ fontSize: 15, margin: 0, color: "#f8fafc" }}>📋 Histórico Recente de Impressões</h3>
-              <span style={{ fontSize: 11, color: "#94a3b8" }}>Bambu Lab A1 Telemetria</span>
-            </div>
-
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
+            <h3 style={{ fontSize: 15, margin: "0 0 12px", color: "#f8fafc" }}>📋 Histórico Recente de Impressões</h3>
             {printLogs.length === 0 ? (
               <div style={{ textAlign: "center", padding: "16px", color: "#64748b", fontSize: 12 }}>
                 Nenhuma impressão registrada ainda.
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {printLogs.map((log) => {
-                  const costPerGram = ((log.spool?.price_paid || 85) / 1000);
-                  const pieceCost = (log.filament_used_g * costPerGram).toFixed(2);
-
-                  return (
-                    <div
-                      key={log.id}
-                      style={{
-                        background: "#0f172a",
-                        border: "1px solid #334155",
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 10,
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            backgroundColor: log.spool?.color_hex || "#38bdf8",
-                            border: "1px solid #64748b",
-                            display: "inline-block",
-                            flexShrink: 0,
-                          }}
-                        />
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
-                            {log.subtask_name || "Trabalho 3D"}
-                          </div>
-                          <div style={{ fontSize: 11, color: "#64748b" }}>
-                            Slot {(log.slot_index ?? 0) + 1} ({log.spool?.material || "PETG"} {log.spool?.color_name || ""}) •{" "}
-                            {log.completed_at ? new Date(log.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--"}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                          <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
-                            -{log.filament_used_g}g
-                          </span>
-                          <span style={{ fontSize: 11, background: "rgba(16, 185, 129, 0.2)", color: "#34d399", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
-                            R$ {pieceCost}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
-                          {log.print_duration_minutes ? `${log.print_duration_minutes} min` : "Finalizado"}
-                        </div>
+                {printLogs.map((log) => (
+                  <div key={log.id} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{log.subtask_name || "Trabalho 3D"}</div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>
+                        Slot {(log.slot_index ?? 0) + 1} ({log.spool?.material || "PETG"} {log.spool?.color_name || ""})
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Leitura NFC */}
-          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
-            <h3 style={{ fontSize: 15, margin: "0 0 6px", color: "#f8fafc" }}>Leitura de Tag no Carretel</h3>
-            <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 12px" }}>
-              Aproxime o celular do adesivo NFC para carregar o filamento em um dos slots.
-            </p>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                onClick={startScanning}
-                disabled={isReading}
-                style={{
-                  flex: "1 1 180px",
-                  minHeight: 48,
-                  background: isReading ? "#0369a1" : "#0284c7",
-                  color: "#ffffff",
-                  border: "none",
-                  borderRadius: 8,
-                  fontWeight: 700,
-                  fontSize: 14,
-                  cursor: isReading ? "not-allowed" : "pointer",
-                }}
-              >
-                {isReading ? "📡 Aproxime da tag..." : "📱 Ler NFC (Celular)"}
-              </button>
-
-              <button
-                onClick={() => setNfcUid(`FILA-SIM-${Math.floor(1000 + Math.random() * 9000)}`)}
-                style={{
-                  flex: "1 1 180px",
-                  minHeight: 48,
-                  background: "#334155",
-                  color: "#e2e8f0",
-                  border: "1px solid #475569",
-                  borderRadius: 8,
-                  fontWeight: 600,
-                  fontSize: 14,
-                  cursor: "pointer",
-                }}
-              >
-                💻 Simular Tag (Desktop)
-              </button>
-            </div>
-
-            {nfcUid && (
-              <div style={{ marginTop: 14, padding: 12, background: "#1e3a8a", border: "1px solid #3b82f6", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <span style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Tag Carregada:</span>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#ffffff" }}>{nfcUid}</div>
-                  <div style={{ fontSize: 11, color: "#bfdbfe", marginTop: 2 }}>Toque no slot do AMS acima para fixar o carretel.</div>
-                </div>
-                <button
-                  onClick={() => setNfcUid(null)}
-                  style={{ background: "transparent", border: "1px solid #93c5fd", color: "#ffffff", padding: "6px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            )}
-
-            {nfcError && (
-              <div style={{ marginTop: 10, color: "#f87171", fontSize: 12 }}>
-                {nfcError}
+                    <div style={{ textAlign: "right" }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>-{log.filament_used_g}g</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ABA 2: ALMOXARIFADO COM BOTAO DE COPIAR LINK NFC */}
+      {/* ABA 2: ALMOXARIFADO */}
       {activeTab === "inventory" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
@@ -1068,7 +975,7 @@ export default function App() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar cor, marca ou tag..."
+                placeholder="Buscar cor, marca..."
                 style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }}
               />
               <select
@@ -1092,195 +999,38 @@ export default function App() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {sortedMaterialKeys.map((mat) => {
-                const spools = (groupedByMaterial[mat] || []).slice().sort((a, b) =>
-                  a.color_name.localeCompare(b.color_name, "pt-BR", { sensitivity: "base" })
-                );
-
+                const spools = groupedByMaterial[mat] || [];
                 const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
-                const totalValue = spools.reduce((acc, s) => {
-                  const cpg = (s.price_paid || 85) / 1000;
-                  return acc + ((s.current_weight || 0) * cpg);
-                }, 0);
-
-                const badgeColor = mat === "PLA" ? "#38bdf8" : mat === "PETG" ? "#f59e0b" : mat === "TPU" ? "#a855f7" : "#10b981";
+                const totalValue = spools.reduce((acc, s) => acc + ((s.current_weight || 0) * ((s.price_paid || 85) / 1000)), 0);
 
                 return (
                   <div key={mat} style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #334155", overflow: "hidden" }}>
-                    <div style={{
-                      padding: "10px 14px",
-                      background: "rgba(30, 41, 59, 0.7)",
-                      borderBottom: "1px solid #334155",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      gap: 8,
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{
-                          background: badgeColor,
-                          color: "#0f172a",
-                          padding: "2px 8px",
-                          borderRadius: 6,
-                          fontWeight: 900,
-                          fontSize: 12,
-                          letterSpacing: "0.04em"
-                        }}>
-                          {mat}
-                        </span>
-                        <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 600 }}>
-                          {spools.length} {spools.length === 1 ? "carretel" : "carretéis"}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", gap: 12 }}>
-                        <span>Total: <strong style={{ color: "#f8fafc" }}>{(totalWeight / 1000).toFixed(2)} kg</strong></span>
-                        <span>Valor: <strong style={{ color: "#34d399" }}>R$ {totalValue.toFixed(2)}</strong></span>
+                    <div style={{ padding: "10px 14px", background: "rgba(30, 41, 59, 0.7)", borderBottom: "1px solid #334155", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <strong>{mat} ({spools.length})</strong>
+                      <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                        Total: <strong style={{ color: "#f8fafc" }}>{(totalWeight / 1000).toFixed(2)} kg</strong> • Valor: <strong style={{ color: "#34d399" }}>R$ {totalValue.toFixed(2)}</strong>
                       </div>
                     </div>
 
                     <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                      {spools.map((spool) => {
-                        const isLow = spool.current_weight < 150;
-                        const price = spool.price_paid || 85.00;
-                        const costPerGram = price / 1000;
-                        const currentAssetValue = (spool.current_weight * costPerGram).toFixed(2);
-
-                        return (
-                          <div
-                            key={spool.id}
-                            style={{
-                              background: "#1e293b",
-                              border: "1px solid #334155",
-                              borderRadius: 8,
-                              padding: 10,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 10,
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <div
-                                style={{
-                                  width: 32,
-                                  height: 32,
-                                  borderRadius: "50%",
-                                  backgroundColor: spool.color_hex,
-                                  border: "2px solid #64748b",
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <div>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
-                                  {isLow && (
-                                    <span style={{ fontSize: 9, background: "#ef4444", color: "#fff", padding: "1px 5px", borderRadius: 8, fontWeight: 700 }}>
-                                      FIM DE ROLO
-                                    </span>
-                                  )}
-                                </div>
-                                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                                  Marca: <span style={{ color: "#cbd5e1" }}>{spool.brand}</span> • Tag: <span style={{ color: "#38bdf8" }}>{spool.nfc_uid}</span>
-                                </div>
-                                <div style={{ fontSize: 10, color: "#10b981", marginTop: 1 }}>
-                                  R$ {price.toFixed(2)}/kg • Restante: <strong>R$ {currentAssetValue}</strong>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
-                              <div style={{ fontSize: 14, fontWeight: 900, color: isLow ? "#ef4444" : "#38bdf8" }}>
-                                {spool.current_weight}g
-                              </div>
-
-                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                <button
-                                  onClick={() => copyTagUrl(spool.nfc_uid)}
-                                  title="Copiar Link NFC completo para usar no NFC Tools"
-                                  style={{
-                                    background: "#0369a1",
-                                    color: "#fff",
-                                    border: "none",
-                                    padding: "3px 7px",
-                                    borderRadius: 4,
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  📋 Copiar Link NFC
-                                </button>
-                                <button
-                                  onClick={() => openEditModal(spool)}
-                                  title="Editar Carretel"
-                                  style={{
-                                    background: "#0f172a",
-                                    color: "#38bdf8",
-                                    border: "1px solid #334155",
-                                    padding: "3px 6px",
-                                    borderRadius: 4,
-                                    fontSize: 11,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  ✏️
-                                </button>
-                                <button
-                                  onClick={() => openWeighModal(spool)}
-                                  title="Re-pesar rápido"
-                                  style={{
-                                    background: "#334155",
-                                    color: "#e2e8f0",
-                                    border: "1px solid #475569",
-                                    padding: "3px 6px",
-                                    borderRadius: 4,
-                                    fontSize: 11,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  ⚖️
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setNfcUid(spool.nfc_uid);
-                                    setActiveTab("ams");
-                                  }}
-                                  title="Carregar no AMS"
-                                  style={{
-                                    background: "#0284c7",
-                                    color: "#fff",
-                                    border: "none",
-                                    padding: "3px 8px",
-                                    borderRadius: 4,
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  👉 AMS
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteSpool(spool)}
-                                  title="Excluir carretel"
-                                  style={{
-                                    background: "rgba(239, 68, 68, 0.15)",
-                                    color: "#f87171",
-                                    border: "1px solid #dc2626",
-                                    padding: "3px 6px",
-                                    borderRadius: 4,
-                                    fontSize: 11,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  🗑️
-                                </button>
-                              </div>
+                      {spools.map((spool) => (
+                        <div key={spool.id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b" }} />
+                            <div>
+                              <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
+                              <div style={{ fontSize: 11, color: "#94a3b8" }}>{spool.brand} • Tag: {spool.nfc_uid}</div>
                             </div>
                           </div>
-                        );
-                      })}
+
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <strong style={{ fontSize: 14, color: "#38bdf8" }}>{spool.current_weight}g</strong>
+                            <button onClick={() => openWeighModal(spool)} style={{ background: "#334155", color: "#fff", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>⚖️</button>
+                            <button onClick={() => openEditModal(spool)} style={{ background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✏️</button>
+                            <button onClick={() => handleDeleteSpool(spool)} style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🗑️</button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -1290,570 +1040,251 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 3: CRIADOR / VINCULADOR DE TAGS */}
+      {/* ABA 3: ORÇAMENTO & PRECIFICAÇÃO */}
+      {activeTab === "calc" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>🧮 Calculadora de Orçamento 3D</h2>
+                <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Custo de produção real e preço de venda sugerido</p>
+              </div>
+              <button
+                onClick={() => setShowConfigPanel(!showConfigPanel)}
+                style={{ background: showConfigPanel ? "#0284c7" : "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                ⚙️ {showConfigPanel ? "Fechar Custos Fixos" : "Configurar Oficina / Custos Fixos"}
+              </button>
+            </div>
+
+            {showConfigPanel && (
+              <div style={{ marginTop: 14, padding: 14, background: "#0f172a", borderRadius: 8, border: "1px solid #334155" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 10, color: "#94a3b8" }}>Tarifa Luz (R$/kWh)</label>
+                    <input type="number" step="0.01" value={energyTariff} onChange={(e) => setEnergyTariff(e.target.value)} style={{ width: "100%", padding: 6, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: "#94a3b8" }}>Potência A1 (W)</label>
+                    <input type="number" value={printerPowerW} onChange={(e) => setPrinterPowerW(e.target.value)} style={{ width: "100%", padding: 6, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: "#94a3b8" }}>Valor Impressora (R$)</label>
+                    <input type="number" value={printerCost} onChange={(e) => setPrinterCost(e.target.value)} style={{ width: "100%", padding: 6, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: "#94a3b8" }}>Vida Útil (h)</label>
+                    <input type="number" value={printerLifespanH} onChange={(e) => setPrinterLifespanH(e.target.value)} style={{ width: "100%", padding: 6, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                  </div>
+                </div>
+                <div style={{ marginTop: 10, fontSize: 11, color: "#38bdf8" }}>
+                  Custo de Máquina: R$ {(energyPerHour + depreciationPerHour).toFixed(2)} / hora
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+            {/* Lado Esquerdo: Peça */}
+            <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155", display: "flex", flexDirection: "column", gap: 12 }}>
+              <strong style={{ fontSize: 13, color: "#f8fafc" }}>📥 DADOS DA PEÇA</strong>
+              <div>
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Nome da Peça</label>
+                <input type="text" value={calcPartName} onChange={(e) => setCalcPartName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tempo (Horas)</label>
+                  <input type="number" step="0.1" value={calcPrintHours} onChange={(e) => setCalcPrintHours(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Acessórios/Caixa (R$)</label>
+                  <input type="number" step="0.1" value={calcExtraCosts} onChange={(e) => setCalcExtraCosts(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Filamentos Utilizados (Até 4 cores):</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                  {calcFilaments.map((f, idx) => (
+                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
+                      <select
+                        value={f.spoolId}
+                        onChange={(e) => {
+                          const updated = [...calcFilaments];
+                          updated[idx].spoolId = e.target.value;
+                          setCalcFilaments(updated);
+                        }}
+                        style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#fff", fontSize: 11 }}
+                      >
+                        <option value="">F{idx + 1}: Carretel do Almoxarifado...</option>
+                        {inventory.map((s) => (
+                          <option key={s.id} value={s.id}>{s.color_name} ({s.material}) - R${s.price_paid || 85}/kg</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        placeholder="Gramas"
+                        value={f.weightG}
+                        onChange={(e) => {
+                          const updated = [...calcFilaments];
+                          updated[idx].weightG = e.target.value;
+                          setCalcFilaments(updated);
+                        }}
+                        style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#38bdf8", fontWeight: 700, textAlign: "center" }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Lado Direito: Resultado */}
+            <div style={{ background: "linear-gradient(145deg, #0f172a, #172554)", padding: 16, borderRadius: 12, border: "1px solid #38bdf8", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <strong style={{ color: "#38bdf8" }}>💰 PREÇO & MARGEM</strong>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Markup:</span>
+                    <input type="number" step="0.1" value={markupMultiplier} onChange={(e) => setMarkupMultiplier(e.target.value)} style={{ width: 55, padding: 4, background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 4, color: "#fff", textAlign: "center" }} />
+                    <span style={{ color: "#38bdf8" }}>×</span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>Filamento:</span>
+                    <span>R$ {totalFilamentCost.toFixed(2)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#94a3b8" }}>Máquina (Energia + Desgaste):</span>
+                    <span>R$ {machineCostTotal.toFixed(2)}</span>
+                  </div>
+                  {extrasCost > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#94a3b8" }}>Acessórios:</span>
+                      <span>R$ {extrasCost.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div style={{ borderTop: "1px solid #334155", paddingTop: 6, display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                    <span style={{ color: "#cbd5e1" }}>Custo de Produção:</span>
+                    <span style={{ color: "#ef4444" }}>R$ {totalProductionCost.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: "rgba(2, 132, 199, 0.2)", padding: 14, borderRadius: 8, textAlign: "center", border: "1px solid rgba(56, 189, 248, 0.4)" }}>
+                <span style={{ fontSize: 11, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Preço de Venda Sugerido</span>
+                <div style={{ fontSize: 32, fontWeight: 900, color: "#38bdf8" }}>R$ {suggestedSalePrice.toFixed(2)}</div>
+                <div style={{ fontSize: 12, color: "#34d399", fontWeight: 700, marginTop: 4 }}>
+                  Ganho Líquido: + R$ {netEarnings.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ABA 4: GRAVAR TAG */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar / Gerar Tag NFC</h2>
-          <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
-            Vincule um carretel já existente do Almoxarifado ou crie uma tag nova padronizada.
-          </p>
-
+          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 14px" }}>Gravar / Gerar Tag NFC</h2>
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Opção 1: Vincular carretel já existente no estoque */}
             {inventory.length > 0 && (
               <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #38bdf8" }}>
-                <label style={{ display: "block", fontSize: 11, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
-                  📦 VINCULAR CARRETEL JÁ EXISTENTE DO ALMOXARIFADO ({inventory.length} carretéis)
-                </label>
-                <select
-                  onChange={handleSelectExistingSpool}
-                  defaultValue=""
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "#1e293b",
-                    border: "1px solid #475569",
-                    borderRadius: 6,
-                    color: "#f8fafc",
-                    fontSize: 13,
-                    boxSizing: "border-box"
-                  }}
-                >
-                  <option value="">Selecione um carretel do seu estoque...</option>
+                <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>📦 VINCULAR CARRETEL JÁ EXISTENTE</label>
+                <select onChange={handleSelectExistingSpool} defaultValue="" style={{ width: "100%", padding: 8, background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#fff", marginTop: 4 }}>
+                  <option value="">Selecione...</option>
                   {inventory.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.color_name} ({s.brand} - {s.material}) • Saldo: {s.current_weight}g
-                    </option>
+                    <option key={s.id} value={s.id}>{s.color_name} ({s.brand} - {s.material}) • {s.current_weight}g</option>
                   ))}
                 </select>
               </div>
             )}
 
-            {/* Opção 2: Importar do Bambu Studio */}
-            {presets.length > 0 && (
-              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 4 }}>
-                  ⚡ OU IMPORTAR PERFIL DO BAMBU STUDIO ({presets.length} perfis)
-                </label>
-                <select
-                  onChange={handleSelectPreset}
-                  defaultValue=""
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "#1e293b",
-                    border: "1px solid #475569",
-                    borderRadius: 6,
-                    color: "#f8fafc",
-                    fontSize: 13,
-                    boxSizing: "border-box"
-                  }}
-                >
-                  <option value="">Selecione um preset para autocompletar...</option>
-                  {presets.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.brand} - {p.material})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Código e Link da Tag */}
-            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO PADRÃO DA TAG</label>
-                <button
-                  type="button"
-                  onClick={() => setCustomTagId(generateAutoTagId(material, colorName))}
-                  style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11 }}
-                >
-                  🔄 Gerar Novo ID
-                </button>
-              </div>
-              <input
-                type="text"
-                value={customTagId}
-                onChange={(e) => setCustomTagId(e.target.value)}
-                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700, fontSize: 14, boxSizing: "border-box" }}
-                required
-              />
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 6 }}>
-                <div style={{ fontSize: 11, color: "#64748b", wordBreak: "break-all" }}>
-                  Link: https://filamap.pages.dev/?tag={customTagId}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyTagUrl(customTagId)}
-                  style={{
-                    background: "#0369a1",
-                    color: "#fff",
-                    border: "none",
-                    padding: "4px 10px",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  📋 Copiar Link p/ NFC Tools
-                </button>
-              </div>
+            <div>
+              <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag ID</label>
+              <input type="text" value={customTagId} onChange={(e) => setCustomTagId(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700 }} required />
             </div>
 
-            {/* Marca */}
-            <div style={{ display: "grid", gridTemplateColumns: selectedBrand === "Outra..." ? "1fr 1fr" : "1fr", gap: 10 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca do Filamento</label>
-                <select
-                  value={selectedBrand}
-                  onChange={(e) => setSelectedBrand(e.target.value)}
-                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
-                >
-                  {POPULAR_BRANDS.map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedBrand === "Outra..." && (
-                <div>
-                  <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Digite o Nome da Marca</label>
-                  <input
-                    type="text"
-                    value={customBrandName}
-                    onChange={(e) => setCustomBrandName(e.target.value)}
-                    placeholder="Nome da marca..."
-                    style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Material e Preço */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
-                <select
-                  value={material}
-                  onChange={(e) => {
-                    setMaterial(e.target.value);
-                    setCustomTagId(generateAutoTagId(e.target.value, colorName));
-                  }}
-                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
-                >
+                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Marca</label>
+                <select value={selectedBrand} onChange={(e) => setSelectedBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
+                  {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Material</label>
+                <select value={material} onChange={(e) => setMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
                   <option value="PETG">PETG</option>
                   <option value="PLA">PLA</option>
                   <option value="ABS">ABS</option>
                   <option value="TPU">TPU</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 11, color: "#cbd5e1" }}>Nome da Cor</label>
+              <input type="text" value={colorName} onChange={(e) => setColorName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Preço Pago (R$)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={spoolPrice}
-                  onChange={(e) => setSpoolPrice(e.target.value)}
-                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
-                  required
-                />
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Peso Balança (g)</label>
+                <input type="number" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
               </div>
-            </div>
-
-            {/* Cores */}
-            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <label style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 700 }}>Cor do Filamento</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 11, color: "#94a3b8" }}>Visual:</span>
-                  <div
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 6,
-                      backgroundColor: colorHex,
-                      border: "2px solid #ffffff",
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
-                {colorPresets.map((c) => (
-                  <button
-                    type="button"
-                    key={c.hex}
-                    onClick={() => updateFromHex(c.hex, c.name)}
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: "50%",
-                      backgroundColor: c.hex,
-                      border: colorHex.toUpperCase() === c.hex ? "2px solid #38bdf8" : "1px solid #475569",
-                      cursor: "pointer",
-                    }}
-                  />
-                ))}
-                <input
-                  type="color"
-                  value={colorHex}
-                  onChange={(e) => updateFromHex(e.target.value)}
-                  style={{ width: 30, height: 30, border: "none", background: "transparent", cursor: "pointer" }}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 2 }}>R</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="255"
-                    value={rgb.r}
-                    onChange={(e) => updateFromRgb("r", e.target.value)}
-                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #ef4444", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 2 }}>G</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="255"
-                    value={rgb.g}
-                    onChange={(e) => updateFromRgb("g", e.target.value)}
-                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #22c55e", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#3b82f6", fontWeight: 700, marginBottom: 2 }}>B</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="255"
-                    value={rgb.b}
-                    onChange={(e) => updateFromRgb("b", e.target.value)}
-                    style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #3b82f6", borderRadius: 6, color: "#fff", boxSizing: "border-box", textAlign: "center", fontWeight: 700 }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 2 }}>HEX</label>
-                  <input
-                    type="text"
-                    value={colorHex}
-                    onChange={(e) => updateFromHex(e.target.value)}
-                    style={{ width: "100%", padding: "6px 6px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", boxSizing: "border-box", textAlign: "center", fontWeight: 700, fontSize: 12 }}
-                  />
-                </div>
-              </div>
-
-              <input
-                type="text"
-                value={colorName}
-                onChange={(e) => {
-                  setColorName(e.target.value);
-                  setCustomTagId(generateAutoTagId(material, e.target.value));
-                }}
-                placeholder="Nome da cor..."
-                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                required
-              />
-            </div>
-
-            {/* Pesagem com Seletores Rápidos de Tara */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso na Balança (g)</label>
-                  <input
-                    type="number"
-                    value={grossWeight}
-                    onChange={(e) => setGrossWeight(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara do Carretel (g)</label>
-                  <input
-                    type="number"
-                    value={tareWeight}
-                    onChange={(e) => setTareWeight(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-              </div>
-
               <div>
-                <span style={{ fontSize: 10, color: "#cbd5e1", display: "block", marginBottom: 4 }}>Taras Rápidas:</span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {TARE_PRESETS.map((t) => (
-                    <button
-                      type="button"
-                      key={t.val}
-                      onClick={() => setTareWeight(t.val)}
-                      style={{
-                        background: tareWeight === t.val ? "#0284c7" : "#1e293b",
-                        color: tareWeight === t.val ? "#fff" : "#94a3b8",
-                        border: "1px solid #334155",
-                        borderRadius: 4,
-                        padding: "3px 6px",
-                        fontSize: 10,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700, borderTop: "1px solid #1e293b", paddingTop: 6 }}>
-                Saldo Líquido: {Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0))}g
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
+                <input type="number" value={tareWeight} onChange={(e) => setTareWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={isWriting}
-              style={{
-                background: isWriting ? "#0369a1" : "#0284c7",
-                color: "#fff",
-                border: "none",
-                padding: "14px",
-                borderRadius: 8,
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: isWriting ? "not-allowed" : "pointer",
-                marginTop: 4,
-              }}
-            >
-              {isWriting ? "📡 Aproxime a tag do celular..." : "📲 Gravar Tag NFC & Salvar"}
+            <button type="submit" style={{ padding: 12, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}>
+              📲 Gravar / Salvar Tag
             </button>
           </form>
 
-          {feedbackMsg && (
-            <div style={{ marginTop: 12, padding: 10, background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 8, fontSize: 12, color: "#f8fafc" }}>
-              {feedbackMsg}
-            </div>
-          )}
-
-          {nfcError && (
-            <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>
-              {nfcError}
-            </div>
-          )}
+          {feedbackMsg && <div style={{ marginTop: 10, padding: 8, background: "#0f172a", borderRadius: 6, color: "#38bdf8", fontSize: 12 }}>{feedbackMsg}</div>}
         </div>
       )}
 
-      {/* Modal 1: Re-pesagem rápida */}
+      {/* Modal Re-pesar */}
       {weighingSpool && (
-        <div style={{
-          position: "fixed",
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0, 0, 0, 0.75)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 1000, padding: 16,
-        }}>
-          <div style={{
-            background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12,
-            padding: 20, maxWidth: 430, width: "100%", boxSizing: "border-box",
-          }}>
-            <h3 style={{ margin: "0 0 4px", fontSize: 16, color: "#f8fafc" }}>⚖️ Re-pesar Carretel</h3>
-            <p style={{ margin: "0 0 14px", fontSize: 12, color: "#94a3b8" }}>
-              {weighingSpool.material} - {weighingSpool.color_name} ({weighingSpool.brand})
-            </p>
-
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
+          <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
+            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {weighingSpool.color_name}</h3>
             <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Peso na Balança (g)</label>
-                <input
-                  type="number"
-                  value={modalGross}
-                  onChange={(e) => setModalGross(e.target.value)}
-                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
+                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Peso na Balança (g)</label>
+                <input type="number" value={modalGross} onChange={(e) => setModalGross(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
               </div>
-
               <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>
-                  Tara do Carretel (g) - Escolha rápida:
-                </label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                  {TARE_PRESETS.map((t) => (
-                    <button
-                      type="button"
-                      key={t.val}
-                      onClick={() => setModalTare(t.val)}
-                      style={{
-                        background: modalTare === t.val ? "#0284c7" : "#0f172a",
-                        color: modalTare === t.val ? "#fff" : "#94a3b8",
-                        border: "1px solid #334155",
-                        borderRadius: 4,
-                        padding: "4px 8px",
-                        fontSize: 10,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="number"
-                  value={modalTare}
-                  onChange={(e) => setModalTare(e.target.value)}
-                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
+                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Tara Automática (g)</label>
+                <input type="number" value={modalTare} onChange={(e) => setModalTare(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
               </div>
-
-              <div style={{ background: "#0f172a", padding: 10, borderRadius: 6, textAlign: "center" }}>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>Novo Saldo Líquido:</span>
-                <div style={{ fontSize: 18, fontWeight: 900, color: "#38bdf8" }}>
-                  {Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0))}g
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                <button
-                  type="button"
-                  onClick={() => setWeighingSpool(null)}
-                  style={{ flex: 1, padding: "10px", background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  style={{ flex: 1, padding: "10px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Salvar Peso
-                </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={() => setWeighingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
+                <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal 2: Edição Completa */}
+      {/* Modal Editar */}
       {editingSpool && (
-        <div style={{
-          position: "fixed",
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0, 0, 0, 0.75)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 1000, padding: 16,
-        }}>
-          <div style={{
-            background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12,
-            padding: 20, maxWidth: 440, width: "100%", boxSizing: "border-box",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <h3 style={{ margin: 0, fontSize: 16, color: "#f8fafc" }}>✏️ Editar Carretel</h3>
-              <span style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>{editingSpool.nfc_uid}</span>
-            </div>
-
-            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Marca</label>
-                  <input
-                    type="text"
-                    value={editBrand}
-                    onChange={(e) => setEditBrand(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
-                  <select
-                    value={editMaterial}
-                    onChange={(e) => setEditMaterial(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  >
-                    <option value="PETG">PETG</option>
-                    <option value="PLA">PLA</option>
-                    <option value="ABS">ABS</option>
-                    <option value="TPU">TPU</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Nome da Cor</label>
-                <input
-                  type="text"
-                  value={editColorName}
-                  onChange={(e) => setEditColorName(e.target.value)}
-                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Cor HEX</label>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={editColorHex}
-                      onChange={(e) => setEditColorHex(e.target.value)}
-                      style={{ width: 34, height: 34, border: "none", background: "transparent", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={editColorHex}
-                      onChange={(e) => setEditColorHex(e.target.value)}
-                      style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#38bdf8", fontWeight: 700, boxSizing: "border-box" }}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Saldo Líquido (g)</label>
-                  <input
-                    type="number"
-                    value={editWeight}
-                    onChange={(e) => setEditWeight(e.target.value)}
-                    style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: 11, color: "#cbd5e1", marginBottom: 4 }}>Preço Pago por 1kg (R$)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                  style={{ width: "100%", padding: "8px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
-                  required
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button
-                  type="button"
-                  onClick={() => setEditingSpool(null)}
-                  style={{ flex: 1, padding: "10px", background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  style={{ flex: 1, padding: "10px", background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
-                >
-                  Salvar Alterações
-                </button>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
+          <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
+            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>✏️ Editar Carretel</h3>
+            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input type="text" value={editColorName} onChange={(e) => setEditColorName(e.target.value)} placeholder="Cor" style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+              <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={() => setEditingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
+                <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>
               </div>
             </form>
           </div>

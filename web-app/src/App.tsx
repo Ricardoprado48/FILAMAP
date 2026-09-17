@@ -46,6 +46,15 @@ interface CatalogItem {
   created_at: string;
 }
 
+interface FilamentPreset {
+  id: string;
+  name: string;
+  material: string;
+  brand: string;
+  density: number;
+  color_hex?: string;
+}
+
 interface PrintLog {
   id: string;
   subtask_name: string;
@@ -61,6 +70,30 @@ const POPULAR_BRANDS = [
   "Easy Print", "Esun", "Fusion", "GTMax3D", "MasterPrint", "Multifila",
   "PolyMaker", "PrintaLot", "Sulun", "Suntop", "TopRecicla", "Outra..."
 ];
+
+const TARE_PRESETS = [
+  { label: "Voolt Vazado (218g)", val: "218" },
+  { label: "Voolt Fechado/Antigo (250g)", val: "250" },
+  { label: "Voolt Transparente (195g)", val: "195" },
+  { label: "MasterPrint (230g)", val: "230" },
+  { label: "Padrão (220g)", val: "220" }
+];
+
+function hexToRgb(hex: string) {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return { r: 17, g: 24, b: 39 };
+  return {
+    r: parseInt(clean.substring(0, 2), 16) || 0,
+    g: parseInt(clean.substring(2, 4), 16) || 0,
+    b: parseInt(clean.substring(4, 6), 16) || 0,
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  const clamp = (val: number) => Math.max(0, Math.min(255, isNaN(val) ? 0 : val));
+  const toHex = (n: number) => clamp(n).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -81,6 +114,7 @@ export default function App() {
   const [printLogs, setPrintLogs] = useState<PrintLog[]>([]);
   const [inventory, setInventory] = useState<Spool[]>([]);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [presets, setPresets] = useState<FilamentPreset[]>([]);
   const [catalogSearch, setCatalogSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterMaterial, setFilterMaterial] = useState("TODOS");
@@ -98,11 +132,13 @@ export default function App() {
   const [editWeight, setEditWeight] = useState("");
   const [editPrice, setEditPrice] = useState("");
 
-  // Criador de Tags
+  // Formulário Completo de Gravação de Tag
   const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
+  const [customBrandName, setCustomBrandName] = useState("");
   const [material, setMaterial] = useState("PETG");
   const [colorName, setColorName] = useState("Preto");
   const [colorHex, setColorHex] = useState("#111827");
+  const [rgb, setRgb] = useState({ r: 17, g: 24, b: 39 });
   const [grossWeight, setGrossWeight] = useState("1218");
   const [tareWeight, setTareWeight] = useState("218");
   const [spoolPrice, setSpoolPrice] = useState("85.00");
@@ -127,6 +163,16 @@ export default function App() {
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
   ]);
+
+  function generateAutoTagId(mat: string, col: string) {
+    const cleanCol = col.trim().toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-");
+    const rnd = Math.floor(1000 + Math.random() * 9000);
+    return `FILA-${mat.toUpperCase()}-${cleanCol || "COR"}-${rnd}`;
+  }
+
+  useEffect(() => {
+    setCustomTagId(generateAutoTagId("PETG", "PRETO"));
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("filamap_energy_tariff", energyTariff);
@@ -155,7 +201,7 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
-  const { isWriting, nfcUid, error: nfcError, writeTagUrl, setNfcUid } = useNfc();
+  const { isReading, isWriting, nfcUid, error: nfcError, startScanning, writeTagUrl, setNfcUid } = useNfc();
 
   async function loadData() {
     if (!session) return;
@@ -178,6 +224,9 @@ export default function App() {
     const { data: catData } = await supabase.from("catalog_items").select("*");
     if (catData) setCatalog(catData);
 
+    const { data: presetsData } = await supabase.from("filament_presets").select("*").order("name");
+    if (presetsData) setPresets(presetsData);
+
     const { data: logsData } = await supabase.from("print_logs").select("*, spool:spools(*)").order("completed_at", { ascending: false }).limit(6);
     if (logsData) setPrintLogs(logsData);
   }
@@ -190,7 +239,95 @@ export default function App() {
     }
   }, [session]);
 
-  // Cálculos
+  function handleSelectExistingSpool(e: React.ChangeEvent<HTMLSelectElement>) {
+    const spoolId = e.target.value;
+    if (!spoolId) return;
+
+    const chosen = inventory.find((s) => s.id === spoolId);
+    if (chosen) {
+      setCustomTagId(chosen.nfc_uid);
+      setMaterial(chosen.material);
+      setSelectedBrand(chosen.brand);
+      setColorName(chosen.color_name);
+      updateFromHex(chosen.color_hex);
+      setSpoolPrice((chosen.price_paid || 85).toString());
+      setTareWeight((chosen.spool_tare_weight || 218).toString());
+      setGrossWeight((chosen.current_weight + (chosen.spool_tare_weight || 218)).toString());
+      setFeedbackMsg(`📦 Dados carregados: ${chosen.color_name} (${chosen.brand})`);
+    }
+  }
+
+  function handleSelectPreset(e: React.ChangeEvent<HTMLSelectElement>) {
+    const presetId = e.target.value;
+    if (!presetId) return;
+
+    const chosen = presets.find((p) => p.id === presetId);
+    if (chosen) {
+      setMaterial(chosen.material);
+      if (chosen.brand) setSelectedBrand(chosen.brand);
+      if (chosen.color_hex) updateFromHex(chosen.color_hex);
+      setColorName(chosen.name);
+      setCustomTagId(generateAutoTagId(chosen.material, chosen.name));
+    }
+  }
+
+  function updateFromHex(newHex: string, defaultName?: string) {
+    setColorHex(newHex);
+    setRgb(hexToRgb(newHex));
+    if (defaultName) setColorName(defaultName);
+  }
+
+  function updateFromRgb(part: "r" | "g" | "b", valStr: string) {
+    const val = parseInt(valStr, 10) || 0;
+    const newRgb = { ...rgb, [part]: Math.max(0, Math.min(255, val)) };
+    setRgb(newRgb);
+    setColorHex(rgbToHex(newRgb.r, newRgb.g, newRgb.b));
+  }
+
+  function copyTagUrl(tagId: string) {
+    const url = `https://filamap.pages.dev/?tag=${encodeURIComponent(tagId)}`;
+    navigator.clipboard.writeText(url);
+    alert(`📋 Link copiado para a área de transferência!\n\n${url}\n\nCole no campo URI do app NFC Tools para gravar.`);
+  }
+
+  async function handleCreateAndWriteTag(e: React.FormEvent) {
+    e.preventDefault();
+    setFeedbackMsg(null);
+
+    const finalBrand = selectedBrand === "Outra..." ? (customBrandName.trim() || "Outra") : selectedBrand;
+    const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
+    const finalTagId = customTagId.trim() || generateAutoTagId(material, colorName);
+    const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
+
+    const wrote = await writeTagUrl(fullTargetUrl);
+
+    const { error: dbError } = await supabase.from("spools").upsert(
+      {
+        nfc_uid: finalTagId,
+        brand: finalBrand,
+        material,
+        color_name: colorName,
+        color_hex: colorHex,
+        initial_weight: netWeight,
+        current_weight: netWeight,
+        spool_tare_weight: parseFloat(tareWeight) || 218,
+        price_paid: parseFloat(spoolPrice) || 85.00,
+      },
+      { onConflict: "nfc_uid" }
+    );
+
+    if (dbError) {
+      setFeedbackMsg("Erro no banco: " + dbError.message);
+    } else if (wrote) {
+      setFeedbackMsg(`✅ Tag gravada com sucesso! Link: ${fullTargetUrl}`);
+      setCustomTagId(generateAutoTagId(material, colorName));
+    } else {
+      setFeedbackMsg(`ℹ️ Carretel salvo no banco! Link: ${fullTargetUrl}`);
+    }
+    await loadData();
+  }
+
+  // Cálculos de Orçamento
   const hours = parseFloat(calcPrintHours) || 0;
   const powerKw = (parseFloat(printerPowerW) || 150) / 1000;
   const tariffKwh = parseFloat(energyTariff) || 1.13;
@@ -338,23 +475,6 @@ export default function App() {
     await loadData();
   }
 
-  async function handleCreateAndWriteTag(e: React.FormEvent) {
-    e.preventDefault();
-    const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
-    const finalTagId = customTagId.trim() || `FILA-${material}-${Date.now().toString().slice(-4)}`;
-    const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
-    await writeTagUrl(fullTargetUrl);
-
-    await supabase.from("spools").upsert({
-      nfc_uid: finalTagId, brand: selectedBrand, material, color_name: colorName,
-      color_hex: colorHex, initial_weight: netWeight, current_weight: netWeight,
-      spool_tare_weight: parseFloat(tareWeight) || 218, price_paid: parseFloat(spoolPrice) || 85.00,
-    }, { onConflict: "nfc_uid" });
-
-    setFeedbackMsg(`✅ Carretel salvo! Link: ${fullTargetUrl}`);
-    await loadData();
-  }
-
   const filteredInventory = inventory.filter((item) => {
     const matchesSearch = item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           item.brand.toLowerCase().includes(searchQuery.toLowerCase());
@@ -376,10 +496,21 @@ export default function App() {
     return acc;
   }, {} as Record<string, Spool[]>);
 
+  const colorPresets = [
+    { name: "Preto", hex: "#111827" },
+    { name: "Branco", hex: "#FFFFFF" },
+    { name: "Cinza", hex: "#64748B" },
+    { name: "Laranja", hex: "#F97316" },
+    { name: "Azul", hex: "#2563EB" },
+    { name: "Vermelho", hex: "#DC2626" },
+    { name: "Amarelo", hex: "#EAB308" },
+    { name: "Verde", hex: "#16A34A" },
+  ];
+
   const activePrinter = printers[0];
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
 
-  // Tela de Login
+  // Login
   if (!session) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f172a" }}>
@@ -430,7 +561,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* 4 BOTÕES DAS ABAS PRINCIPAIS */}
+        {/* 4 BOTÕES DO CABEÇALHO */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
           <button onClick={() => setActiveTab("ams")} style={{ padding: "10px 4px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: activeTab === "ams" ? "#0284c7" : "#1e293b", color: activeTab === "ams" ? "#fff" : "#94a3b8" }}>
             🖨️ AMS
@@ -841,50 +972,248 @@ export default function App() {
         </div>
       )}
 
-      {/* ABA 4: GRAVAR TAG */}
+      {/* ABA 4: GRAVAR TAG (RESTAURADA COMPLETA) */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 14px" }}>Gravar / Gerar Tag NFC</h2>
+          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 4px" }}>Gravar / Gerar Tag NFC</h2>
+          <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 14px" }}>
+            Vincule um carretel já existente do Almoxarifado ou crie uma tag nova padronizada.
+          </p>
+
           <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag ID</label>
-              <input type="text" value={customTagId} onChange={(e) => setCustomTagId(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700 }} required />
+            {/* Opção 1: Vincular carretel já existente */}
+            {inventory.length > 0 && (
+              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #38bdf8" }}>
+                <label style={{ display: "block", fontSize: 11, color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>
+                  📦 VINCULAR CARRETEL JÁ EXISTENTE DO ALMOXARIFADO ({inventory.length} carretéis)
+                </label>
+                <select
+                  onChange={handleSelectExistingSpool}
+                  defaultValue=""
+                  style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#f8fafc", fontSize: 13, boxSizing: "border-box" }}
+                >
+                  <option value="">Selecione um carretel do seu estoque para preencher...</option>
+                  {inventory.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.color_name} ({s.brand} - {s.material}) • Saldo: {s.current_weight}g
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Opção 2: Importar preset do Bambu Studio */}
+            {presets.length > 0 && (
+              <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+                <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 4 }}>
+                  ⚡ OU IMPORTAR PERFIL DO BAMBU STUDIO ({presets.length} perfis)
+                </label>
+                <select
+                  onChange={handleSelectPreset}
+                  defaultValue=""
+                  style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#f8fafc", fontSize: 13, boxSizing: "border-box" }}
+                >
+                  <option value="">Selecione um preset para autocompletar...</option>
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.brand} - {p.material})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Código e Link da Tag */}
+            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <label style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>CÓDIGO PADRÃO DA TAG</label>
+                <button
+                  type="button"
+                  onClick={() => setCustomTagId(generateAutoTagId(material, colorName))}
+                  style={{ background: "none", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: 11 }}
+                >
+                  🔄 Gerar Novo ID
+                </button>
+              </div>
+              <input
+                type="text"
+                value={customTagId}
+                onChange={(e) => setCustomTagId(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700, fontSize: 14, boxSizing: "border-box" }}
+                required
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 6 }}>
+                <div style={{ fontSize: 11, color: "#64748b", wordBreak: "break-all" }}>
+                  Link: https://filamap.pages.dev/?tag={customTagId}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyTagUrl(customTagId)}
+                  style={{ background: "#0369a1", color: "#fff", border: "none", padding: "4px 10px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                >
+                  📋 Copiar Link p/ NFC Tools
+                </button>
+              </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+
+            {/* Marca */}
+            <div style={{ display: "grid", gridTemplateColumns: selectedBrand === "Outra..." ? "1fr 1fr" : "1fr", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Marca</label>
-                <select value={selectedBrand} onChange={(e) => setSelectedBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Marca do Filamento</label>
+                <select
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                >
                   {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
               </div>
+              {selectedBrand === "Outra..." && (
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Nome da Marca</label>
+                  <input
+                    type="text"
+                    value={customBrandName}
+                    onChange={(e) => setCustomBrandName(e.target.value)}
+                    placeholder="Nome..."
+                    style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Material e Preço */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Material</label>
-                <select value={material} onChange={(e) => setMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Material</label>
+                <select
+                  value={material}
+                  onChange={(e) => {
+                    setMaterial(e.target.value);
+                    setCustomTagId(generateAutoTagId(e.target.value, colorName));
+                  }}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                >
                   <option value="PETG">PETG</option>
                   <option value="PLA">PLA</option>
                   <option value="ABS">ABS</option>
                   <option value="TPU">TPU</option>
                 </select>
               </div>
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: "#cbd5e1" }}>Cor</label>
-              <input type="text" value={colorName} onChange={(e) => setColorName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 11, color: "#94a3b8" }}>Peso Balança (g)</label>
-                <input type="number" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
-                <input type="number" value={tareWeight} onChange={(e) => setTareWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Preço Pago por 1kg (R$)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={spoolPrice}
+                  onChange={(e) => setSpoolPrice(e.target.value)}
+                  style={{ width: "100%", padding: "10px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 14, boxSizing: "border-box" }}
+                  required
+                />
               </div>
             </div>
-            <button type="submit" disabled={isWriting} style={{ padding: 12, background: isWriting ? "#0369a1" : "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: isWriting ? "not-allowed" : "pointer" }}>
-              {isWriting ? "📡 Aproxime o celular da tag..." : "📲 Gravar / Salvar Tag"}
+
+            {/* Cores com Paleta, RGB e HEX */}
+            <div style={{ background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <label style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 700 }}>Cor do Filamento</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "#94a3b8" }}>Visual:</span>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: colorHex, border: "2px solid #ffffff" }} />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+                {colorPresets.map((c) => (
+                  <button
+                    type="button"
+                    key={c.hex}
+                    onClick={() => updateFromHex(c.hex, c.name)}
+                    style={{ width: 26, height: 26, borderRadius: "50%", backgroundColor: c.hex, border: colorHex.toUpperCase() === c.hex ? "2px solid #38bdf8" : "1px solid #475569", cursor: "pointer" }}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={colorHex}
+                  onChange={(e) => updateFromHex(e.target.value)}
+                  style={{ width: 30, height: 30, border: "none", background: "transparent", cursor: "pointer" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 2 }}>R</label>
+                  <input type="number" min="0" max="255" value={rgb.r} onChange={(e) => updateFromRgb("r", e.target.value)} style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #ef4444", borderRadius: 6, color: "#fff", textAlign: "center", fontWeight: 700, boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 2 }}>G</label>
+                  <input type="number" min="0" max="255" value={rgb.g} onChange={(e) => updateFromRgb("g", e.target.value)} style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #22c55e", borderRadius: 6, color: "#fff", textAlign: "center", fontWeight: 700, boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#3b82f6", fontWeight: 700, marginBottom: 2 }}>B</label>
+                  <input type="number" min="0" max="255" value={rgb.b} onChange={(e) => updateFromRgb("b", e.target.value)} style={{ width: "100%", padding: "6px 8px", background: "#1e293b", border: "1px solid #3b82f6", borderRadius: 6, color: "#fff", textAlign: "center", fontWeight: 700, boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", fontWeight: 700, marginBottom: 2 }}>HEX</label>
+                  <input type="text" value={colorHex} onChange={(e) => updateFromHex(e.target.value)} style={{ width: "100%", padding: "6px 6px", background: "#1e293b", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", textAlign: "center", fontWeight: 700, fontSize: 12, boxSizing: "border-box" }} />
+                </div>
+              </div>
+
+              <input
+                type="text"
+                value={colorName}
+                onChange={(e) => {
+                  setColorName(e.target.value);
+                  setCustomTagId(generateAutoTagId(material, e.target.value));
+                }}
+                placeholder="Nome da cor..."
+                style={{ width: "100%", padding: "8px 10px", background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }}
+                required
+              />
+            </div>
+
+            {/* Pesagem e Taras Rápidas */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#0f172a", padding: 12, borderRadius: 8, border: "1px solid #334155" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Peso na Balança (g)</label>
+                  <input type="number" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} required />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>Tara do Carretel (g)</label>
+                  <input type="number" value={tareWeight} onChange={(e) => setTareWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} required />
+                </div>
+              </div>
+
+              <div>
+                <span style={{ fontSize: 10, color: "#cbd5e1", display: "block", marginBottom: 4 }}>Taras Rápidas:</span>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {TARE_PRESETS.map((t) => (
+                    <button
+                      type="button"
+                      key={t.val}
+                      onClick={() => setTareWeight(t.val)}
+                      style={{ background: tareWeight === t.val ? "#0284c7" : "#1e293b", color: tareWeight === t.val ? "#fff" : "#94a3b8", border: "1px solid #334155", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer" }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ textAlign: "right", fontSize: 12, color: "#38bdf8", fontWeight: 700, borderTop: "1px solid #1e293b", paddingTop: 6 }}>
+                Saldo Líquido: {Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0))}g
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isWriting}
+              style={{ background: isWriting ? "#0369a1" : "#0284c7", color: "#fff", border: "none", padding: 14, borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: isWriting ? "not-allowed" : "pointer" }}
+            >
+              {isWriting ? "📡 Aproxime o celular da tag..." : "📲 Gravar Tag NFC & Salvar"}
             </button>
           </form>
+
           {feedbackMsg && <div style={{ marginTop: 10, padding: 8, background: "#0f172a", borderRadius: 6, color: "#38bdf8", fontSize: 12 }}>{feedbackMsg}</div>}
           {nfcError && <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>{nfcError}</div>}
         </div>

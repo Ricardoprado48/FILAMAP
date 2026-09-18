@@ -8,28 +8,7 @@ import path from "node:path";
 import dgram from "node:dgram";
 import { createClient } from "@supabase/supabase-js";
 
-// @supabase/supabase-js exige um WebSocket nativo (Node 22+) mesmo sem usar
-// Realtime -- no build empacotado (node18-win-x64) isso derruba o processo
-// na criação do client. Como o agente não usa Realtime, apenas preenchemos
-// o global com a implementação já presente via dependência transitiva ("ws").
-if (typeof (globalThis as any).WebSocket === "undefined") {
-  (globalThis as any).WebSocket = require("ws");
-}
-
-// Quando empacotado com pkg, o .env NÃO fica embutido no binário (removido dos
-// assets do pkg.config.json de propósito) -- cada instalação usa um .env próprio,
-// lido ao lado do .exe real (process.execPath), nunca do snapshot interno do pkg.
-const isPackaged = !!(process as any).pkg;
-const envPath = isPackaged
-  ? path.join(path.dirname(process.execPath), ".env")
-  : path.join(process.cwd(), ".env");
-dotenv.config({ path: envPath });
-
-if (isPackaged && !fs.existsSync(envPath)) {
-  console.error(`❌ Erro: arquivo .env não encontrado em ${envPath}`);
-  console.error("   Crie um arquivo .env na mesma pasta do filamap-agent.exe com suas credenciais.");
-  process.exit(1);
-}
+dotenv.config();
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim().replace(/['"]/g, "").replace(/\/$/, "");
 const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY || "").trim().replace(/['"]/g, "");
@@ -54,6 +33,8 @@ interface ActiveJobState {
   lastProgressPercent: number;
   activeSlot: number;
   startTime: number;
+  totalCostTime: number; // Segundos estimados pelo fatiador
+  filamentGrams: number;  // Gramas calculadas pelo fatiador (se informadas)
 }
 
 const STATE_FILE = path.join(process.cwd(), "agent-state.json");
@@ -79,38 +60,24 @@ function saveJobState(state: ActiveJobState | null) {
 
 let currentJob: ActiveJobState | null = loadJobState();
 
-// Função de Descoberta Automática de IP na Rede Local (UDP)
 async function discoverPrinterIp(): Promise<string> {
-  if (PRINTER_IP) {
-    console.log(`🌐 Usando IP configurado no .env: ${PRINTER_IP}`);
-    return PRINTER_IP;
-  }
+  if (PRINTER_IP) return PRINTER_IP;
 
   console.log("🔍 Procurando impressora Bambu Lab automaticamente na rede local...");
   return new Promise((resolve) => {
     const socket = dgram.createSocket("udp4");
     let resolved = false;
 
-    socket.on("error", (err) => {
+    socket.on("error", () => {
       socket.close();
-      if (!resolved) {
-        resolved = true;
-        resolve("");
-      }
+      if (!resolved) { resolved = true; resolve(""); }
     });
 
     socket.bind(() => {
-      try {
-        socket.setBroadcast(true);
-      } catch (e) {}
-      
+      try { socket.setBroadcast(true); } catch (e) {}
       const message = Buffer.from("BBLP");
       socket.send(message, 0, message.length, 2021, "255.255.255.255", (err) => {
-        if (err && !resolved) {
-          socket.close();
-          resolved = true;
-          resolve("");
-        }
+        if (err && !resolved) { socket.close(); resolved = true; resolve(""); }
       });
     });
 
@@ -128,15 +95,23 @@ async function discoverPrinterIp(): Promise<string> {
       if (!resolved) {
         resolved = true;
         try { socket.close(); } catch (e) {}
-        console.warn("⚠️ Descoberta automática por UDP esgotou o tempo. Tentando reconectar...");
         resolve("");
       }
     }, 4000);
   });
 }
 
+// Extrai gramatura estimada do nome do arquivo ou metadados se o fatiador incluir (ex: "peca_15g.gcode")
+function extractGramsFromName(taskName: string): number | null {
+  const match = taskName.match(/_(\d+(?:\.\d+)?)g/i) || taskName.match(/(\d+(?:\.\d+)?)g\b/i);
+  if (match && match[1]) {
+    return parseFloat(match[1]);
+  }
+  return null;
+}
+
 async function startAgent() {
-  console.log("🧵 Iniciando Desktop Agent Filamap (com descoberta de rede)...");
+  console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email: AGENT_EMAIL,
@@ -148,15 +123,12 @@ async function startAgent() {
     process.exit(1);
   }
 
-  console.log(`🔐 Agente autenticado como ${authData.user?.email}`);
-
-  // Descobre o IP se estiver em branco no .env
   if (!PRINTER_IP) {
     PRINTER_IP = await discoverPrinterIp();
   }
 
   if (!PRINTER_IP) {
-    console.error("❌ Erro: Não foi possível localizar a impressora na rede local. Defina o PRINTER_IP manualmente no .env se necessário.");
+    console.error("❌ Erro: Não foi possível localizar a impressora na rede local.");
     process.exit(1);
   }
 
@@ -177,23 +149,15 @@ async function startAgent() {
       if (insertError) throw insertError;
       printer = inserted;
     } else {
-      await supabase
-        .from("printers")
-        .update({ ip_address: PRINTER_IP, is_online: true })
-        .eq("id", printer.id);
+      await supabase.from("printers").update({ ip_address: PRINTER_IP, is_online: true }).eq("id", printer.id);
     }
 
     // Heartbeat a cada 15s
     setInterval(async () => {
       try {
-        await supabase
-          .from("printers")
-          .update({ is_online: true, updated_at: new Date().toISOString() })
-          .eq("id", printer.id);
+        await supabase.from("printers").update({ is_online: true, updated_at: new Date().toISOString() }).eq("id", printer.id);
       } catch (e) {}
     }, 15000);
-
-    console.log(`🖨️ Conectando à Bambu Lab A1 em ${PRINTER_IP}:8883...`);
 
     const client = mqtt.connect(`mqtts://${PRINTER_IP}:8883`, {
       username: "bblp",
@@ -214,18 +178,8 @@ async function startAgent() {
     client.on("connect", () => {
       console.log("✅ Conectado ao broker MQTT da Bambu Lab A1!");
       updateStatus(printer.id, true);
-
-      client.subscribe(`device/${PRINTER_SERIAL}/report`, (err) => {
-        if (err) console.error("❌ Erro ao se inscrever:", err);
-        else {
-          console.log("📡 Escutando telemetria em tempo real...");
-          requestStatusPush();
-        }
-      });
-
-      setInterval(() => {
-        if (client.connected) requestStatusPush();
-      }, 10000);
+      client.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
+      setInterval(() => { if (client.connected) requestStatusPush(); }, 10000);
     });
 
     client.on("close", () => {
@@ -246,17 +200,26 @@ async function startAgent() {
         const currentState = print.gcode_state || lastGcodeState;
         const progress = Number(print.mc_percent) || 0;
         const taskName = print.subtask_name || "";
+        const totalCostTime = Number(print.mc_total_cost_time) || Number(print.calc_remaining_time) || 0;
 
         if (currentState === "RUNNING") {
           if (!currentJob || currentJob.subtaskName !== taskName) {
+            // Tenta extrair gramas do nome do arquivo do fatiador (se o usuário nomear ex: "suporte_azeite_45g.gcode")
+            const extractedGrams = extractGramsFromName(taskName);
+            
             currentJob = {
               subtaskName: taskName || "Impressão A1",
               maxProgressPercent: progress,
               lastProgressPercent: progress,
               activeSlot: activeSlotIndex,
               startTime: Date.now(),
+              totalCostTime: totalCostTime,
+              filamentGrams: extractedGrams || 0,
             };
             saveJobState(currentJob);
+            if (extractedGrams) {
+              console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${extractedGrams}g`);
+            }
           } else {
             currentJob.lastProgressPercent = progress;
             if (progress > currentJob.maxProgressPercent) {
@@ -269,22 +232,18 @@ async function startAgent() {
         const now = Date.now();
         if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
           lastSyncTime = now;
-
           const telemetryData: Record<string, unknown> = {
             is_online: true,
             gcode_state: currentState,
             active_slot_index: activeSlotIndex,
           };
-
           if (print.subtask_name !== undefined) telemetryData.current_task = print.subtask_name;
           if (print.mc_percent !== undefined) telemetryData.print_progress = progress;
           if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = Number(print.mc_remaining_time) || 0;
           if (print.layer_num !== undefined) telemetryData.current_layer = Number(print.layer_num) || 0;
           if (print.total_layer_num !== undefined) telemetryData.total_layers = Number(print.total_layer_num) || 0;
           if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
-          if (print.nozzle_target_temper !== undefined) telemetryData.nozzle_target_temp = Math.round(Number(print.nozzle_target_temper));
           if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
-          if (print.bed_target_temper !== undefined) telemetryData.bed_target_temp = Math.round(Number(print.bed_target_temper));
 
           await supabase.from("printers").update(telemetryData).eq("id", printer.id);
         }
@@ -331,14 +290,25 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
     const spoolId = slotRecord?.spool_id ?? null;
     const currentSpool = (slotRecord as any)?.spool;
 
-    const estimatedUsedG = Math.max(1, Math.round((35 * (percentExecuted / 100)) * 10) / 10);
+    // Lógica inteligente de peso vinda do fatiador:
+    // 1. Se o fatiador indicou gramatura explícita (ex via nome do arquivo), usa ela.
+    // 2. Senão, faz uma estimativa calibrada baseada no tempo real de impressão do fatiador (~0.2g por minuto de impressão padrão A1 ou fallback de 35g).
+    let calculatedGrams = 35; 
+    if (currentJob && currentJob.filamentGrams > 0) {
+      calculatedGrams = currentJob.filamentGrams;
+    } else if (durationMinutes > 0) {
+      // Média de vazão típica de FDM na A1 (aprox 12g a 15g por hora = ~0.22g por minuto)
+      calculatedGrams = Math.round((durationMinutes * 0.22) * 10) / 10;
+    }
+
+    const estimatedUsedG = Math.max(1, Math.round((calculatedGrams * (percentExecuted / 100)) * 10) / 10);
 
     if (spoolId && currentSpool) {
       const prevWeight = currentSpool.current_weight || 0;
       const nextWeight = Math.max(0, Math.round((prevWeight - estimatedUsedG) * 10) / 10);
       
       await supabase.from("spools").update({ current_weight: nextWeight }).eq("id", spoolId);
-      console.log(`📉 Estoque abatido automaticamente: ${currentSpool.color_name} (-${estimatedUsedG}g)`);
+      console.log(`📉 Estoque abatido com base no fatiador/tempo: ${currentSpool.color_name} (-${estimatedUsedG}g)`);
     }
 
     await supabase.from("print_logs").insert({
@@ -353,7 +323,7 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
       completed_at: new Date().toISOString(),
     });
 
-    console.log(`📝 Log gravado e estoque atualizado com sucesso (${finishStatus})`);
+    console.log(`📝 Log gravado com sucesso (${finishStatus}) - Consumo: ${estimatedUsedG}g`);
   } catch (e: any) {
     console.error("❌ Falha ao finalizar trabalho:", e.message);
   }

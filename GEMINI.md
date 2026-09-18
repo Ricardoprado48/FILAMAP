@@ -4,31 +4,39 @@ Este arquivo é a porta de entrada obrigatória para qualquer nova conversa ou a
 
 ## 1. Regra principal
 
-**A conversa não é a memória oficial do projeto.**
+**A ordem de precedência para decidir o que é verdade sobre o projeto é:**
 
-A ordem de precedência para decidir o que é verdade é:
+1. `FILAMAP_USER_JOURNEY_ARQUITETURA.md` — **fonte oficial de estado e
+   visão do projeto**, por decisão explícita do responsável pelo produto.
+   Contém, na Seção 62, o estado real de implementação mais atual
+   conhecido, incluindo achados de auditorias técnicas.
+2. código atualmente versionado no repositório;
+3. migrations e configuração realmente presentes no repositório;
+4. `docs/07_CURRENT_STATE.md` e demais documentação técnica em `docs/`;
+5. histórico de conversa apenas como contexto auxiliar.
 
-1. código atualmente versionado no repositório;
-2. migrations e configuração realmente presentes no repositório;
-3. `docs/07_CURRENT_STATE.md`;
-4. documentação técnica em `docs/`;
-5. `FILAMAP_ARQUITETURA_DA_JORANDA_DO_USUARIO.md` como visão de produto/arquitetura-alvo;
-6. histórico de conversa apenas como contexto auxiliar.
+Se `FILAMAP_USER_JOURNEY_ARQUITETURA.md` e o código divergirem, **não
+escolha silenciosamente um dos dois**. Informe a divergência e sinalize
+para que a Seção 62 daquele documento seja atualizada — ela é o registro
+que deve refletir a realidade mais recente confirmada.
 
-Se documentação e código divergirem, **não escolha silenciosamente um dos dois**. Informe a divergência e trate o código atual como estado implementado até que a documentação seja corrigida.
+A documentação em `docs/00`–`09` continua útil como detalhamento técnico
+(schema, features, regras de negócio, backlog), mas qualquer conflito
+sobre **estado atual do projeto** é resolvido a favor de
+`FILAMAP_USER_JOURNEY_ARQUITETURA.md`.
 
 ## 2. Leitura obrigatória antes de alterar código
 
 Antes de qualquer implementação:
 
 1. Leia este `GEMINI.md`.
-2. Leia `docs/00_PROJECT_CONTEXT.md`.
-3. Leia `docs/07_CURRENT_STATE.md`.
+2. Leia `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, especialmente a Seção 62
+   (estado real) e as seções de regras/princípios de produto.
+3. Leia `docs/00_PROJECT_CONTEXT.md` e `docs/07_CURRENT_STATE.md` como
+   apoio técnico complementar.
 4. Leia `docs/08_BACKLOG.md`.
 5. Consulte os documentos específicos em `docs/` relacionados à tarefa.
 6. Inspecione os arquivos de código afetados antes de propor alterações.
-
-Não é necessário reler integralmente o documento grande de jornada em toda tarefa. Consulte as seções relevantes quando a mudança envolver produto, consumo, AMS, MQTT, FTPS, NFC, onboarding ou arquitetura-alvo.
 
 ## 3. Forma de trabalho
 
@@ -47,12 +55,13 @@ Não é necessário reler integralmente o documento grande de jornada em toda ta
 
 Faça uma análise curta contendo:
 
-- o que encontrou no estado atual;
+- o que encontrou no estado atual (cruzando código real com a Seção 62 de
+  `FILAMAP_USER_JOURNEY_ARQUITETURA.md`);
 - quais arquivos serão alterados;
 - qual comportamento será preservado;
 - quais riscos ou dependências existem.
 
-Se houver uma divergência importante entre documentação, migrations e código, sinalize antes de seguir.
+Se houver uma divergência importante entre `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, migrations e código, sinalize antes de seguir — não decida sozinho qual está certo.
 
 ## 5. Depois de implementar
 
@@ -66,9 +75,9 @@ Informe objetivamente:
 
 Atualize a documentação **somente quando a alteração mudar o estado real do produto**:
 
-- `docs/07_CURRENT_STATE.md` — estado funcional atual;
-- `docs/08_BACKLOG.md` — pendências/prioridades;
-- `docs/09_CHANGELOG.md` — alterações relevantes;
+- `FILAMAP_USER_JOURNEY_ARQUITETURA.md` (Seção 62) — estado funcional atual, fonte oficial;
+- `docs/08_BACKLOG.md` — pendências/prioridades técnicas;
+- `docs/09_CHANGELOG.md` — histórico técnico;
 - `docs/06_DECISIONS.md` — decisões arquiteturais ou de produto duradouras;
 - outros documentos de `docs/` quando a mudança os tornar incorretos.
 
@@ -80,7 +89,7 @@ Atualize a documentação **somente quando a alteração mudar o estado real do 
 - Credenciais LAN da impressora devem permanecer locais sempre que possível e nunca ser documentadas em texto claro.
 - Isolamento de dados por usuário via RLS é obrigatório.
 - Baixa de estoque deve ser idempotente/segura contra duplicidade antes de ser considerada confiável para produção.
-- Não inventar consumo quando o dado autoritativo não estiver disponível sem deixar explícita a qualidade/origem da estimativa.
+- Não inventar consumo quando o dado autoritativo não estiver disponível sem deixar explícita a qualidade/origem da estimativa (`needs_weighing`/`consumption_quality` deve refletir a realidade — ver pendência crítica registrada na Seção 62 do documento oficial).
 
 ## 7. Segurança e segredos
 
@@ -115,6 +124,7 @@ Em especial, validar antes de considerar concluído:
 
 ## 10. Documentação principal
 
+- `FILAMAP_USER_JOURNEY_ARQUITETURA.md` — **fonte oficial de estado e visão do produto** (ver Seção 62).
 - `docs/00_PROJECT_CONTEXT.md` — visão rápida e objetivo do produto.
 - `docs/01_ARCHITECTURE.md` — arquitetura implementada e alvo.
 - `docs/02_DATABASE.md` — schema conhecido, RLS e lacunas de migrations.
@@ -122,13 +132,12 @@ Em especial, validar antes de considerar concluído:
 - `docs/04_USER_JOURNEYS.md` — jornadas reais e desejadas.
 - `docs/05_BUSINESS_RULES.md` — regras duradouras.
 - `docs/06_DECISIONS.md` — decisões e ADRs resumidos.
-- `docs/07_CURRENT_STATE.md` — snapshot operacional atual.
+- `docs/07_CURRENT_STATE.md` — snapshot operacional técnico (complementar).
 - `docs/08_BACKLOG.md` — pendências priorizadas.
 - `docs/09_CHANGELOG.md` — histórico técnico relevante.
-- `FILAMAP_ARQUITETURA_DA_JORANDA_DO_USUARIO.md` — documento detalhado de visão e arquitetura de produto.
 
 ## 11. Regra para encerrar uma sessão de IA
 
-Antes de encerrar um bloco significativo de trabalho, garanta que `docs/07_CURRENT_STATE.md` e `docs/08_BACKLOG.md` continuam verdadeiros. Se uma decisão permanente mudou, registre em `docs/06_DECISIONS.md`.
+Antes de encerrar um bloco significativo de trabalho, garanta que a Seção 62 de `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, `docs/08_BACKLOG.md` e `docs/09_CHANGELOG.md` continuam verdadeiros. Se uma decisão permanente mudou, registre em `docs/06_DECISIONS.md`.
 
-O objetivo é permitir que uma conversa nova continue o projeto sem depender da memória da conversa anterior.
+O objetivo é permitir que uma conversa nova continue o projeto sem depender da memória da conversa anterior — usando `FILAMAP_USER_JOURNEY_ARQUITETURA.md` como ponto de partida.

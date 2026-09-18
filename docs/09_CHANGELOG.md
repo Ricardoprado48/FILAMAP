@@ -2,6 +2,55 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 18/09/2026 — Leitura de tag na aba AMS nunca reconhecia carretel já gravado
+
+- causa raiz confirmada: `writeTagUrl` (aba Tags) grava um registro NDEF do
+  tipo `url` cujo conteúdo é `https://filamap.pages.dev/?tag=<finalTagId>`
+  — `spools.nfc_uid` guarda só o `<finalTagId>` (ex.: `FILA-PETG-...` ou
+  valor customizado). Já `startScanning` (`web-app/src/hooks/useNfc.ts`)
+  usava `event.serialNumber` — o número de série de **hardware do chip**,
+  uma propriedade do NDEFReadingEvent totalmente independente do conteúdo
+  gravado nele. Os dois nunca coincidem, então `handleAssignSlot` nunca
+  encontrava o spool existente e sempre criava um placeholder novo
+  (`Voolt3D`/`PETG`/`Preto`/1000g/218g);
+- corrigido em `useNfc.ts`: `onreading` agora decodifica o registro NDEF
+  lido (`event.message.records`), extrai o parâmetro `tag` da URL gravada
+  e usa esse valor como `nfcUid` — a mesma string que `spools.nfc_uid`
+  guarda. `event.serialNumber` vira fallback só para tags que nunca
+  passaram pelo fluxo de gravação do app (sem registro NDEF reconhecível);
+- **possível dado afetado (não corrigido nesta sessão, a pedido — ajuste
+  manual)**: qualquer spool com `brand='Voolt3D'`, `material='PETG'`,
+  `color_name='Preto'`, `current_weight=1000`, `spool_tare_weight=218` e
+  `nfc_uid` no formato de serial de hardware (ex.: hexadecimal com `:`),
+  em vez do padrão `FILA-...` ou de um ID customizado, é candidato a ter
+  sido criado por este bug ao tentar ler uma tag já gravada (ex.: o
+  "Vermelho Velvet" citado) pela aba AMS. O carretel original citado pelo
+  usuário não deve ter sido alterado por este bug — o efeito colateral é a
+  criação de um spool "fantasma" adicional, não a corrupção do original.
+
+## 18/09/2026 — Falha silenciosa ao salvar edição de carretel
+
+- investigado relato de que a Tara editada no modal "Editar Carretel" não
+  persistia: conferido campo a campo, `handleSaveEdit` (`web-app/src/App.tsx`)
+  já incluía `brand`, `material`, `color_name`, `color_hex`,
+  `spool_tare_weight`, `current_weight` e `price_paid` no payload do
+  `UPDATE` — nenhum campo exibido/editável no modal estava faltando;
+- causa raiz real: a chamada ao Supabase não verificava o retorno (`error`
+  nem linhas afetadas). No PostgREST/Supabase, quando o RLS filtra a linha
+  alvo de um `UPDATE` (ex.: registro cujo `user_id` não é o do usuário
+  logado — consistente com o achado anterior de que alguns carretéis têm
+  valores "crus" de default, indício de inserção fora do fluxo normal do
+  app), a operação retorna sucesso com 0 linhas afetadas, sem `error`. O
+  modal fechava e recarregava como se tivesse salvo, mas nada mudava no
+  banco — exatamente o sintoma relatado;
+- corrigido: `handleSaveEdit` agora usa `.select()` no `update` e verifica
+  tanto `error` quanto `data.length === 0`; em qualquer um dos dois casos,
+  mostra alerta e mantém o modal aberto (sem descartar o que o usuário
+  digitou), só fecha e recarrega em sucesso confirmado;
+- não foi alterado schema nem corrigidos dados existentes — se o carretel
+  de teste realmente estiver sem `user_id` compatível, isso é um problema
+  de dado, fora do escopo desta correção.
+
 ## 18/09/2026 — Leitura de tag NFC ligada ao fluxo de slot do AMS
 
 - aba AMS (`web-app/src/App.tsx`): cada slot vazio ganhou o botão "📡 Ler tag

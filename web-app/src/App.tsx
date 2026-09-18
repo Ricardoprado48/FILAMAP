@@ -402,12 +402,25 @@ export default function App() {
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!editingSpool) return;
-    await supabase.from("spools").update({
+    const { data, error } = await supabase.from("spools").update({
       brand: editBrand, material: editMaterial, color_name: editColorName,
       color_hex: editColorHex, spool_tare_weight: parseFloat(editTare) || 218,
       current_weight: parseFloat(editWeight) || 0,
       price_paid: parseFloat(editPrice) || 85.00,
-    }).eq("id", editingSpool.id);
+    }).eq("id", editingSpool.id).select();
+
+    if (error) {
+      alert("Erro ao salvar carretel: " + error.message);
+      return;
+    }
+    // RLS pode filtrar a linha do UPDATE (ex.: registro sem user_id compatível
+    // com o usuário logado) sem retornar erro — nesse caso 0 linhas são
+    // afetadas e o valor digitado nunca chega a ser persistido.
+    if (!data || data.length === 0) {
+      alert("Não foi possível salvar: o carretel não foi encontrado ou você não tem permissão para editá-lo neste registro.");
+      return;
+    }
+
     setEditingSpool(null);
     await loadData();
   }

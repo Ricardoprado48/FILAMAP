@@ -2,6 +2,29 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 18/09/2026 — Falha silenciosa ao salvar edição de carretel
+
+- investigado relato de que a Tara editada no modal "Editar Carretel" não
+  persistia: conferido campo a campo, `handleSaveEdit` (`web-app/src/App.tsx`)
+  já incluía `brand`, `material`, `color_name`, `color_hex`,
+  `spool_tare_weight`, `current_weight` e `price_paid` no payload do
+  `UPDATE` — nenhum campo exibido/editável no modal estava faltando;
+- causa raiz real: a chamada ao Supabase não verificava o retorno (`error`
+  nem linhas afetadas). No PostgREST/Supabase, quando o RLS filtra a linha
+  alvo de um `UPDATE` (ex.: registro cujo `user_id` não é o do usuário
+  logado — consistente com o achado anterior de que alguns carretéis têm
+  valores "crus" de default, indício de inserção fora do fluxo normal do
+  app), a operação retorna sucesso com 0 linhas afetadas, sem `error`. O
+  modal fechava e recarregava como se tivesse salvo, mas nada mudava no
+  banco — exatamente o sintoma relatado;
+- corrigido: `handleSaveEdit` agora usa `.select()` no `update` e verifica
+  tanto `error` quanto `data.length === 0`; em qualquer um dos dois casos,
+  mostra alerta e mantém o modal aberto (sem descartar o que o usuário
+  digitou), só fecha e recarrega em sucesso confirmado;
+- não foi alterado schema nem corrigidos dados existentes — se o carretel
+  de teste realmente estiver sem `user_id` compatível, isso é um problema
+  de dado, fora do escopo desta correção.
+
 ## 18/09/2026 — Leitura de tag NFC ligada ao fluxo de slot do AMS
 
 - aba AMS (`web-app/src/App.tsx`): cada slot vazio ganhou o botão "📡 Ler tag

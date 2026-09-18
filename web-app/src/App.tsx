@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 
@@ -170,7 +170,11 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
-  const { isWriting, nfcUid, error: nfcError, writeTagUrl, setNfcUid } = useNfc();
+  const { isReading, isWriting, nfcUid, error: nfcError, writeTagUrl, startScanning, setNfcUid, setError: setNfcErrorState } = useNfc();
+
+  // Leitura de NFC para associar carretel a um slot do AMS
+  const [scanningSlot, setScanningSlot] = useState<number | null>(null);
+  const scanTimeoutRef = useRef<number | null>(null);
 
   async function loadData() {
     if (!session) return;
@@ -286,6 +290,52 @@ export default function App() {
     await supabase.from("catalog_items").delete().eq("id", id);
     await loadData();
   }
+
+  function clearScanTimeout() {
+    if (scanTimeoutRef.current) {
+      window.clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+  }
+
+  async function handleScanSlot(slotIdx: number) {
+    clearScanTimeout();
+    setNfcUid(null);
+    setNfcErrorState(null);
+    setScanningSlot(slotIdx);
+    scanTimeoutRef.current = window.setTimeout(() => {
+      setScanningSlot((curr) => (curr === slotIdx ? null : curr));
+      setNfcErrorState("Tempo esgotado aguardando a tag. Aproxime o celular do carretel e tente novamente.");
+    }, 20000);
+    await startScanning();
+  }
+
+  function handleCancelScan() {
+    clearScanTimeout();
+    setScanningSlot(null);
+    setNfcUid(null);
+  }
+
+  // Assim que uma tag física é lida enquanto um slot aguarda leitura, associa (ou
+  // auto-cria + associa) o carretel correspondente àquele slot.
+  useEffect(() => {
+    if (scanningSlot !== null && nfcUid) {
+      clearScanTimeout();
+      const slotIdx = scanningSlot;
+      setScanningSlot(null);
+      handleAssignSlot(slotIdx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcUid]);
+
+  // Erro de leitura (sem NDEFReader, permissão negada, falha na tag) encerra a espera do slot.
+  useEffect(() => {
+    if (nfcError && scanningSlot !== null) {
+      clearScanTimeout();
+      setScanningSlot(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcError]);
 
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
@@ -545,8 +595,9 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {[0, 1, 2, 3].map((slotIdx) => {
                 const spool = activeSlots[slotIdx];
+                const isScanningThisSlot = scanningSlot === slotIdx && isReading;
                 return (
-                  <div key={slotIdx} onClick={() => nfcUid && handleAssignSlot(slotIdx)} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: "1px solid #334155", minHeight: 120 }}>
+                  <div key={slotIdx} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: isScanningThisSlot ? "1px solid #38bdf8" : "1px solid #334155", minHeight: 120 }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>SLOT {slotIdx + 1}</span>
                       <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? spool.color_hex : "#334155", display: "inline-block" }} />
@@ -558,13 +609,26 @@ export default function App() {
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
                         <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
                       </div>
+                    ) : isScanningThisSlot ? (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 700 }}>📡 Aproxime a tag...</div>
+                        <button onClick={handleCancelScan} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>Cancelar</button>
+                      </div>
                     ) : (
-                      <div style={{ color: "#475569", fontSize: 12, marginTop: 16 }}>Vazio</div>
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ color: "#475569", fontSize: 12, marginBottom: 8 }}>Vazio</div>
+                        <button onClick={() => handleScanSlot(slotIdx)} style={{ width: "100%", padding: 4, background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #38bdf8", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>📡 Ler tag NFC</button>
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
+            {nfcError && (
+              <div style={{ marginTop: 10, padding: 8, background: "rgba(239, 68, 68, 0.1)", border: "1px solid #dc2626", borderRadius: 6, color: "#f87171", fontSize: 12 }}>
+                {nfcError}
+              </div>
+            )}
           </div>
 
           {/* Histórico Recente */}

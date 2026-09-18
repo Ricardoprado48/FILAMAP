@@ -55,10 +55,11 @@ O comportamento atual (`0,22 g/min` / fallback 35 g) não deve ser tratado como 
 
 ### P1.1 — Leitura NFC no frontend
 
-- integrar `startScanning()` à UI;
-- ler `?tag=` no carregamento;
-- resolver spool por tag;
-- fluxo claro de associação ao slot.
+- [x] integrar `startScanning()` à UI (botão "Ler tag NFC" por slot do AMS);
+- [x] resolver spool por tag lida (associa existente ou auto-cria);
+- [x] fluxo claro de associação ao slot (por slot, com timeout/cancelamento);
+- [ ] ler `?tag=` no carregamento (deep link passivo — ainda não
+      interpretado; mecanismo separado do scan ativo acima).
 
 ### P1.2 — Descoberta/re-descoberta robusta
 

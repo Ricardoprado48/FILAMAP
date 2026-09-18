@@ -2,6 +2,35 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 18/09/2026 — Leitura de tag NFC ligada ao fluxo de slot do AMS
+
+- aba AMS (`web-app/src/App.tsx`): cada slot vazio ganhou o botão "📡 Ler tag
+  NFC", que chama `startScanning()` (hook `useNfc`, já existia mas não
+  estava conectado a nenhum elemento da UI) e aguarda a leitura de uma tag
+  física para aquele slot específico;
+- ao ler um `nfcUid`: se já existir `spool` com esse `nfc_uid`, associa ao
+  slot; se não existir, segue o fluxo já corrigido de `handleAssignSlot`
+  (auto-cria com placeholder e abre a edição pré-preenchida na hora);
+- erros tratados com mensagem visível (banner vermelho no painel do AMS):
+  `NDEFReader` ausente no navegador/dispositivo, permissão negada, falha de
+  leitura da tag — todos já reportados pelo hook `useNfc` via `error`; foi
+  adicionado timeout de 20s próprio do fluxo de slot (o hook em si não
+  expõe timeout/cancelamento) e um botão "Cancelar" que interrompe a espera
+  do lado da UI;
+- removido o `onClick` solto que existia no card do slot (associava o
+  `nfcUid` corrente a qualquer slot clicado, sem nunca ter uma forma de
+  popular esse `nfcUid`) — substituído pelo fluxo explícito por botão;
+- investigado (sem alterar) o mecanismo `?tag=<id>` gravado por
+  `handleWriteTag` na URL do NDEF: ele é escrito na tag física para uso
+  como **deep link passivo** (qualquer leitor NFC do SO abre essa URL ao
+  encostar no carretel, mesmo com o app fechado), mas hoje a página não lê
+  `location.search`/`URLSearchParams` no carregamento — confirma a lacuna
+  já registrada em `docs/08_BACKLOG.md` (P1.1: "ler `?tag=` no
+  carregamento"). Não é redundante com `startScanning()`: um é leitura
+  ativa dentro do app (usada agora para vincular um slot do AMS), o outro é
+  abertura passiva do navegador a partir de qualquer leitor NFC do
+  aparelho. Não foi unificado, por estar fora do escopo desta tarefa.
+
 ## 18/09/2026 — Auditoria de todos os pontos de INSERT em `spools`
 
 - levantamento completo (grep por `.from("spools").insert`/`.upsert` em

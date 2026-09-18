@@ -74,11 +74,6 @@ const TARE_PRESETS = [
 ];
 
 export default function App() {
-  const handleUpdateNfc = async (id: string, nfcUid: string) => {
-    const { error } = await supabase.from('spools').update({ nfc_uid: nfcUid }).eq('id', id);
-    if (error) alert('Erro ao atualizar tag: ' + error.message);
-    else alert('Tag NFC vinculada com sucesso!');
-  };
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -112,17 +107,14 @@ export default function App() {
   const [editMaterial, setEditMaterial] = useState("PETG");
   const [editColorName, setEditColorName] = useState("");
   const [editColorHex, setEditColorHex] = useState("#111827");
+  const [editTare, setEditTare] = useState("");
   const [editWeight, setEditWeight] = useState("");
   const [editPrice, setEditPrice] = useState("");
 
-  // Criador de Tags
-  const [selectedBrand, setSelectedBrand] = useState("Voolt3D");
-  const [material, setMaterial] = useState("PETG");
-  const [colorName, setColorName] = useState("Preto");
-  const [colorHex, setColorHex] = useState("#111827");
-  const [grossWeight, setGrossWeight] = useState("1218");
-  const [tareWeight, setTareWeight] = useState("218");
-  const [spoolPrice, setSpoolPrice] = useState("85.00");
+  // Gravação de Tags (vinculada a um carretel já cadastrado no estoque)
+  const [writerSpoolId, setWriterSpoolId] = useState("");
+  const [grossWeight, setGrossWeight] = useState("");
+  const [tareWeight, setTareWeight] = useState("");
   const [customTagId, setCustomTagId] = useState("");
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
@@ -150,10 +142,6 @@ export default function App() {
     const rnd = Math.floor(1000 + Math.random() * 9000);
     return `FILA-${mat.toUpperCase()}-${cleanCol || "COR"}-${rnd}`;
   }
-
-  useEffect(() => {
-    setCustomTagId(generateAutoTagId("PETG", "PRETO"));
-  }, []);
 
   useEffect(() => {
     localStorage.setItem("filamap_energy_tariff", energyTariff);
@@ -341,7 +329,8 @@ export default function App() {
     setEditBrand(spool.brand);
     setEditMaterial(spool.material);
     setEditColorName(spool.color_name);
-    setEditColorHex(spool.color_hex);
+    setEditColorHex(spool.color_hex || "#111827");
+    setEditTare((spool.spool_tare_weight || 218).toString());
     setEditWeight(spool.current_weight.toString());
     setEditPrice((spool.price_paid || 85).toString());
   }
@@ -351,11 +340,22 @@ export default function App() {
     if (!editingSpool) return;
     await supabase.from("spools").update({
       brand: editBrand, material: editMaterial, color_name: editColorName,
-      color_hex: editColorHex, current_weight: parseFloat(editWeight) || 0,
+      color_hex: editColorHex, spool_tare_weight: parseFloat(editTare) || 218,
+      current_weight: parseFloat(editWeight) || 0,
       price_paid: parseFloat(editPrice) || 85.00,
     }).eq("id", editingSpool.id);
     setEditingSpool(null);
     await loadData();
+  }
+
+  function selectWriterSpool(spool: Spool) {
+    setWriterSpoolId(spool.id);
+    setActiveTab("writer");
+    const tare = (spool.spool_tare_weight || 218).toString();
+    setTareWeight(tare);
+    setGrossWeight((spool.current_weight + (parseFloat(tare) || 0)).toString());
+    setCustomTagId(spool.nfc_uid || generateAutoTagId(spool.material, spool.color_name));
+    setFeedbackMsg(null);
   }
 
   async function handleDeleteSpool(spool: Spool) {
@@ -365,20 +365,29 @@ export default function App() {
     await loadData();
   }
 
-  async function handleCreateAndWriteTag(e: React.FormEvent) {
+  async function handleWriteTag(e: React.FormEvent) {
     e.preventDefault();
+    if (!writerSpool) {
+      alert("Selecione um carretel do estoque antes de gravar a tag.");
+      return;
+    }
     const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
-    const finalTagId = customTagId.trim() || `FILA-${material}-${Date.now().toString().slice(-4)}`;
+    const finalTagId = customTagId.trim() || generateAutoTagId(writerSpool.material, writerSpool.color_name);
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
     await writeTagUrl(fullTargetUrl);
 
-    await supabase.from("spools").upsert({
-      nfc_uid: finalTagId, brand: selectedBrand, material, color_name: colorName,
-      color_hex: colorHex, initial_weight: netWeight, current_weight: netWeight,
-      spool_tare_weight: parseFloat(tareWeight) || 218, price_paid: parseFloat(spoolPrice) || 85.00,
-    }, { onConflict: "nfc_uid" });
+    const { error } = await supabase.from("spools").update({
+      nfc_uid: finalTagId,
+      current_weight: netWeight,
+      spool_tare_weight: parseFloat(tareWeight) || 218,
+    }).eq("id", writerSpool.id);
 
-    setFeedbackMsg(`✅ Carretel salvo! Link: ${fullTargetUrl}`);
+    if (error) {
+      alert("Erro ao gravar tag: " + error.message);
+      return;
+    }
+
+    setFeedbackMsg(`✅ Tag gravada no carretel "${writerSpool.color_name}"! Link: ${fullTargetUrl}`);
     await loadData();
   }
 
@@ -404,6 +413,7 @@ export default function App() {
   }, {} as Record<string, Spool[]>);
 
   const pendingWeighingLogs = printLogs.filter((l) => l.needs_weighing);
+  const writerSpool = inventory.find((s) => s.id === writerSpoolId) || null;
 
   const activePrinter = printers[0];
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
@@ -606,6 +616,7 @@ export default function App() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <strong style={{ fontSize: 14, color: "#38bdf8" }}>{spool.current_weight}g</strong>
                           <button onClick={() => openWeighModal(spool)} style={{ background: "#334155", color: "#fff", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>⚖️</button>
+                          <button onClick={() => selectWriterSpool(spool)} title="Gravar tag NFC deste carretel" style={{ background: spool.nfc_uid ? "#0f172a" : "rgba(56, 189, 248, 0.2)", color: "#38bdf8", border: "1px solid #38bdf8", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🏷️</button>
                           <button onClick={() => openEditModal(spool)} style={{ background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✏️</button>
                           <button onClick={() => handleDeleteSpool(spool)} style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🗑️</button>
                         </div>
@@ -899,46 +910,74 @@ export default function App() {
       {/* ABA 4: GRAVAR TAG */}
       {activeTab === "writer" && (
         <div style={{ background: "#1e293b", padding: 18, borderRadius: 12, border: "1px solid #334155" }}>
-          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 14px" }}>Gravar / Gerar Tag NFC</h2>
-          <form onSubmit={handleCreateAndWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <h2 style={{ fontSize: 17, color: "#f8fafc", margin: "0 0 14px" }}>Gravar Tag NFC no Carretel</h2>
+          <form onSubmit={handleWriteTag} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag ID</label>
-              <input type="text" value={customTagId} onChange={(e) => setCustomTagId(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700 }} required />
+              <label style={{ fontSize: 11, color: "#cbd5e1" }}>Selecionar carretel</label>
+              <select
+                value={writerSpoolId}
+                onChange={(e) => {
+                  const spool = inventory.find((s) => s.id === e.target.value);
+                  if (spool) {
+                    selectWriterSpool(spool);
+                  } else {
+                    setWriterSpoolId("");
+                    setCustomTagId("");
+                    setGrossWeight("");
+                    setTareWeight("");
+                  }
+                }}
+                style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                required
+              >
+                <option value="">Selecione um carretel do estoque...</option>
+                {inventory.map((s) => (
+                  <option key={s.id} value={s.id}>{`${s.color_name} — ${s.brand} — ${s.material}`}</option>
+                ))}
+              </select>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Marca</label>
-                <select value={selectedBrand} onChange={(e) => setSelectedBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                  {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "#cbd5e1" }}>Material</label>
-                <select value={material} onChange={(e) => setMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                  <option value="PETG">PETG</option>
-                  <option value="PLA">PLA</option>
-                  <option value="ABS">ABS</option>
-                  <option value="TPU">TPU</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: "#cbd5e1" }}>Cor</label>
-              <input type="text" value={colorName} onChange={(e) => setColorName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "#94a3b8" }}>Peso Balança (g)</label>
-                <input type="number" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
-                <input type="number" value={tareWeight} onChange={(e) => setTareWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              </div>
-            </div>
-            <button type="submit" disabled={isWriting} style={{ padding: 12, background: isWriting ? "#0369a1" : "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: isWriting ? "not-allowed" : "pointer" }}>
-              {isWriting ? "📡 Aproxime o celular da tag..." : "📲 Gravar / Salvar Tag"}
-            </button>
+
+            {writerSpool && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#64748b" }}>Marca</label>
+                    <div style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#cbd5e1", fontSize: 13 }}>{writerSpool.brand}</div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#64748b" }}>Material</label>
+                    <div style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#cbd5e1", fontSize: 13 }}>{writerSpool.material}</div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#64748b" }}>Cor</label>
+                    <div style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#cbd5e1", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: writerSpool.color_hex, display: "inline-block", flexShrink: 0 }} />
+                      {writerSpool.color_name}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag ID</label>
+                  <input type="text" value={customTagId} onChange={(e) => setCustomTagId(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #475569", borderRadius: 6, color: "#38bdf8", fontWeight: 700 }} required />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#94a3b8" }}>Peso Balança (g)</label>
+                    <input type="number" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
+                    <input type="number" value={tareWeight} onChange={(e) => setTareWeight(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                  </div>
+                </div>
+
+                <button type="submit" disabled={isWriting} style={{ padding: 12, background: isWriting ? "#0369a1" : "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: isWriting ? "not-allowed" : "pointer" }}>
+                  {isWriting ? "📡 Aproxime o celular da tag..." : "📲 Gravar / Salvar Tag"}
+                </button>
+              </>
+            )}
           </form>
           {feedbackMsg && <div style={{ marginTop: 10, padding: 8, background: "#0f172a", borderRadius: 6, color: "#38bdf8", fontSize: 12 }}>{feedbackMsg}</div>}
           {nfcError && <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>{nfcError}</div>}
@@ -969,8 +1008,56 @@ export default function App() {
           <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
             <h3 style={{ margin: "0 0 10px", color: "#fff" }}>✏️ Editar Carretel</h3>
             <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <input type="text" value={editColorName} onChange={(e) => setEditColorName(e.target.value)} placeholder="Cor" style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca</label>
+                  <select value={editBrand} onChange={(e) => setEditBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
+                    {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Material</label>
+                  <select value={editMaterial} onChange={(e) => setEditMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
+                    <option value="PETG">PETG</option>
+                    <option value="PLA">PLA</option>
+                    <option value="ABS">ABS</option>
+                    <option value="TPU">TPU</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor</label>
+                  <input type="text" value={editColorName} onChange={(e) => setEditColorName(e.target.value)} placeholder="Cor" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tom</label>
+                  <input type="color" value={editColorHex} onChange={(e) => setEditColorHex(e.target.value)} style={{ width: "100%", height: 34, padding: 2, background: "#0f172a", border: "1px solid #334155", borderRadius: 6 }} />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
+                  <input type="number" value={editTare} onChange={(e) => setEditTare(e.target.value)} placeholder="Tara" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Saldo (g)</label>
+                  <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                </div>
+              </div>
+              {!editingSpool.nfc_uid && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const spool = editingSpool;
+                    setEditingSpool(null);
+                    selectWriterSpool(spool);
+                  }}
+                  style={{ padding: 8, background: "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                >
+                  🏷️ Gravar tag deste carretel
+                </button>
+              )}
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" onClick={() => setEditingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
                 <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>

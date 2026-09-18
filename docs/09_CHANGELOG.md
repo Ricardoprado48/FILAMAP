@@ -2,6 +2,25 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 18/09/2026 — Gravação de tag NFC passa a operar sobre carretel já cadastrado
+
+- aba "Tags" (`web-app/src/App.tsx`) deixou de ser um formulário de criação solta:
+  Marca/Material/Cor agora são somente leitura, vindos de um seletor de `spools`
+  real (query em `inventory`); Tag ID é preenchido a partir de `nfc_uid` do
+  carretel selecionado ou gerado se ainda não houver; Peso Balança e Tara
+  continuam editáveis; o botão de gravar atualiza o spool existente (`UPDATE`
+  por `id`) em vez de criar um novo (antes fazia `upsert` por `nfc_uid`);
+- Estoque ganhou atalho por linha (🏷️) para ir direto à aba Tags com o
+  carretel já pré-selecionado;
+- modal "Editar Carretel" passou a expor marca, material, cor (nome + tom),
+  tara e peso — antes só tinha cor e peso; quando o carretel ainda não tem
+  `nfc_uid`, o modal oferece um botão para ir direto ao fluxo de gravação de
+  tag;
+- removida `handleUpdateNfc`, função que já existia mas não estava conectada
+  a nenhum elemento da UI;
+- nenhuma migration foi criada — `spools.nfc_uid` já cumpre o papel de
+  tag_id/slug do carretel.
+
 ## 18/09/2026 — Documentação de continuidade para IA
 
 - criado `GEMINI.md`;

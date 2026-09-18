@@ -92,7 +92,13 @@ Não existe identificador único de job/finalização que impeça baixa dupla. A
 
 ### NFC de leitura
 
-O hook tem `startScanning()`, porém o App não o chama. A URL `?tag=` é gravada, mas não é interpretada no carregamento da página.
+`startScanning()` já está integrado na aba AMS (botão "Ler tag NFC" por
+slot vazio, com timeout de 20s e cancelamento) e resolve/associa (ou
+auto-cria) o spool pelo `nfc_uid` lido. Continua pendente: a URL `?tag=`
+gravada na tag física é escrita mas não é interpretada no carregamento da
+página (nenhum parsing de `location.search`) — esse é um mecanismo
+diferente (deep link passivo via qualquer leitor NFC do SO, não a leitura
+ativa dentro do app) e segue como lacuna separada.
 
 ### Onboarding
 

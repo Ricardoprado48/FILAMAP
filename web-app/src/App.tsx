@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 
@@ -170,7 +170,11 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
-  const { isWriting, nfcUid, error: nfcError, writeTagUrl, setNfcUid } = useNfc();
+  const { isReading, isWriting, nfcUid, error: nfcError, writeTagUrl, startScanning, setNfcUid, setError: setNfcErrorState } = useNfc();
+
+  // Leitura de NFC para associar carretel a um slot do AMS
+  const [scanningSlot, setScanningSlot] = useState<number | null>(null);
+  const scanTimeoutRef = useRef<number | null>(null);
 
   async function loadData() {
     if (!session) return;
@@ -204,6 +208,12 @@ export default function App() {
       return () => clearInterval(interval);
     }
   }, [session]);
+
+  useEffect(() => {
+    if (!feedbackMsg) return;
+    const timer = setTimeout(() => setFeedbackMsg(null), 5000);
+    return () => clearTimeout(timer);
+  }, [feedbackMsg]);
 
 
   // Cálculos de Orçamento
@@ -281,9 +291,56 @@ export default function App() {
     await loadData();
   }
 
+  function clearScanTimeout() {
+    if (scanTimeoutRef.current) {
+      window.clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+  }
+
+  async function handleScanSlot(slotIdx: number) {
+    clearScanTimeout();
+    setNfcUid(null);
+    setNfcErrorState(null);
+    setScanningSlot(slotIdx);
+    scanTimeoutRef.current = window.setTimeout(() => {
+      setScanningSlot((curr) => (curr === slotIdx ? null : curr));
+      setNfcErrorState("Tempo esgotado aguardando a tag. Aproxime o celular do carretel e tente novamente.");
+    }, 20000);
+    await startScanning();
+  }
+
+  function handleCancelScan() {
+    clearScanTimeout();
+    setScanningSlot(null);
+    setNfcUid(null);
+  }
+
+  // Assim que uma tag física é lida enquanto um slot aguarda leitura, associa (ou
+  // auto-cria + associa) o carretel correspondente àquele slot.
+  useEffect(() => {
+    if (scanningSlot !== null && nfcUid) {
+      clearScanTimeout();
+      const slotIdx = scanningSlot;
+      setScanningSlot(null);
+      handleAssignSlot(slotIdx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcUid]);
+
+  // Erro de leitura (sem NDEFReader, permissão negada, falha na tag) encerra a espera do slot.
+  useEffect(() => {
+    if (nfcError && scanningSlot !== null) {
+      clearScanTimeout();
+      setScanningSlot(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcError]);
+
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
     let { data: spool } = await supabase.from("spools").select("*").eq("nfc_uid", nfcUid).single();
+    let isNewSpool = false;
     if (!spool) {
       const { data: created } = await supabase.from("spools").insert({
         nfc_uid: nfcUid, brand: "Voolt3D", material: "PETG", color_name: "Preto",
@@ -291,6 +348,7 @@ export default function App() {
         spool_tare_weight: 218, price_paid: 85.00,
       }).select().single();
       spool = created;
+      isNewSpool = true;
     }
     if (spool) {
       await supabase.from("ams_slots").upsert({
@@ -298,6 +356,12 @@ export default function App() {
       }, { onConflict: "printer_id,slot_index" });
       setNfcUid(null);
       await loadData();
+      // Tag desconhecida: o carretel foi criado com placeholders (marca/material/cor/
+      // tara/peso fixos), não com dados informados pelo usuário. Abre a edição na hora
+      // para que os valores reais sejam preenchidos antes de ficarem "esquecidos".
+      if (isNewSpool) {
+        openEditModal(spool);
+      }
     }
   }
 
@@ -387,7 +451,12 @@ export default function App() {
       return;
     }
 
-    setFeedbackMsg(`✅ Tag gravada no carretel "${writerSpool.color_name}"! Link: ${fullTargetUrl}`);
+    setFeedbackMsg(`✅ Tag "${finalTagId}" gravada com sucesso no carretel "${writerSpool.color_name}"!`);
+    setWriterSpoolId("");
+    setCustomTagId("");
+    setGrossWeight("");
+    setTareWeight("");
+    setActiveTab("inventory");
     await loadData();
   }
 
@@ -485,6 +554,13 @@ export default function App() {
         </div>
       </header>
 
+      {feedbackMsg && (
+        <div style={{ marginBottom: 16, padding: 10, background: "rgba(52, 211, 153, 0.12)", border: "1px solid #059669", borderRadius: 8, color: "#34d399", fontSize: 13, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <span>{feedbackMsg}</span>
+          <button onClick={() => setFeedbackMsg(null)} style={{ background: "transparent", border: "none", color: "#34d399", cursor: "pointer", fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+
       {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
@@ -519,8 +595,9 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
               {[0, 1, 2, 3].map((slotIdx) => {
                 const spool = activeSlots[slotIdx];
+                const isScanningThisSlot = scanningSlot === slotIdx && isReading;
                 return (
-                  <div key={slotIdx} onClick={() => nfcUid && handleAssignSlot(slotIdx)} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: "1px solid #334155", minHeight: 120 }}>
+                  <div key={slotIdx} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: isScanningThisSlot ? "1px solid #38bdf8" : "1px solid #334155", minHeight: 120 }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>SLOT {slotIdx + 1}</span>
                       <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? spool.color_hex : "#334155", display: "inline-block" }} />
@@ -532,13 +609,26 @@ export default function App() {
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
                         <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
                       </div>
+                    ) : isScanningThisSlot ? (
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ color: "#38bdf8", fontSize: 11, fontWeight: 700 }}>📡 Aproxime a tag...</div>
+                        <button onClick={handleCancelScan} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>Cancelar</button>
+                      </div>
                     ) : (
-                      <div style={{ color: "#475569", fontSize: 12, marginTop: 16 }}>Vazio</div>
+                      <div style={{ marginTop: 6 }}>
+                        <div style={{ color: "#475569", fontSize: 12, marginBottom: 8 }}>Vazio</div>
+                        <button onClick={() => handleScanSlot(slotIdx)} style={{ width: "100%", padding: 4, background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #38bdf8", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>📡 Ler tag NFC</button>
+                      </div>
                     )}
                   </div>
                 );
               })}
             </div>
+            {nfcError && (
+              <div style={{ marginTop: 10, padding: 8, background: "rgba(239, 68, 68, 0.1)", border: "1px solid #dc2626", borderRadius: 6, color: "#f87171", fontSize: 12 }}>
+                {nfcError}
+              </div>
+            )}
           </div>
 
           {/* Histórico Recente */}
@@ -610,7 +700,14 @@ export default function App() {
                           <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b" }} />
                           <div>
                             <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
-                            <div style={{ fontSize: 11, color: "#94a3b8" }}>{spool.brand} • Tag: {spool.nfc_uid}</div>
+                            <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                              <span>{spool.brand}</span>
+                              {spool.nfc_uid ? (
+                                <span title={spool.nfc_uid} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🏷️ {spool.nfc_uid}</span>
+                              ) : (
+                                <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -932,7 +1029,11 @@ export default function App() {
               >
                 <option value="">Selecione um carretel do estoque...</option>
                 {inventory.map((s) => (
-                  <option key={s.id} value={s.id}>{`${s.color_name} — ${s.brand} — ${s.material}`}</option>
+                  <option key={s.id} value={s.id}>
+                    {s.nfc_uid ? "🏷️ " : "⚠️ "}
+                    {`${s.color_name} — ${s.brand} — ${s.material}`}
+                    {s.nfc_uid ? "" : " (sem tag)"}
+                  </option>
                 ))}
               </select>
             </div>
@@ -979,7 +1080,6 @@ export default function App() {
               </>
             )}
           </form>
-          {feedbackMsg && <div style={{ marginTop: 10, padding: 8, background: "#0f172a", borderRadius: 6, color: "#38bdf8", fontSize: 12 }}>{feedbackMsg}</div>}
           {nfcError && <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>{nfcError}</div>}
         </div>
       )}

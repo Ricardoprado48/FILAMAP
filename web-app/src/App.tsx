@@ -205,6 +205,12 @@ export default function App() {
     }
   }, [session]);
 
+  useEffect(() => {
+    if (!feedbackMsg) return;
+    const timer = setTimeout(() => setFeedbackMsg(null), 5000);
+    return () => clearTimeout(timer);
+  }, [feedbackMsg]);
+
 
   // Cálculos de Orçamento
   const hours = parseFloat(calcPrintHours) || 0;
@@ -387,7 +393,12 @@ export default function App() {
       return;
     }
 
-    setFeedbackMsg(`✅ Tag gravada no carretel "${writerSpool.color_name}"! Link: ${fullTargetUrl}`);
+    setFeedbackMsg(`✅ Tag "${finalTagId}" gravada com sucesso no carretel "${writerSpool.color_name}"!`);
+    setWriterSpoolId("");
+    setCustomTagId("");
+    setGrossWeight("");
+    setTareWeight("");
+    setActiveTab("inventory");
     await loadData();
   }
 
@@ -484,6 +495,13 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {feedbackMsg && (
+        <div style={{ marginBottom: 16, padding: 10, background: "rgba(52, 211, 153, 0.12)", border: "1px solid #059669", borderRadius: 8, color: "#34d399", fontSize: 13, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <span>{feedbackMsg}</span>
+          <button onClick={() => setFeedbackMsg(null)} style={{ background: "transparent", border: "none", color: "#34d399", cursor: "pointer", fontWeight: 700 }}>✕</button>
+        </div>
+      )}
 
       {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
@@ -610,7 +628,14 @@ export default function App() {
                           <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b" }} />
                           <div>
                             <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
-                            <div style={{ fontSize: 11, color: "#94a3b8" }}>{spool.brand} • Tag: {spool.nfc_uid}</div>
+                            <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                              <span>{spool.brand}</span>
+                              {spool.nfc_uid ? (
+                                <span title={spool.nfc_uid} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🏷️ {spool.nfc_uid}</span>
+                              ) : (
+                                <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -932,7 +957,11 @@ export default function App() {
               >
                 <option value="">Selecione um carretel do estoque...</option>
                 {inventory.map((s) => (
-                  <option key={s.id} value={s.id}>{`${s.color_name} — ${s.brand} — ${s.material}`}</option>
+                  <option key={s.id} value={s.id}>
+                    {s.nfc_uid ? "🏷️ " : "⚠️ "}
+                    {`${s.color_name} — ${s.brand} — ${s.material}`}
+                    {s.nfc_uid ? "" : " (sem tag)"}
+                  </option>
                 ))}
               </select>
             </div>
@@ -979,7 +1008,6 @@ export default function App() {
               </>
             )}
           </form>
-          {feedbackMsg && <div style={{ marginTop: 10, padding: 8, background: "#0f172a", borderRadius: 6, color: "#38bdf8", fontSize: 12 }}>{feedbackMsg}</div>}
           {nfcError && <div style={{ marginTop: 8, color: "#f87171", fontSize: 12 }}>{nfcError}</div>}
         </div>
       )}

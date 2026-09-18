@@ -9,6 +9,8 @@ export interface FilamentSliceInfo {
   supportGrams: number;
   flushGrams: number;
   totalGrams: number;
+  color: string; // Adicionado para armazenar a cor do filamento
+  weightDiscount: number; // Adicionado para armazenar o desconto de peso por cor
 }
 
 export async function fetchAndParseSliceInfo(
@@ -81,6 +83,68 @@ export async function fetchAndParseSliceInfo(
     // Dependendo da versão do fatiador, os dados de peso vêm mapeados por id de filamento
     // Exemplo estrutural seguro:
     console.log("🔍 XML do slice_info parseado com sucesso.");
+
+    // No XML do Bambu Lab, a estrutura pode conter:
+    // <plate>
+    //   <filament id="1" model_g="10.5" support_g="0.5" flush_g="2.1" total_g="13.1" color="FFFFFF" weight_discount="5" />
+    // </plate>
+    // Ou as propriedades podem estar no header, ou mapeadas direto no plate.
+    // Vamos varrer ambos os nós (plate e filament) de forma resiliente.
+    const extractFilamentData = (node: any) => {
+      if (!node) return;
+      const nodes = Array.isArray(node) ? node : [node];
+      for (const f of nodes) {
+        // Tenta obter o tray_id / id
+        const idStr = f.id ?? f.tray_id ?? f.tray_idx;
+        if (idStr === undefined) continue;
+
+        const trayId = parseInt(idStr);
+        const color = f.color ?? f.color_name ?? "unknown";
+        const modelGrams = parseFloat(f.model_g ?? f.model_grams ?? "0");
+        const supportGrams = parseFloat(f.support_g ?? f.support_grams ?? "0");
+        const flushGrams = parseFloat(f.flush_g ?? f.flush_grams ?? "0");
+        const totalGrams = parseFloat(f.total_g ?? f.total_grams ?? "0") || (modelGrams + supportGrams + flushGrams);
+        const weightDiscount = parseFloat(f.weight_discount ?? "0");
+
+        // Evita duplicatas se o mesmo trayId aparecer múltiplas vezes
+        const existingIdx = filaments.findIndex(item => item.trayId === trayId);
+        const infoObj = {
+          trayId,
+          modelGrams,
+          supportGrams,
+          flushGrams,
+          totalGrams,
+          color,
+          weightDiscount
+        };
+
+        if (existingIdx >= 0) {
+          filaments[existingIdx] = infoObj;
+        } else {
+          filaments.push(infoObj);
+        }
+      }
+    };
+
+    // Extrai do plate
+    if (plateList) {
+      const plates = Array.isArray(plateList) ? plateList : [plateList];
+      for (const p of plates) {
+        if (p.filament) {
+          extractFilamentData(p.filament);
+        }
+      }
+    }
+
+    // Fallback ou complemento do headerFilaments
+    if (headerFilaments) {
+      extractFilamentData(headerFilaments);
+    }
+
+    console.log(`📊 Filamentos lidos do slice_info.config (${filaments.length} encontrados):`);
+    for (const f of filaments) {
+      console.log(`  - Tray ${f.trayId} (${f.color}): total=${f.totalGrams}g (Model=${f.modelGrams}g, Support=${f.supportGrams}g, Flush=${f.flushGrams}g) Discount=${f.weightDiscount}g`);
+    }
 
     return filaments;
   } catch (err: any) {

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dgram from "node:dgram";
 import { createClient } from "@supabase/supabase-js";
+import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ interface ActiveJobState {
   startTime: number;
   totalCostTime: number; // Segundos estimados pelo fatiador
   filamentGrams: number;  // Gramas calculadas pelo fatiador (se informadas)
+  filamentSliceInfo?: FilamentSliceInfo[]; // Adicionado para armazenar informações do slice_info.config
 }
 
 const STATE_FILE = path.join(process.cwd(), "agent-state.json");
@@ -202,10 +204,39 @@ async function startAgent() {
         const taskName = print.subtask_name || "";
         const totalCostTime = Number(print.mc_total_cost_time) || Number(print.calc_remaining_time) || 0;
 
+        // No Bambu Lab MQTT, o arquivo .gcode ou .3mf sendo impresso é enviado em print.gcode_file
+        const gcodeFile = print.gcode_file || "";
+
         if (currentState === "RUNNING") {
           if (!currentJob || currentJob.subtaskName !== taskName) {
             // Tenta extrair gramas do nome do arquivo do fatiador (se o usuário nomear ex: "suporte_azeite_45g.gcode")
             const extractedGrams = extractGramsFromName(taskName);
+
+            let filamentSliceInfo: FilamentSliceInfo[] = [];
+            try {
+              // Identifica dinamicamente o caminho do arquivo remoto .3mf na impressora.
+              // Se gcodeFile estiver presente e terminar em .3mf ou .gcode, usamos ele.
+              // Do contrário, fazemos o fallback inteligente utilizando o taskName.
+              let remoteFilePath = gcodeFile;
+              if (!remoteFilePath) {
+                remoteFilePath = `/sdcard/${taskName}.gcode.3mf`;
+              } else if (!remoteFilePath.toLowerCase().endsWith(".3mf")) {
+                // Se o arquivo reportado for .gcode, frequentemente existe o correspondente .3mf na mesma pasta ou similar.
+                // Mas geralmente nas impressoras modernas a pasta cache guarda o .3mf temporário do job atual
+                remoteFilePath = remoteFilePath.replace(/\.gcode$/i, ".3mf").replace(/\.gcode\.3mf$/i, ".3mf");
+                if (!remoteFilePath.toLowerCase().endsWith(".3mf")) {
+                  remoteFilePath += ".3mf";
+                }
+              }
+
+              console.log(`📡 Solicitando arquivo de fatiador via FTPS no caminho: ${remoteFilePath}`);
+              filamentSliceInfo = await fetchAndParseSliceInfo(PRINTER_IP, PRINTER_ACCESS_CODE, remoteFilePath);
+              if (filamentSliceInfo.length > 0) {
+                console.log("ℹ️ Informações de slice_info.config carregadas com sucesso!");
+              }
+            } catch (e: any) {
+              console.error("❌ Erro ao carregar slice_info.config:", e.message);
+            }
             
             currentJob = {
               subtaskName: taskName || "Impressão A1",
@@ -215,6 +246,7 @@ async function startAgent() {
               startTime: Date.now(),
               totalCostTime: totalCostTime,
               filamentGrams: extractedGrams || 0,
+              filamentSliceInfo: filamentSliceInfo,
             };
             saveJobState(currentJob);
             if (extractedGrams) {
@@ -244,6 +276,10 @@ async function startAgent() {
           if (print.total_layer_num !== undefined) telemetryData.total_layers = Number(print.total_layer_num) || 0;
           if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
           if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
+
+          if (currentJob?.filamentSliceInfo) {
+            telemetryData.filament_slice_info = currentJob.filamentSliceInfo;
+          }
 
           await supabase.from("printers").update(telemetryData).eq("id", printer.id);
         }
@@ -291,17 +327,41 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
     const currentSpool = (slotRecord as any)?.spool;
 
     // Lógica inteligente de peso vinda do fatiador:
-    // 1. Se o fatiador indicou gramatura explícita (ex via nome do arquivo), usa ela.
-    // 2. Senão, faz uma estimativa calibrada baseada no tempo real de impressão do fatiador (~0.2g por minuto de impressão padrão A1 ou fallback de 35g).
+    // 1. Se possuímos o slice_info.config exato do fatiador, usamos o totalGrams daquele slot/tray!
+    // 2. Se o fatiador indicou gramatura explícita (ex via nome do arquivo), usa ela.
+    // 3. Senão, faz uma estimativa calibrada baseada no tempo real de impressão do fatiador (~0.2g por minuto de impressão padrão A1 ou fallback de 35g).
     let calculatedGrams = 35; 
-    if (currentJob && currentJob.filamentGrams > 0) {
-      calculatedGrams = currentJob.filamentGrams;
-    } else if (durationMinutes > 0) {
-      // Média de vazão típica de FDM na A1 (aprox 12g a 15g por hora = ~0.22g por minuto)
-      calculatedGrams = Math.round((durationMinutes * 0.22) * 10) / 10;
+    let sliceInfoFound = false;
+    let activeFilamentSlice: FilamentSliceInfo | undefined;
+
+    if (currentJob?.filamentSliceInfo && currentJob.filamentSliceInfo.length > 0) {
+      activeFilamentSlice = currentJob.filamentSliceInfo.find(
+        (f) => f.trayId === slotIdx
+      );
+      if (activeFilamentSlice && activeFilamentSlice.totalGrams > 0) {
+        calculatedGrams = activeFilamentSlice.totalGrams;
+        sliceInfoFound = true;
+        console.log(`📊 Peso exato do fatiador identificado para Tray ${slotIdx}: ${calculatedGrams}g`);
+      }
     }
 
-    const estimatedUsedG = Math.max(1, Math.round((calculatedGrams * (percentExecuted / 100)) * 10) / 10);
+    if (!sliceInfoFound) {
+      if (currentJob && currentJob.filamentGrams > 0) {
+        calculatedGrams = currentJob.filamentGrams;
+      } else if (durationMinutes > 0) {
+        // Média de vazão típica de FDM na A1 (aprox 12g a 15g por hora = ~0.22g por minuto)
+        calculatedGrams = Math.round((durationMinutes * 0.22) * 10) / 10;
+      }
+    }
+
+    let estimatedUsedG = Math.max(1, Math.round((calculatedGrams * (percentExecuted / 100)) * 10) / 10);
+
+    // Aplicar desconto de peso por cor, se disponível
+    if (activeFilamentSlice && activeFilamentSlice.weightDiscount > 0) {
+      const prevUsed = estimatedUsedG;
+      estimatedUsedG = Math.max(0, Math.round((estimatedUsedG - activeFilamentSlice.weightDiscount) * 10) / 10);
+      console.log(`💸 Desconto de peso aplicado para cor ${activeFilamentSlice.color}: -${activeFilamentSlice.weightDiscount}g (De ${prevUsed}g para ${estimatedUsedG}g)`);
+    }
 
     if (spoolId && currentSpool) {
       const prevWeight = currentSpool.current_weight || 0;

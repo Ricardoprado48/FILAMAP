@@ -101,8 +101,6 @@ export default function App() {
   const [modalGross, setModalGross] = useState("");
   const [modalTare, setModalTare] = useState("218");
 
-  const [resolvingJob, setResolvingJob] = useState<PrintLog | null>(null);
-  const [resolvedGrams, setResolvedGrams] = useState("25");
 
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
   const [editBrand, setEditBrand] = useState("");
@@ -214,29 +212,6 @@ export default function App() {
     }
   }, [session]);
 
-  // Resolver pesagem pendente de um job
-  async function handleResolveWeighing(e: React.FormEvent) {
-    e.preventDefault();
-    if (!resolvingJob) return;
-
-    const usedGrams = parseFloat(resolvedGrams) || 0;
-
-    // Se houver spool vinculado, abate o valor real do carretel
-    if (resolvingJob.spool_id && resolvingJob.spool) {
-      const prevWeight = resolvingJob.spool.current_weight || 0;
-      const newWeight = Math.max(0, Math.round((prevWeight - usedGrams) * 10) / 10);
-      await supabase.from("spools").update({ current_weight: newWeight }).eq("id", resolvingJob.spool_id);
-    }
-
-    // Atualiza o job removendo o status de pendente e gravando o consumo real
-    await supabase.from("print_logs").update({
-      filament_used_g: usedGrams,
-      needs_weighing: false
-    }).eq("id", resolvingJob.id);
-
-    setResolvingJob(null);
-    await loadData();
-  }
 
   // Cálculos de Orçamento
   const hours = parseFloat(calcPrintHours) || 0;
@@ -481,7 +456,7 @@ export default function App() {
         {/* 4 BOTÕES DO CABEÇALHO */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
           <button onClick={() => setActiveTab("ams")} style={{ padding: "10px 4px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: activeTab === "ams" ? "#0284c7" : "#1e293b", color: activeTab === "ams" ? "#fff" : "#94a3b8" }}>
-            🖨️ AMS {pendingWeighingLogs.length > 0 && `(${pendingWeighingLogs.length})`}
+            🖨️ AMS
           </button>
           <button onClick={() => setActiveTab("inventory")} style={{ padding: "10px 4px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: activeTab === "inventory" ? "#0284c7" : "#1e293b", color: activeTab === "inventory" ? "#fff" : "#94a3b8" }}>
             📦 Estoque ({inventory.length})
@@ -495,39 +470,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* ABA 1: MONITOR AMS & PENDENTES DE PESAGEM */}
+      {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
-          {/* ALERTA DE PENDENTES DE PESAGEM */}
-          {pendingWeighingLogs.length > 0 && (
-            <div style={{ background: "rgba(245, 158, 11, 0.15)", border: "1px solid #f59e0b", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <strong style={{ fontSize: 14, color: "#fbbf24" }}>⚖️ Impressões Aguardando Confirmação de Peso ({pendingWeighingLogs.length})</strong>
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>Pese o carretel e confirme o consumo real</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {pendingWeighingLogs.map((job) => (
-                  <div key={job.id} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f8fafc" }}>{job.subtask_name}</div>
-                      <div style={{ fontSize: 11, color: "#94a3b8" }}>
-                        Status: <span style={{ color: "#f59e0b" }}>{job.status}</span> • Carretel: {job.spool ? `${job.spool.color_name} (${job.spool.material})` : "Não vinculado"}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setResolvingJob(job);
-                        setResolvedGrams(job.filament_used_g ? job.filament_used_g.toString() : "25");
-                      }}
-                      style={{ background: "#f59e0b", color: "#0f172a", border: "none", padding: "6px 12px", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
-                    >
-                      ⚖️ Pesar e Confirmar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div style={{ background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b", border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -593,12 +538,12 @@ export default function App() {
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{log.subtask_name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>
-                        {log.spool ? `${log.spool.material} • ${log.spool.color_name}` : "Sem carretel"} • Status: <span style={{ color: log.needs_weighing ? "#f59e0b" : "#34d399" }}>{log.status}</span>
+                        {log.spool ? `${log.spool.material} • ${log.spool.color_name}` : "Sem carretel"} • Status: <span style={{ color: "#34d399" }}>{log.status}</span>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: log.needs_weighing ? "#f59e0b" : "#f87171" }}>
-                        {log.needs_weighing ? "Pendente ⚖️" : `-${log.filament_used_g}g`}
+                      <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
+                        {`-${log.filament_used_g}g`}
                       </span>
                     </div>
                   </div>
@@ -995,35 +940,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal Resolver Pesagem Pendente */}
-      {resolvingJob && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
-          <div style={{ background: "#1e293b", border: "1px solid #f59e0b", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
-            <h3 style={{ margin: "0 0 6px", color: "#fbbf24" }}>⚖️ Confirmar Consumo Real</h3>
-            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 14px" }}>
-              Peça: <strong>{resolvingJob.subtask_name}</strong><br />
-              {resolvingJob.spool ? `Carretel: ${resolvingJob.spool.color_name} (${resolvingJob.spool.material})` : "Sem carretel vinculado"}
-            </p>
-            <form onSubmit={handleResolveWeighing} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "#cbd5e1", display: "block", marginBottom: 4 }}>Peso real gasto na peça (g)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={resolvedGrams}
-                  onChange={(e) => setResolvedGrams(e.target.value)}
-                  style={{ width: "100%", padding: 10, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 16, fontWeight: 700, boxSizing: "border-box" }}
-                  required
-                />
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => setResolvingJob(null)} style={{ flex: 1, padding: 10, background: "#334155", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>Cancelar</button>
-                <button type="submit" style={{ flex: 1, padding: 10, background: "#059669", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}>Confirmar e Abater</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Modal Re-pesagem */}
       {weighingSpool && (

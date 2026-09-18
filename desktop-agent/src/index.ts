@@ -394,3 +394,50 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+/**
+ * Avalia os dados de consumo obtidos da impressora e define o nível de qualidade.
+ * Baseado na arquitetura oficial de 4 níveis do Filamap.
+ */
+function evaluateConsumption(sliceInfoData: any, filename: string, durationMinutes: number) {
+  if (sliceInfoData && typeof sliceInfoData.totalGrams === 'number') {
+    return {
+      consumption_quality: 'exact',
+      grams: sliceInfoData.totalGrams,
+      shouldDeduct: true,
+      sourceMessage: 'Extraído diretamente do slice_info.config (100% exato)'
+    };
+  }
+  
+  const weightFromName = extractWeightFromFilename(filename);
+  if (weightFromName) {
+    return {
+      consumption_quality: 'estimated_filename',
+      grams: weightFromName,
+      shouldDeduct: true,
+      sourceMessage: 'Estimativa obtida através do nome do ficheiro'
+    };
+  }
+  
+  if (durationMinutes && durationMinutes > 0) {
+    const estimatedGrams = durationMinutes * 0.22;
+    return {
+      consumption_quality: 'estimated_duration',
+      grams: estimatedGrams,
+      shouldDeduct: true,
+      sourceMessage: 'Estimativa baseada na duração do trabalho'
+    };
+  }
+  
+  return {
+    consumption_quality: 'unknown',
+    grams: 0,
+    shouldDeduct: false,
+    sourceMessage: 'Sem dados de consumo disponíveis — requer conferência física'
+  };
+}
+
+function extractWeightFromFilename(filename: string): number | null {
+  if (!filename) return null;
+  const match = filename.match(/(\d+)\s*g/i);
+  return match ? parseInt(match[1], 10) : null;
+}

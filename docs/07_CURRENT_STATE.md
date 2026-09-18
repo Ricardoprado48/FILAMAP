@@ -24,7 +24,7 @@ O Filamap já possui Web App, Desktop Agent, integração Supabase, MQTT, tentat
 - edição/exclusão de spools;
 - catálogo de peças;
 - simulador de custos/orçamento;
-- criação de spool + tentativa de gravação NFC;
+- gravação de tag NFC vinculada a spool já existente no estoque (seleção via query real em `spools`, sem criar spool novo);
 - histórico recente de `print_logs`.
 
 ### Desktop Agent

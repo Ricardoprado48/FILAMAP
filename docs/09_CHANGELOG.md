@@ -2,6 +2,32 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 18/09/2026 — Auditoria de todos os pontos de INSERT em `spools`
+
+- levantamento completo (grep por `.from("spools").insert`/`.upsert` em
+  `web-app/` e `desktop-agent/`) confirma que existe **um único** ponto de
+  criação de carretel disparado por ação do usuário: `handleAssignSlot`
+  (`web-app/src/App.tsx`), acionado ao clicar num slot vazio do AMS com uma
+  tag NFC física desconhecida já lida. Não existe (e nunca existiu neste
+  repositório) um botão/formulário "Novo Carretel" na aba Estoque — essa
+  hipótese do relatório anterior não se confirmou;
+- `handleAssignSlot` gravava marca/material/cor/tara/peso **totalmente
+  fixos** (`Voolt3D`/`PETG`/`Preto`/`1000g`/`218g`/`R$85`) porque esse
+  fluxo não tem formulário algum — é um auto-cadastro de fallback para tag
+  desconhecida, então não há "peso/tara digitado pelo usuário" que estivesse
+  sendo descartado; o problema é que o placeholder era persistido como
+  definitivo, sem chance de correção imediata;
+- correção: após criar o carretel-placeholder e associá-lo ao slot,
+  `handleAssignSlot` agora abre automaticamente o modal "Editar Carretel"
+  (já com todos os campos, de sessão anterior) pré-preenchido, para que
+  marca/material/cor/tara/peso reais sejam informados antes de o registro
+  "ficar esquecido" com os defaults;
+- `handleWriteTag` (gravação de tag pela aba Tags) segue confirmado como
+  `UPDATE` por `spool.id`, nunca `INSERT` — não é fonte deste bug;
+- dados já existentes no banco com tara/peso default (1000/200) não foram
+  alterados por esta correção — ajuste deve ser feito manualmente pelo
+  próprio app, via re-pesagem/edição, conforme solicitado.
+
 ## 18/09/2026 — Feedback de gravação de tag e diferenciação visual de carretéis com/sem tag
 
 - `handleWriteTag` (`web-app/src/App.tsx`) agora, após gravação confirmada:

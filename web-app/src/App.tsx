@@ -290,6 +290,7 @@ export default function App() {
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
     let { data: spool } = await supabase.from("spools").select("*").eq("nfc_uid", nfcUid).single();
+    let isNewSpool = false;
     if (!spool) {
       const { data: created } = await supabase.from("spools").insert({
         nfc_uid: nfcUid, brand: "Voolt3D", material: "PETG", color_name: "Preto",
@@ -297,6 +298,7 @@ export default function App() {
         spool_tare_weight: 218, price_paid: 85.00,
       }).select().single();
       spool = created;
+      isNewSpool = true;
     }
     if (spool) {
       await supabase.from("ams_slots").upsert({
@@ -304,6 +306,12 @@ export default function App() {
       }, { onConflict: "printer_id,slot_index" });
       setNfcUid(null);
       await loadData();
+      // Tag desconhecida: o carretel foi criado com placeholders (marca/material/cor/
+      // tara/peso fixos), não com dados informados pelo usuário. Abre a edição na hora
+      // para que os valores reais sejam preenchidos antes de ficarem "esquecidos".
+      if (isNewSpool) {
+        openEditModal(spool);
+      }
     }
   }
 

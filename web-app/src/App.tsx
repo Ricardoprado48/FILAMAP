@@ -74,6 +74,11 @@ const TARE_PRESETS = [
 ];
 
 export default function App() {
+  const handleUpdateNfc = async (id: string, nfcUid: string) => {
+    const { error } = await supabase.from('spools').update({ nfc_uid: nfcUid }).eq('id', id);
+    if (error) alert('Erro ao atualizar tag: ' + error.message);
+    else alert('Tag NFC vinculada com sucesso!');
+  };
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");

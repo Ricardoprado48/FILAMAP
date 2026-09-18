@@ -1,24 +1,22 @@
 {
-    "name": "desktop-agent",
-    "version": "1.0.0",
-    "type": "module",
-    "scripts": {
-        "discovery": "tsx src/discovery.ts",
-        "mqtt": "tsx src/mqtt-client.ts",
-        "dev": "tsx watch src/index.ts",
-        "start": "tsx src/index.ts",
-        "build": "tsc"
-    },
-    "dependencies": {
-        "@supabase/supabase-js": "^2.116.0",
-        "dotenv": "^17.4.2",
-        "mqtt": "^5.16.0",
-        "node-ssdp": "^4.0.1"
-    },
-    "devDependencies": {
-        "@types/node": "^20.19.43",
-        "@types/node-ssdp": "^4.0.4",
-        "tsx": "^4.23.13",
-        "typescript": "^5.9.3"
-    }
+  "name": "desktop-agent",
+  "version": "1.0.0",
+  "description": "Filamap Desktop Agent for Bambu Lab A1",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsc && node dist/index.js",
+    "package-exe": "tsc && pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.4.5",
+    "mqtt": "^5.3.5",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1",
+    "typescript": "^5.3.3"
+  }
 }

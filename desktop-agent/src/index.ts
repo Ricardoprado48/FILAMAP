@@ -8,7 +8,28 @@ import path from "node:path";
 import dgram from "node:dgram";
 import { createClient } from "@supabase/supabase-js";
 
-dotenv.config();
+// @supabase/supabase-js exige um WebSocket nativo (Node 22+) mesmo sem usar
+// Realtime -- no build empacotado (node18-win-x64) isso derruba o processo
+// na criação do client. Como o agente não usa Realtime, apenas preenchemos
+// o global com a implementação já presente via dependência transitiva ("ws").
+if (typeof (globalThis as any).WebSocket === "undefined") {
+  (globalThis as any).WebSocket = require("ws");
+}
+
+// Quando empacotado com pkg, o .env NÃO fica embutido no binário (removido dos
+// assets do pkg.config.json de propósito) -- cada instalação usa um .env próprio,
+// lido ao lado do .exe real (process.execPath), nunca do snapshot interno do pkg.
+const isPackaged = !!(process as any).pkg;
+const envPath = isPackaged
+  ? path.join(path.dirname(process.execPath), ".env")
+  : path.join(process.cwd(), ".env");
+dotenv.config({ path: envPath });
+
+if (isPackaged && !fs.existsSync(envPath)) {
+  console.error(`❌ Erro: arquivo .env não encontrado em ${envPath}`);
+  console.error("   Crie um arquivo .env na mesma pasta do filamap-agent.exe com suas credenciais.");
+  process.exit(1);
+}
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim().replace(/['"]/g, "").replace(/\/$/, "");
 const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY || "").trim().replace(/['"]/g, "");

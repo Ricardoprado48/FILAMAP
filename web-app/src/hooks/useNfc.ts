@@ -1,5 +1,27 @@
 import { useState, useCallback } from "react";
 
+// writeTagUrl grava o ID lógico do carretel dentro de uma URL
+// (https://.../?tag=<id>) como registro NDEF "url" — não usa o serial
+// number de hardware do chip. Pra casar a leitura com o que foi gravado
+// (e com spools.nfc_uid, que guarda o <id> puro), é preciso decodificar o
+// mesmo registro NDEF na leitura, em vez de usar event.serialNumber.
+function extractTagIdFromMessage(message: any): string | null {
+  if (!message || !message.records) return null;
+  for (const record of message.records) {
+    if (record.recordType !== "url" && record.recordType !== "text") continue;
+    try {
+      const decoder = new TextDecoder(record.encoding || "utf-8");
+      const text = decoder.decode(record.data);
+      const url = new URL(text);
+      const tagParam = url.searchParams.get("tag");
+      if (tagParam) return tagParam;
+    } catch {
+      // registro não é uma URL com ?tag= válida — tenta o próximo
+    }
+  }
+  return null;
+}
+
 export function useNfc() {
   const [isReading, setIsReading] = useState(false);
   const [isWriting, setIsWriting] = useState(false);
@@ -22,8 +44,8 @@ export function useNfc() {
       await ndef.scan();
 
       ndef.onreading = (event: any) => {
-        const serial = event.serialNumber || `TAG_${Date.now()}`;
-        setNfcUid(serial);
+        const tagId = extractTagIdFromMessage(event.message) || event.serialNumber || `TAG_${Date.now()}`;
+        setNfcUid(tagId);
         setIsReading(false);
       };
 

@@ -489,25 +489,3 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
-
-// --- Rotina de Redescoberta Automática de IP ---
-client.on('close', async () => {
-    console.warn('⚠️ Ligação MQTT perdida. A iniciar redescoberta de rede...');
-    let reconnected = false;
-    while (!reconnected) {
-        try {
-            const newIp = await discoverPrinter();
-            if (newIp) {
-                console.log( ✅ Impressora re-encontrada em: );
-                client.options.host = newIp;
-                client.reconnect();
-                reconnected = true;
-            } else {
-                await new Promise(resolve => setTimeout(resolve, 15000));
-            }
-        } catch (err) {
-            await new Promise(resolve => setTimeout(resolve, 15000));
-        }
-    }
-});
-

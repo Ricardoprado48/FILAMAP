@@ -2,60 +2,59 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
-## 20/09/2026 — Investigação: `ERROR: 42P01: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` no Supabase real
+## 20/09/2026 — Causa raiz real e correção: `ERROR: 42P01: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` no Supabase real
 
-**Causa investigada, nenhum código alterado** — o arquivo commitado está
-correto; a causa é externa ao repositório.
+**Correção da investigação anterior nesta mesma data.** A primeira
+hipótese registrada aqui ("aplicação parcial/corrompida ao colar no SQL
+Editor") estava incompleta: o usuário confirmou ter colado o arquivo
+inteiro, byte-a-byte (`md5sum` idêntico ao commitado), e ainda assim o
+erro ocorreu. Investigação mais profunda encontrou a causa real, **no
+próprio arquivo**, e ela foi corrigida.
 
-**Como foi validado:** copiado byte-a-byte (`md5sum` conferido) o
-arquivo `supabase/migrations/20260920_add_print_logs_job_tracking.sql`
-para um Postgres 16 local limpo (com stub mínimo de `auth.users` /
-`auth.uid()` / `auth.role()`), aplicado sozinho via `psql -f` com
-`ON_ERROR_STOP=1`. Resultado: `ALTER TABLE`, `COMMENT`, `CREATE INDEX` e
-`CREATE FUNCTION` — todos com sucesso, sem nenhum erro. Como
-`check_function_bodies` é `on` por padrão no Postgres, o próprio
-`CREATE FUNCTION` já compila o corpo plpgsql inteiro nesse momento; se
-`v_owner` estivesse de fato mal declarada ou usada fora de contexto, o
-erro teria aparecido aqui, e não apareceu.
+**Causa raiz:** o comentário da linha 18 continha um **`$$` literal e
+solto** — `"...o delimitador precisa ser literalmente $$, sem barra..."`
+— fora de qualquer bloco de código, só como texto explicativo dentro de
+um comentário `--`. Isso deixava o arquivo com **três** ocorrências
+soltas de `$$` (a do comentário na linha 18, mais o par real de abertura
+e fechamento do corpo da função, `AS $$` / `$$;`), um total ímpar. Um
+`--` é um comentário válido em SQL puro, então o `psql`/`libpq` (que tem
+um tokenizador completo, ciente de comentários) nunca teve problema com
+isso — daí a migration ter passado limpa no teste local anterior. Mas
+qualquer ferramenta que segmenta um script colado em múltiplos comandos
+usando uma lógica mais simples de pareamento de `$$` (para exibir
+resultado por instrução, como é comum em editores de SQL de dashboards)
+pode não ser ciente de comentários `--` e contar esse `$$` solto como se
+fosse abertura/fechamento de bloco. Com número ímpar de `$$`, o
+pareamento inteiro desliza: o editor passa a achar que tudo entre a
+linha 18 e o `AS $$` real (linha 79) é uma única string, e que o
+verdadeiro corpo da função (de `DECLARE` a `END;`) é SQL solto — daí
+corta esse corpo em pedaços nos `;` internos, como se fossem comandos
+top-level independentes.
 
-Em seguida, chamada funcional real da RPC (`SELECT *
-FROM public.finalize_print_job(...)`) dentro de uma transação de teste
-(`BEGIN ... ROLLBACK`), com um spool de 1000g e um item de 50g:
-primeira chamada desconta corretamente para 950g; segunda chamada com o
-mesmo `job_id` é idempotente — retorna a mesma linha, sem descontar de
-novo (950g mantido). Nenhuma menção a `v_owner` em nenhum erro em
-nenhuma das duas chamadas.
+**Confirmado por simulação:** um script Python que reproduz esse
+pareamento ingênuo de `$$` (ignorando comentários) foi rodado contra o
+arquivo antes e depois da correção. Antes: um dos fragmentos gerados é
+literalmente `v_owner UUID` isolado (a declaração da variável, cortada
+do resto do bloco `DECLARE`), e outros fragmentos contêm `SELECT
+user_id INTO v_owner FROM public.spools WHERE id = v_spool_id` como
+comando solto — exatamente o tipo de fragmento que produz `relation
+"v_owner" does not exist` se enviado ao Postgres fora do contexto
+plpgsql. Depois da correção, o mesmo script não gera mais nenhum
+fragmento problemático.
 
-**Conclusão:** não é bug real na função (hipótese descartada por
-execução real). É aplicação parcial ou corrupção do texto durante a
-cópia para o SQL Editor do Supabase — a causa exata de qual caractere
-específico se perdeu não pôde ser confirmada nesta sessão (sandboxed,
-sem acesso ao projeto Supabase real do usuário para inspecionar o que
-efetivamente foi executado lá). Hipótese mais provável, dado o padrão
-do erro: a linha 86 (`v_owner UUID;`, dentro do bloco `DECLARE`) não
-chegou a ser executada — se o corpo `$$ ... $$` for colado
-parcialmente (por exemplo, começando a partir de uma linha no meio do
-`DECLARE`, ou com uma ferramenta intermediária tratando `$$` como
-delimitador de algo e cortando o texto ali), o Postgres pode compilar
-uma função onde `v_owner` nunca foi declarada; nesse caso o uso de
-`SELECT ... INTO v_owner FROM ...` faz o parser de plpgsql tentar
-resolver `v_owner` como identificador de tabela/relação, exatamente o
-erro relatado.
+**Correção aplicada:** reescrita a linha 18 do comentário pra não conter
+`$$` adjacente (mesmo padrão já usado, com sucesso, na linha 16 do
+mesmo comentário — `\$\$` com barra invertida separando os cifrões).
+Nenhuma mudança de comportamento SQL: é só texto dentro de um
+comentário. Revalidado do zero contra Postgres 16 local limpo (mesmo
+procedimento da investigação anterior: `001` → `004` → `005` → esta
+migration, com stub de `auth`) — aplica sem erro, e a função
+`finalize_print_job` continua descontando corretamente e sendo
+idempotente (mesmo teste funcional de antes, repetido após a correção).
 
-**Recomendação de recuperação (sem alterar o arquivo, que já está
-correto):**
-1. Não copiar o SQL editando manualmente ou colando de uma janela que
-   possa reformatar texto (ex.: apps de chat/notas que tratam `$$` como
-   marcação). Preferir copiar direto do GitHub (botão "Raw" do arquivo)
-   ou usar `supabase db push` / `supabase migration up` via CLI ligado
-   ao projeto, que aplica o arquivo como está no disco, sem colar manual.
-2. O arquivo é seguro para reaplicar do zero: todo `ALTER TABLE` usa
-   `ADD COLUMN IF NOT EXISTS`, o índice usa `CREATE UNIQUE INDEX IF NOT
-   EXISTS`, e a função usa `CREATE OR REPLACE FUNCTION` — rodar de novo
-   não duplica nada nem falha por já existir.
-3. Depois de reaplicar, confirmar com:
-   `SELECT prosrc FROM pg_proc WHERE proname = 'finalize_print_job';`
-   e conferir se a linha `v_owner UUID;` aparece no `DECLARE` retornado.
+**Arquivo alterado:**
+`supabase/migrations/20260920_add_print_logs_job_tracking.sql` (só o
+comentário da linha 18; nenhuma instrução SQL executável foi tocada).
 
 ## 20/09/2026 — Consumo multicolor + finalização idempotente/atômica + cascata de 4 níveis
 

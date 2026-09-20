@@ -125,19 +125,25 @@ dollar-quoting inválido (`DO \$\$`). Nenhum desses pontos foi corrigido
 reprodução em `docs/09_CHANGELOG.md`. Aprofunda o que P0.1 já registrava
 de forma mais genérica.
 
-### 7. `ERROR: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` num Supabase real
+### 7. `ERROR: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` num Supabase real — CORRIGIDO
 
-Investigado em 20/09/2026: o arquivo commitado, copiado byte-a-byte
-(`md5sum` conferido) para um Postgres local limpo, aplica sem nenhum
-erro — `ALTER TABLE`, `CREATE INDEX` e `CREATE FUNCTION` todos com
-sucesso, e uma chamada funcional real de `finalize_print_job()` desconta
-e é idempotente como esperado. Não é bug no código. A causa mais
-provável é aplicação parcial/corrompida ao colar o SQL no editor do
-Supabase (possivelmente perdendo a linha `v_owner UUID;` do bloco
-`DECLARE`). Ver `docs/09_CHANGELOG.md` para os passos de recuperação
-recomendados (reaplicar via `supabase db push`/CLI ou copiar do "Raw" do
-GitHub em vez de colar manualmente — o arquivo é seguro para reaplicar,
-todos os `ALTER`/`CREATE` são idempotentes).
+**Corrigido em 20/09/2026.** Causa raiz real: o comentário da linha 18
+do arquivo tinha um `$$` literal solto (usado como texto explicativo,
+não como delimitador de código), deixando três ocorrências soltas de
+`$$` no arquivo (um número ímpar) em vez do par real esperado. SQL puro
+(via `psql`/`libpq`, ciente de comentários `--`) nunca teve problema com
+isso, mas uma ferramenta que segmenta o script colado em múltiplos
+comandos usando pareamento simples de `$$` (comum em editores de SQL
+que mostram resultado por instrução) pode não ser ciente de comentários
+e contar esse `$$` extra como abertura/fechamento de bloco — o que
+desalinha todo o pareamento seguinte e faz o corpo real da função ser
+cortado nos `;` internos como se fossem comandos soltos. Simulado com um
+script que reproduz esse pareamento ingênuo: antes da correção, um dos
+fragmentos gerados era literalmente `v_owner UUID` isolado; depois da
+correção (reescrita só do comentário, sem `$$` adjacente), nenhum
+fragmento problemático é gerado. Revalidado contra Postgres local limpo
+com o mesmo teste funcional de antes (desconto + idempotência). Ver
+`docs/09_CHANGELOG.md`.
 
 ## Limitações críticas atuais
 

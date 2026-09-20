@@ -15,8 +15,9 @@
 -- coluna, mas (a) alterou public.print_jobs em vez de public.print_logs,
 -- e (b) seu bloco DO usa "DO \$\$ ... END \$\$;" com barras invertidas
 -- antes dos cifrões, que não é sintaxe válida de dollar-quoting do
--- Postgres (o delimitador precisa ser literalmente $$, sem barra) -- essa
--- migration, como está commitada, não roda com sucesso num banco novo.
+-- Postgres (o delimitador precisa ser o par de cifrões sem barra entre
+-- eles) -- essa migration, como está commitada, não roda com sucesso
+-- num banco novo.
 
 -- 1. job_id: chave de idempotência, gerada pelo Agent (crypto.randomUUID())
 --    no início de cada job e persistida em agent-state.json -- ver

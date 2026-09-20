@@ -20,17 +20,16 @@ Este backlog foi criado a partir do código auditado em 18/09/2026. Prioridade i
 
 Nenhum desses 5 pontos foi corrigido nesta tarefa (fora do escopo autorizado — só reportado). `docs/09_CHANGELOG.md` tem os comandos exatos usados pra reproduzir cada erro.
 
-**Investigação adicional em 20/09/2026:** usuário reportou `ERROR:
-relation "v_owner" does not exist` ao aplicar
-`20260920_add_print_logs_job_tracking.sql` no Supabase real. Confirmado
-por execução real (não só leitura) que o arquivo commitado está correto
-— aplicado byte-a-byte num Postgres local limpo, sem nenhum erro,
-incluindo uma chamada funcional da RPC resultante. Não é um dos 5 pontos
-acima (esses são sobre ordem/sintaxe de `001-005`; este é sobre uma
-migration nova e independente). Causa mais provável: cópia
-parcial/corrompida pro SQL Editor do Supabase, não bug de código. Ver
-`docs/07_CURRENT_STATE.md` (Divergência 7) e `docs/09_CHANGELOG.md`
-para os passos de recuperação.
+**Investigação adicional em 20/09/2026, corrigida em 20/09/2026:**
+usuário reportou `ERROR: relation "v_owner" does not exist` ao aplicar
+`20260920_add_print_logs_job_tracking.sql` no Supabase real. Não é um
+dos 5 pontos acima (esses são sobre ordem/sintaxe de `001-005`; este era
+um bug próprio, independente, nessa migration nova). Causa raiz real:
+`$$` literal solto dentro de um comentário (linha 18), confundindo
+ferramentas que segmentam o script por pareamento simples de `$$` sem
+serem cientes de comentários `--`. Corrigido reescrevendo só o
+comentário. Ver `docs/07_CURRENT_STATE.md` (Divergência 7) e
+`docs/09_CHANGELOG.md` para a simulação que confirma a causa.
 
 ### P0.2 — Idempotência + transação de finalização
 

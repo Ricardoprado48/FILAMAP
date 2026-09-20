@@ -263,7 +263,7 @@ Antes de acrescentar novas funcionalidades de negócio, estabilizar o núcleo de
 6. fechar leitura NFC/deep link (ainda pendente — só o `?tag=` no carregamento);
 7. somente então evoluir onboarding e experiência comercial.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_STATUS_20260920:START -->
 
 ## Estado consolidado — Níveis 1 e 2 concluídos
 
@@ -366,5 +366,6 @@ Itens conhecidos:
 - reduzir o monólito de `App.tsx`;
 - revisar armazenamento do Access Code antes de distribuição do Agent para terceiros.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_STATUS_20260920:END -->
+
 

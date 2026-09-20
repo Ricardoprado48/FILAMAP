@@ -176,7 +176,7 @@ Após saldo confiável, adicionar alertas e previsão.
 - compras/reposição;
 - rastreabilidade por lote.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_BACKLOG_20260920:START -->
 
 ## Atualização de backlog — 20/09/2026
 
@@ -250,5 +250,6 @@ Antes de iniciar nova feature, verificar se ela pertence ao Nível 3 ou se é um
 
 Não reabrir Níveis 1 ou 2 como pendentes sem uma regressão comprovada.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_BACKLOG_20260920:END -->
+
 

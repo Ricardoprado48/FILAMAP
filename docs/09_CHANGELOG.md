@@ -698,7 +698,7 @@ Sem data de commit disponível no pacote, já existem:
 - baixa automática + `print_logs`;
 - executável Windows do Agent.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_CHANGELOG_20260920:START -->
 
 ## 20/09/2026 — Estabilização dos Níveis 1 e 2
 
@@ -774,5 +774,6 @@ Commit:
 - Nível 2B: concluído.
 - Próxima frente: Nível 3 — maturidade de produto.
 
-<!-- AUTO: -->
+<!-- AUTO:LEVEL_1_2_CHANGELOG_20260920:END -->
+
 

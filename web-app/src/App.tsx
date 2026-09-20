@@ -15,6 +15,9 @@ import {
   findSpoolByNfcUid, createPlaceholderSpool, assignSpoolToSlot, ejectSlot as ejectSlotService,
   updateSpoolWeight, updateSpoolFields, deleteSpool as deleteSpoolService, writeTagToSpool,
 } from "./services/spoolService";
+import { LoginScreen } from "./components/LoginScreen";
+import { WeighSpoolModal } from "./components/WeighSpoolModal";
+import { EditSpoolModal } from "./components/EditSpoolModal";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -403,29 +406,15 @@ export default function App() {
 
   if (!session) {
     return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f172a" }}>
-        <div style={{ maxWidth: 380, width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 24, boxSizing: "border-box" }}>
-          <div style={{ textAlign: "center", marginBottom: 20 }}>
-            <span style={{ fontSize: 36 }}>🧵</span>
-            <h1 style={{ margin: "8px 0 0", fontSize: 24, color: "#38bdf8", fontWeight: 900 }}>FILAMAP</h1>
-            <p style={{ margin: "4px 0 0", color: "#94a3b8", fontSize: 12 }}>Acesso à Oficina & Estoque NFC</p>
-          </div>
-          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>E-mail</label>
-              <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="seu@email.com" required style={{ width: "100%", padding: 10, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Senha</label>
-              <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" required style={{ width: "100%", padding: 10, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
-            </div>
-            {authError && <div style={{ color: "#f87171", fontSize: 12, background: "rgba(239, 68, 68, 0.1)", padding: 8, borderRadius: 6, border: "1px solid #dc2626" }}>{authError}</div>}
-            <button type="submit" disabled={authLoading} style={{ padding: 12, background: authLoading ? "#0369a1" : "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}>
-              {authLoading ? "Entrando..." : "Entrar no Filamap"}
-            </button>
-          </form>
-        </div>
-      </div>
+      <LoginScreen
+        authEmail={authEmail}
+        setAuthEmail={setAuthEmail}
+        authPassword={authPassword}
+        setAuthPassword={setAuthPassword}
+        authLoading={authLoading}
+        authError={authError}
+        onSubmit={handleLogin}
+      />
     );
   }
 
@@ -1022,86 +1011,41 @@ export default function App() {
       )}
 
 
-      {/* Modal Re-pesagem */}
       {weighingSpool && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
-          <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
-            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {weighingSpool.color_name}</h3>
-            <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <input type="number" value={modalGross} onChange={(e) => setModalGross(e.target.value)} placeholder="Peso na balança (g)" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              <input type="number" value={modalTare} onChange={(e) => setModalTare(e.target.value)} placeholder="Tara (g)" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => setWeighingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
-                <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <WeighSpoolModal
+          spool={weighingSpool}
+          grossWeight={modalGross}
+          setGrossWeight={setModalGross}
+          tareWeight={modalTare}
+          setTareWeight={setModalTare}
+          onCancel={() => setWeighingSpool(null)}
+          onSubmit={handleSaveWeigh}
+        />
       )}
 
-      {/* Modal Edição */}
       {editingSpool && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
-          <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
-            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>✏️ Editar Carretel</h3>
-            <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca</label>
-                  <select value={editBrand} onChange={(e) => setEditBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                    {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Material</label>
-                  <select value={editMaterial} onChange={(e) => setEditMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                    <option value="PETG">PETG</option>
-                    <option value="PLA">PLA</option>
-                    <option value="ABS">ABS</option>
-                    <option value="TPU">TPU</option>
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor</label>
-                  <input type="text" value={editColorName} onChange={(e) => setEditColorName(e.target.value)} placeholder="Cor" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tom</label>
-                  <input type="color" value={editColorHex} onChange={(e) => setEditColorHex(e.target.value)} style={{ width: "100%", height: 34, padding: 2, background: "#0f172a", border: "1px solid #334155", borderRadius: 6 }} />
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara (g)</label>
-                  <input type="number" value={editTare} onChange={(e) => setEditTare(e.target.value)} placeholder="Tara" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Saldo (g)</label>
-                  <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
-                </div>
-              </div>
-              {!editingSpool.nfc_uid && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const spool = editingSpool;
-                    setEditingSpool(null);
-                    selectWriterSpool(spool);
-                  }}
-                  style={{ padding: 8, background: "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
-                >
-                  🏷️ Gravar tag deste carretel
-                </button>
-              )}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={() => setEditingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
-                <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <EditSpoolModal
+          spool={editingSpool}
+          brand={editBrand}
+          setBrand={setEditBrand}
+          material={editMaterial}
+          setMaterial={setEditMaterial}
+          colorName={editColorName}
+          setColorName={setEditColorName}
+          colorHex={editColorHex}
+          setColorHex={setEditColorHex}
+          tare={editTare}
+          setTare={setEditTare}
+          weight={editWeight}
+          setWeight={setEditWeight}
+          onWriteTag={() => {
+            const spool = editingSpool;
+            setEditingSpool(null);
+            selectWriterSpool(spool);
+          }}
+          onCancel={() => setEditingSpool(null)}
+          onSubmit={handleSaveEdit}
+        />
       )}
     </div>
   );

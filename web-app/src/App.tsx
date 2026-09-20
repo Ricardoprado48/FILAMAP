@@ -8,6 +8,7 @@ import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 import { filterInventory, groupInventoryByMaterial } from "./utils/inventory";
+import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -430,10 +431,14 @@ export default function App() {
   const groupedByMaterial =
     groupInventoryByMaterial(filteredInventory);
 
-  const pendingWeighingLogs = printLogs.filter((l) => l.needs_weighing);
-  const writerSpool = inventory.find((s) => s.id === writerSpoolId) || null;
+  const pendingWeighingLogs =
+    getPendingWeighingLogs(printLogs);
 
-  const activePrinter = printers[0];
+  const writerSpool =
+    getWriterSpool(inventory, writerSpoolId);
+
+  const activePrinter =
+    getActivePrinter(printers);
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const printerOnline = isPrinterOnline(activePrinter);
 

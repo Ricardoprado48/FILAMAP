@@ -5,6 +5,10 @@ import { useNfc } from "./hooks/useNfc";
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline } from "./utils/printer";
+import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
+import { filterInventory, groupByMaterial, materialTotals } from "./utils/inventory";
+import { filterAndSortCatalog, pendingWeighingLogs as selectPendingWeighingLogs, isPrinterPrinting } from "./utils/selectors";
+import { computeBudgetSummary } from "./utils/budget";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -69,12 +73,6 @@ export default function App() {
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
   ]);
-
-  function generateAutoTagId(mat: string, col: string) {
-    const cleanCol = col.trim().toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-");
-    const rnd = Math.floor(1000 + Math.random() * 9000);
-    return `FILA-${mat.toUpperCase()}-${cleanCol || "COR"}-${rnd}`;
-  }
 
   useEffect(() => {
     localStorage.setItem("filamap_energy_tariff", energyTariff);
@@ -150,37 +148,19 @@ export default function App() {
 
 
   // Cálculos de Orçamento
-  const hours = parseFloat(calcPrintHours) || 0;
-  const powerKw = (parseFloat(printerPowerW) || 150) / 1000;
-  const tariffKwh = parseFloat(energyTariff) || 1.13;
-  const machineCostVal = parseFloat(printerCost) || 4500;
-  const lifespanHours = parseFloat(printerLifespanH) || 10000;
-  const markup = parseFloat(markupMultiplier) || 3.0;
-  const extrasCost = parseFloat(calcExtraCosts) || 0;
-
-  const energyPerHour = powerKw * tariffKwh;
-  const depreciationPerHour = lifespanHours > 0 ? (machineCostVal / lifespanHours) : 0;
-  const machineCostTotal = (energyPerHour + depreciationPerHour) * hours;
-
-  let totalFilamentWeight = 0;
-  let totalFilamentCost = 0;
-
-  calcFilaments.forEach((f) => {
-    const w = parseFloat(f.weightG) || 0;
-    if (w > 0) {
-      totalFilamentWeight += w;
-      let priceKg = parseFloat(f.manualPricePerKg) || 85.00;
-      if (f.spoolId) {
-        const found = inventory.find((s) => s.id === f.spoolId);
-        if (found && found.price_paid) priceKg = found.price_paid;
-      }
-      totalFilamentCost += (w / 1000) * priceKg;
-    }
+  const {
+    hours,
+    machineCostTotal,
+    totalFilamentWeight,
+    totalFilamentCost,
+    totalProductionCost,
+    suggestedSalePrice,
+    netEarnings,
+    extrasCost,
+  } = computeBudgetSummary({
+    calcPrintHours, printerPowerW, energyTariff, printerCost,
+    printerLifespanH, markupMultiplier, calcExtraCosts, calcFilaments, inventory,
   });
-
-  const totalProductionCost = totalFilamentCost + machineCostTotal + extrasCost;
-  const suggestedSalePrice = totalProductionCost * markup;
-  const netEarnings = suggestedSalePrice - totalProductionCost;
 
   async function handleSaveToCatalog() {
     if (!calcPartName.trim()) {
@@ -413,42 +393,14 @@ export default function App() {
     await loadData();
   }
 
-  // "written": nfc_written_at confirma escrita física real via NDEFReader.write()
-  // (handleWriteTag). "pending": tem nfc_uid mas nunca teve gravação física
-  // confirmada (ex.: veio de importação em lote via seed_spools.ts). "none":
-  // sem nfc_uid nenhum.
-  function getNfcStatus(spool: Spool): "written" | "pending" | "none" {
-    if (spool.nfc_written_at) return "written";
-    if (spool.nfc_uid) return "pending";
-    return "none";
-  }
-
-  const filteredInventory = inventory.filter((item) => {
-    const matchesSearch = item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          item.brand.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesMat = filterMaterial === "TODOS" || item.material === filterMaterial;
-    return matchesSearch && matchesMat;
-  });
-
-  const filteredCatalog = catalog
-    .filter((item) =>
-      item.name.toLowerCase().includes(catalogSearch.toLowerCase()) ||
-      item.material.toLowerCase().includes(catalogSearch.toLowerCase())
-    )
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
-
-  const groupedByMaterial = filteredInventory.reduce((acc, spool) => {
-    const mat = (spool.material || "OUTROS").toUpperCase();
-    if (!acc[mat]) acc[mat] = [];
-    acc[mat].push(spool);
-    return acc;
-  }, {} as Record<string, Spool[]>);
-
-  const pendingWeighingLogs = printLogs.filter((l) => l.needs_weighing);
+  const filteredInventory = filterInventory(inventory, searchQuery, filterMaterial);
+  const filteredCatalog = filterAndSortCatalog(catalog, catalogSearch);
+  const groupedByMaterial = groupByMaterial(filteredInventory);
+  const pendingWeighingLogs = selectPendingWeighingLogs(printLogs);
   const writerSpool = inventory.find((s) => s.id === writerSpoolId) || null;
 
   const activePrinter = printers[0];
-  const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
+  const isPrinting = isPrinterPrinting(activePrinter);
   const printerOnline = isPrinterOnline(activePrinter);
 
   if (!session) {
@@ -665,8 +617,7 @@ export default function App() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {Object.keys(groupedByMaterial).map((mat) => {
               const spools = groupedByMaterial[mat];
-              const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
-              const totalValue = spools.reduce((acc, s) => acc + ((s.current_weight || 0) * ((s.price_paid || 85) / 1000)), 0);
+              const { totalWeight, totalValue } = materialTotals(spools);
 
               return (
                 <div key={mat} style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #334155", overflow: "hidden" }}>

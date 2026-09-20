@@ -1,7 +1,9 @@
 # 07 — Estado Atual do Projeto
 
-**Snapshot auditado:** 18/09/2026  
-**Base:** conteúdo do ZIP `desktop-agent.zip` fornecido para auditoria.
+**Snapshot auditado:** 18/09/2026 (base original), atualizado em 20/09/2026.
+**Base:** conteúdo do ZIP `desktop-agent.zip` fornecido para auditoria +
+sessão de refatoração/testes/onboarding de 20/09/2026 (ver
+`docs/10_NIVEL_3_RELATORIO.md` para o relatório completo dessa sessão).
 
 ## Status geral
 
@@ -249,7 +251,21 @@ física (ex.: veio de importação em lote), ou sem tag nenhuma. Ver
 
 ### Onboarding
 
-O Agent depende de configuração por `.env`. Não existe onboarding comercial guiado no código auditado.
+**Implementado em 20/09/2026:** o Agent não depende mais de `.env` para uso
+comercial. `desktop-agent/src/config/store.ts` resolve a configuração com
+prioridade env/`.env` (dev) > arquivo salvo do onboarding > defaults
+(`SUPABASE_URL`/`SUPABASE_ANON_KEY`, mesmo valor público já embutido no
+bundle do Web App). Quando falta algo essencial (e-mail/senha da conta,
+serial/Access Code da impressora) e há terminal interativo,
+`src/config/setupWizard.ts` pergunta uma única vez e salva o resultado em
+`%APPDATA%\Filamap\config.json` (Windows) / equivalente em macOS/Linux —
+execuções seguintes (inclusive via auto-start, sem terminal) não perguntam
+de novo. Sem TTY e sem configuração completa, o Agent encerra rápido com
+mensagem clara em vez de travar esperando input. Ver
+`desktop-agent/README.md` para o fluxo completo e o que ainda falta
+(instalador gráfico, assinatura de código, auto-update, cofre de
+credenciais do SO) — ver `docs/09_CHANGELOG.md` e
+`docs/10_NIVEL_3_RELATORIO.md`.
 
 ### Offline
 
@@ -257,14 +273,48 @@ Há persistência do job ativo, mas não foi encontrado buffer persistente de ev
 
 ### Testes
 
-Não foram encontrados testes automatizados no pacote auditado.
+**Adicionado em 20/09/2026:** não havia nenhum teste automatizado nem
+framework de testes configurado em `desktop-agent` antes desta sessão
+(apesar de uma descrição de tarefa anterior mencionar 24 unitários + 6 de
+integração já passando — não encontrados no branch real; tratado como
+divergência de estado, não como algo a preservar, e refeito do zero — ver
+`docs/10_NIVEL_3_RELATORIO.md`). Hoje: `vitest` configurado, `npm test`
+roda 26 testes unitários (100% passando) cobrindo a cascata de 4 níveis de
+consumo, extração de peso do nome do arquivo, matemática de varredura de
+sub-rede e resolução de configuração/onboarding. `npm run test:integration`
+existe e tem um teste real (não mockado) para o RPC `finalize_print_job`
+(incluindo idempotência), mas pula automaticamente sem credenciais de um
+projeto Supabase de teste — não executado nesta sessão por falta dessas
+credenciais no ambiente. Ainda não há testes para `ftpsParser.ts`
+(parsing do `slice_info.config` real) nem para o fluxo completo de
+`index.ts` (MQTT/discovery integrados) — ver P1.5/P0.4 no backlog.
+
+### Refatoração do Web App (`App.tsx`)
+
+**Em andamento, avançado em 20/09/2026:** `App.tsx` caiu de 1244 para 1053
+linhas nesta sessão, com `npm run build` (`tsc` + `vite build`) validado a
+cada etapa e sem mudança de comportamento/visual pretendida. Extraído:
+`src/types.ts`, `src/constants.ts`, `src/utils/{printer,nfc,inventory,
+selectors,budget}.ts`, `src/services/{dataService,catalogService,
+spoolService}.ts`, `src/components/{LoginScreen,WeighSpoolModal,
+EditSpoolModal}.tsx`. Ainda dentro de `App.tsx`: os 4 corpos de aba
+(AMS/Estoque/Orçamento/Tags — JSX grande, todo com `style` inline) e
+`supabase.auth.*` (login/logout). Ver P2.6 em `docs/08_BACKLOG.md` e
+`docs/10_NIVEL_3_RELATORIO.md` para o motivo de ter parado aqui nesta
+rodada (blocos maiores, sem como confirmar visualmente sem navegador no
+ambiente desta sessão).
 
 ## Build auditado
 
-Validação executada nesta auditoria:
+Validação executada nesta auditoria (18/09/2026):
 
 - `web-app`: o TypeScript (`tsc`) compilou sem erros. O passo Vite não pôde ser concluído neste ambiente Linux porque o `node_modules` vindo do ZIP é de Windows e não contém o binário opcional `@rollup/rollup-linux-x64-gnu`. Isso é uma limitação do ambiente de auditoria, não evidência de erro no código.
 - `desktop-agent`: TypeScript (`tsc`) compilou sem erros.
+
+**Revalidado em 20/09/2026** (ambiente diferente, com `node_modules` Linux
+instalado de verdade): `cd web-app && npm run build` completo (tsc + vite
+build) passou sem erros; `cd desktop-agent && npx tsc --noEmit` e
+`npm test` (26/26) também passaram. Ver `docs/10_NIVEL_3_RELATORIO.md`.
 
 Para validar o build completo no Windows do projeto, executar `npm install`/`npm ci` no ambiente correto e depois `npm run build` em cada pacote.
 

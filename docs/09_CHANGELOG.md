@@ -2,6 +2,104 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Sessão "Nível 3": refatoração gradual do Web App, onboarding comercial do Agent e testes automatizados
+
+Sessão autônoma de maturidade de produto. Detalhamento completo (o que foi
+encontrado, decisões, bloqueios, comandos de validação) em
+`docs/10_NIVEL_3_RELATORIO.md`. Resumo do que mudou de fato no código:
+
+**Divergência encontrada antes de alterar qualquer coisa:** a tarefa
+descrevia um estado do repositório (24 testes unitários + 6 de integração
+já passando no Agent; `App.tsx` já parcialmente extraído em
+`src/types.ts`, `src/constants.ts`, `src/utils/printer.ts`,
+`src/utils/nfc.ts`, `src/utils/inventory.ts`, `src/utils/selectors.ts`,
+`src/services/dataService.ts`, `src/services/catalogService.ts`) que não
+correspondia ao branch real (`git status` limpo, nenhum desses arquivos
+existia, nenhuma infraestrutura de teste existia em `desktop-agent`, sem
+`test`/`test:integration` no `package.json`). Tratado como o código sendo a
+fonte de verdade (conforme `CLAUDE.md`): a refatoração e os testes foram
+feitos como trabalho novo, real, e não como continuação de algo que já
+existia.
+
+**Web App (`web-app/src/App.tsx`, 1244 → 1053 linhas, sem mudança de
+comportamento/visual):**
+- `src/types.ts`, `src/constants.ts`: interfaces (`Printer`, `Spool`,
+  `CatalogItem`, `PrintLog`) e constantes (`POPULAR_BRANDS`,
+  `TARE_PRESETS`, `PRINTER_ONLINE_THRESHOLD_MS`);
+- `src/utils/printer.ts`, `src/utils/nfc.ts`, `src/utils/inventory.ts`,
+  `src/utils/selectors.ts`, `src/utils/budget.ts`: funções puras
+  (`isPrinterOnline`, `generateAutoTagId`, `getNfcStatus`,
+  filtro/agrupamento de estoque, filtro/ordenação de catálogo,
+  `computeBudgetSummary`);
+- `src/services/dataService.ts`, `catalogService.ts`, `spoolService.ts`:
+  todo acesso a dados (`supabase.from(...)`) que antes ficava espalhado
+  dentro de `App.tsx` — `loadData`, CRUD de catálogo, CRUD de spool,
+  associação/ejeção de slot AMS, pesagem, gravação de tag;
+- `src/components/LoginScreen.tsx`, `WeighSpoolModal.tsx`,
+  `EditSpoolModal.tsx`: telas isoladas extraídas para componentes com
+  props explícitas.
+- Validado com `npm run build` (`tsc && vite build`) após cada etapa —
+  6 commits pequenos, todos com build verde.
+- **Não testado num navegador real** (ambiente desta sessão não tem
+  browser interativo) — só validação de tipo/build. Recomenda-se um
+  smoke test manual (login, AMS, estoque, orçamento, gravação de tag)
+  antes de considerar a refatoração 100% livre de regressão visual/UX.
+- Restam no `App.tsx`: os 4 corpos de aba (AMS/Estoque/Orçamento/Tags,
+  JSX grande) e `supabase.auth.*` (login/logout) — não extraídos nesta
+  rodada por serem blocos maiores e mais arriscados de mover sem poder
+  testar visualmente; ver P2.6 atualizado em `docs/08_BACKLOG.md`.
+
+**Desktop Agent — testes automatizados (não existiam antes desta sessão):**
+- `desktop-agent/src/consumption.ts`: `computeConsumptionPerSlot` e
+  `extractGramsFromName` extraídos de `index.ts` (lógica pura, mesmo
+  comportamento, agora importável/testável);
+- `discovery.ts`: `ipToInt`, `intToIp`, `prefixLength`, `hostsInRange`
+  exportados (eram funções internas) para teste direto;
+- `vitest` adicionado como devDependency; `npm test` roda
+  `src/**/*.test.ts` (26 testes, todos passando: cascata de 4 níveis de
+  consumo, extração de peso do nome do arquivo, matemática de varredura
+  de sub-rede, resolução de diretório de config por SO, campos
+  obrigatórios do onboarding);
+- `tsconfig.json` passou a excluir `*.test.ts` do build de produção
+  (`tsc`) — sem isso `dist/` incluía os arquivos de teste e dependia de
+  tipos do `vitest` em tempo de execução;
+- `npm run test:integration` criado apontando para
+  `tests/integration/finalizePrintJob.integration.test.ts` (RPC
+  `finalize_print_job` real, idempotência incluída) — usa
+  `describe.skipIf` e pula (não falha) sem credenciais de um Supabase de
+  teste nas variáveis de ambiente. **Não executado nesta sessão** — sem
+  um projeto Supabase de teste disponível no ambiente sandbox.
+
+**Desktop Agent — onboarding comercial sem `.env`:**
+- `src/config/store.ts`: `resolveConfig()` prioriza env/`.env` > arquivo
+  de configuração salvo > defaults (`SUPABASE_URL`/`SUPABASE_ANON_KEY`
+  iguais ao valor público já embutido no bundle do Web App). Arquivo
+  salvo fora do repositório, em pasta de config do SO (`%APPDATA%\Filamap`
+  no Windows, `~/Library/Application Support/Filamap` no macOS,
+  `~/.config/filamap` no Linux), com `chmod 600` best-effort no POSIX;
+- `src/config/setupWizard.ts`: assistente interativo (`readline/promises`)
+  que só pergunta o que falta (e-mail/senha da conta, serial/Access Code
+  da impressora) e só quando há terminal de verdade (`stdin.isTTY`) — sem
+  TTY (caso do auto-start via Tarefa Agendada) encerra rápido com
+  mensagem clara em vez de travar esperando input;
+- `index.ts`: `startAgent()` resolve a config e roda o assistente antes
+  de criar o cliente Supabase; descoberta/reconexão MQTT já existentes
+  reaproveitadas sem alteração;
+- `desktop-agent/README.md` (novo): documenta o fluxo de onboarding e
+  lista, com o motivo de cada um ter ficado fora desta rodada, o que
+  falta pro instalador `.exe` completo: wizard gráfico/MSI (ferramenta a
+  escolher), assinatura de código (depende de certificado — decisão
+  externa ao time técnico, custo e verificação de identidade da
+  empresa), auto-update, e migração do Access Code pro cofre de
+  credenciais do SO (P2.2 — precisa de dependência nativa tipo
+  `keytar`/DPAPI, muda o processo de build do `pkg`).
+
+Comandos de validação usados nesta sessão (repetíveis):
+```
+cd web-app && npm run build
+cd desktop-agent && npm test && npx tsc --noEmit
+```
+
 ## 20/09/2026 — Investigação: `could not find the nfc_written_at column of spools in the schema cache`
 
 **Pergunta:** o erro reportado ao aplicar `20260920_add_nfc_written_at.sql`

@@ -146,24 +146,56 @@ Registrar não só impressão, mas também:
 
 ### P1.5 — Testes automatizados
 
-Mínimo:
-
-- parser 3MF/XML;
-- cálculo de consumo;
-- baixa idempotente;
-- RLS;
-- cálculo de tara;
-- orçamento.
+- [x] cálculo de consumo — adicionado em 20/09/2026:
+  `desktop-agent/src/consumption.test.ts` (9 testes, cascata de 4 níveis
+  + extração de peso do nome do arquivo);
+- [x] descoberta de impressora (matemática de sub-rede) — adicionado em
+  20/09/2026: `desktop-agent/src/discovery.test.ts` (8 testes);
+- [x] onboarding/config do Agent — adicionado em 20/09/2026:
+  `desktop-agent/src/config/store.test.ts` (9 testes);
+- [x] scaffold de teste de integração real do `finalize_print_job`
+  (idempotência incluída) — adicionado em 20/09/2026 em
+  `desktop-agent/tests/integration/`, mas **não executado** (pula sem
+  credenciais de um Supabase de teste; nenhuma disponível no ambiente
+  desta sessão);
+- [ ] parser 3MF/XML (`ftpsParser.ts`) — ainda sem testes, é P0.4
+  (precisa de amostras reais de `.3mf`/`slice_info.config`);
+- [ ] RLS — ainda sem testes automatizados;
+- [ ] cálculo de tara — lógica está em `web-app` (`openWeighModal`/
+  `handleSaveWeigh` em `App.tsx`), não extraída para função pura ainda,
+  sem teste;
+- [x] orçamento — extraído para `web-app/src/utils/budget.ts` em
+  20/09/2026 (função pura `computeBudgetSummary`), mas ainda sem
+  suíte de teste própria no `web-app` (nenhum framework de teste
+  configurado lá ainda — diferente do `desktop-agent`, que já tem
+  `vitest`). Candidato natural para o mesmo `vitest` no próximo passo.
 
 ## P2 — Produto comercial
 
 ### P2.1 — Onboarding do Agent
 
-Eliminar necessidade do usuário editar `.env`.
+- [x] eliminada a necessidade de editar `.env` — adicionado em
+  20/09/2026: assistente interativo (`desktop-agent/src/config/
+  setupWizard.ts`) pergunta e-mail/senha/serial/Access Code uma única
+  vez e salva; execuções seguintes (inclusive auto-start sem terminal)
+  não perguntam de novo. `.env` continua funcionando como override
+  opcional para desenvolvimento. Ver `desktop-agent/README.md` e
+  `docs/09_CHANGELOG.md`.
 
 ### P2.2 — Armazenamento seguro do Access Code
 
-Usar mecanismo seguro do SO/credencial local em vez de arquivo texto como solução final.
+**Parcialmente resolvido em 20/09/2026:** a configuração (incluindo
+Access Code) saiu do `.env` dentro do projeto e passou a viver em
+`%APPDATA%\Filamap\config.json` (Windows) / equivalente em macOS/Linux,
+com permissão de arquivo restrita ao dono (`chmod 600`) como melhor
+esforço — só funciona de fato em POSIX; Windows/NTFS não tem um
+equivalente direto sem dependência nativa extra. **Ainda não é o cofre de
+credenciais do SO** (Windows Credential Manager/DPAPI, Keychain no
+macOS): continua sendo um arquivo JSON em texto puro. Migrar para um cofre
+de verdade exige uma dependência nativa (ex.: `keytar` ou acesso direto à
+DPAPI), o que muda o processo de build/empacotamento do `pkg` — decisão de
+arquitetura/dependência maior, não tomada nesta sessão (ver
+`desktop-agent/README.md`, seção "O que falta").
 
 ### P2.3 — Instalador/auto-start/auto-update
 
@@ -174,6 +206,21 @@ Empacotamento robusto para Windows e, se desejado, outros sistemas.
   `uninstall-autostart.ps1`. Só o mecanismo de "iniciar sozinho no
   logon"; o resto de P2.3 (instalador de fato, auto-update) continua em
   aberto. Ver `docs/09_CHANGELOG.md`.
+- [x] **onboarding sem `.env`** — ver P2.1, feito em 20/09/2026 na mesma
+  sessão que preparou o resto da arquitetura comercial descrita aqui.
+- [ ] **instalador gráfico (`.exe`/MSI com wizard)** — hoje
+  `npm run package-exe` gera um binário único via `pkg`, sem tela de
+  instalação, atalho no menu iniciar ou desinstalador registrado.
+  Exigiria escolher uma ferramenta (Inno Setup, NSIS, electron-builder)
+  — não decidido nesta sessão por ser escolha de produto/ferramenta sem
+  pedido explícito de qual usar.
+- [ ] **assinatura de código** — bloqueado por depender de um
+  certificado de assinatura (custo + verificação de identidade da
+  empresa), que só o dono do produto pode providenciar; sem isso o
+  Windows/SmartScreen mostra aviso de "editor desconhecido".
+- [ ] **auto-update** — não implementado; depende de decidir o canal de
+  distribuição de novas versões e, de novo, de assinatura de código para
+  atualizações confiáveis.
 
 ### P2.4 — Offline queue
 
@@ -185,7 +232,32 @@ Após saldo confiável, adicionar alertas e previsão.
 
 ### P2.6 — UX/refatoração do frontend
 
-`App.tsx` concentra quase toda a aplicação. Separar componentes, hooks e serviços quando a base funcional estiver estável.
+**Em andamento, avançado em 20/09/2026:** `App.tsx` caiu de 1244 para 1053
+linhas, extraindo (sem mudar comportamento/visual, `npm run build`
+validado a cada passo):
+- [x] tipos e constantes (`src/types.ts`, `src/constants.ts`);
+- [x] utils puros — `printer.ts`, `nfc.ts`, `inventory.ts`,
+  `selectors.ts`, `budget.ts`;
+- [x] acesso a dados — `src/services/{dataService,catalogService,
+  spoolService}.ts` (antes, `supabase.from(...)` espalhado direto em
+  `App.tsx`);
+- [x] componentes isolados — `LoginScreen.tsx`, `WeighSpoolModal.tsx`,
+  `EditSpoolModal.tsx`.
+
+Ainda pendente (não extraído nesta rodada por serem blocos maiores,
+mais arriscados de mover sem conseguir testar visualmente num
+navegador real — ambiente desta sessão não tinha um disponível):
+- [ ] os 4 corpos de aba (AMS/Estoque/Orçamento/Tags — a maior parte do
+  JSX que resta, com `style` inline em todo lugar);
+- [ ] `supabase.auth.*` (login/logout) para um hook `useAuth`/serviço
+  próprio;
+- [ ] hooks de estado/efeitos maiores (ex.: o fluxo de scan NFC por
+  slot: `scanningSlot`, `handleScanSlot`, `handleCancelScan`, os dois
+  `useEffect` que reagem a `nfcUid`/`nfcError`).
+
+Antes de continuar essa extração, recomenda-se validar visualmente
+(login, AMS, estoque, orçamento, gravação de tag) num navegador real —
+só `tsc`/`vite build` verificam tipo, não comportamento de UI.
 
 ## P3 — Evoluções da visão
 

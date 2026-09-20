@@ -2,6 +2,199 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Consumo multicolor + finalização idempotente/atômica + cascata de 4 níveis
+
+Três problemas que se cruzam em `finalizeJob()` (P0.2, P0.3, P0.5 do
+backlog), resolvidos juntos numa única reescrita da função, conforme
+solicitado.
+
+### Investigações executadas antes de implementar
+
+**(a) Existe identificador estável de job no payload MQTT?** Não
+confirmado. `desktop-agent/src/index.ts` só lê de `print`:
+`subtask_name`, `gcode_state`, `mc_percent`, `mc_remaining_time`,
+`layer_num`, `total_layer_num`, `nozzle_temper`, `bed_temper`,
+`gcode_file`, `mc_total_cost_time`, `mc_cost_time`, `calc_remaining_time`
+e `ams.ams[0].tray_tar` — nenhum campo de id de tarefa/job é lido em
+nenhum lugar do código. A arquitetura-alvo (`FILAMAP_USER_JOURNEY_ARQUITETURA
+(2).md`, Seções 22 e 44) nomeia um `external_task_id` como objetivo, mas
+o próprio documento não confirma tê-lo visto num payload real — é visão,
+não estado confirmado. Sem hardware real nesta sessão (ambiente
+sandboxed) pra inspecionar o payload bruto e confirmar/descartar um
+campo assim.
+
+Decisão tomada (autorizada explicitamente pelo enunciado da tarefa como
+fallback aceitável): o Agent gera seu próprio `job_id`
+(`crypto.randomUUID()`) no momento em que detecta um job novo (mesmo
+ponto onde `currentJob` é criado) e persiste em `agent-state.json`. Isso
+sobrevive a um restart do Agent no meio de um job (o estado é recarregado
+com o mesmo `job_id`, então uma finalização após restart ainda casa com
+o que já podia ter sido processado). **Limitação residual, não nova:**
+um job que começa E termina inteiramente com o Agent desligado nunca
+teve `currentJob` capturado — nesse caso `finalizeJob` gera um `job_id`
+novo ali mesmo (sem histórico prévio pra casar), então esse caso
+específico não tem proteção de idempotência forte (mas também não tinha
+nenhuma antes; não é regressão). Se no futuro for confirmado um campo
+estável no payload real (inspecionando um MQTT bruto num teste com
+impressora física), trocar pra ele é uma migração simples — só a origem
+do `job_id` muda, o resto do mecanismo (índice único, função atômica)
+continua igual.
+
+**(b) Sem granularidade por cor (níveis 2/3), como distribuir entre os
+slots usados?** Decisão: divide o total estimado igualmente entre todos
+os slots detectados como usados (`currentJob.usedSlots`), arredondado a 1
+casa decimal por slot. É a opção mais simples e defensável na ausência de
+melhor dado, e foi a sugerida no próprio enunciado da tarefa. Alternativa
+considerada e **não implementada** (fica pra depois, se fizer diferença
+na prática): ponderar pelo tempo em que cada slot ficou ativo, em vez de
+dividir igual — exigiria rastrear duração por slot, complexidade extra
+não pedida nesta passagem.
+
+**(c) Slot usado sem spool_id em ams_slots (sem check-in)?** Decisão:
+insere a linha de `print_logs` mesmo assim (spool_id NULL, slot_index
+preenchido, `grams` com o que teria sido consumido), com a nova flag
+`orphan_slot = true`, e **não desconta de nenhum spool** (não existe pra
+quem descontar). A função `finalize_print_job` pula o UPDATE de
+`spools` quando `spool_id` é NULL. Isso dá visibilidade/auditoria ("esse
+slot foi usado, ninguém descontou, alguém devia ter feito check-in") sem
+inventar dono nem perder o evento silenciosamente.
+
+### Schema (nova migration `20260920_add_print_logs_job_tracking.sql`)
+
+Alvo é **`public.print_logs`** — a tabela real usada pelo Agent e pelo
+Web App (`.from("print_logs")` nos dois) — não `public.print_jobs`
+(tabela legada sem uso, ver `002_rls_hardening.sql:35`).
+
+- `job_id UUID` (nullable — linhas antigas ficam sem);
+- `consumption_quality TEXT DEFAULT 'unknown'`;
+- `orphan_slot BOOLEAN NOT NULL DEFAULT false`;
+- índice único `(job_id, spool_id)` — parte do mecanismo de idempotência
+  (NULL é tratado pelo Postgres como distinto de qualquer outro valor,
+  então linhas antigas com `job_id` NULL e múltiplos slots órfãos no
+  mesmo job continuam permitidos);
+- função nova `public.finalize_print_job(p_job_id, p_printer_id,
+  p_subtask_name, p_print_duration_minutes, p_status, p_items jsonb)`,
+  `SECURITY DEFINER` + `search_path = public` fixo, seguindo o padrão de
+  `deduct_spool_filament` (`002_rls_hardening.sql`): dentro de uma
+  transação só, checa se `job_id` já tem alguma linha (se sim, no-op,
+  devolve o que já existe), senão para cada item do array verifica dono
+  do spool via `auth.uid()` (spool de outro usuário aborta a função
+  inteira com `RAISE EXCEPTION`, desfazendo tudo que já rodou nesta
+  chamada), desconta o peso (só quando `spool_id` não é NULL) e insere a
+  linha de log. `needs_weighing` continua existindo e é derivado como
+  `(consumption_quality = 'unknown')`, preservando a lista "pendente de
+  pesagem" já implementada no frontend sem precisar tocar nela.
+
+**Divergência encontrada e reportada, não corrigida (fora de escopo):**
+a migration `20260918_add_consumption_quality.sql`, de uma sessão
+anterior, já tinha tentado adicionar uma coluna parecida, mas (1) alterou
+`public.print_jobs` em vez de `public.print_logs`, e (2) seu bloco
+`DO \$\$ ... END \$\$;` usa barra invertida antes dos cifrões, que não é
+sintaxe válida de dollar-quoting do Postgres. Ver P0.1 no backlog pra
+mais achados de migration quebrada, todos confirmados por execução real
+nesta sessão (não só leitura):
+
+```
+# Ambiente: Postgres 16 local, banco vazio, stub mínimo de auth.users/auth.uid()/auth.role()
+psql -f 001_initial_schema.sql        # OK
+psql -f 002_rls_hardening.sql         # ERRO: column "user_id" of relation "ams_slots" does not exist
+                                       # (a coluna só é criada em 004, que vem depois)
+# reordenando 001 -> 004 -> 002:
+psql -f 002_rls_hardening.sql         # ERRO: relation "public.print_logs" does not exist
+                                       # (só é criada em 005, que também vem depois)
+# reordenando 001 -> 004 -> 005(patched) -> 002:
+psql -f 002_rls_hardening.sql         # ERRO: relation "public.filament_presets" does not exist
+                                       # (nenhuma migration cria essa tabela)
+# 005 sozinha, sem reordenar nada:
+psql -f 005_reconciliation_schema.sql # ERRO: syntax error at or near "push"
+                                       # (dois blocos "do push ... end push;", não é DO $$ ... END $$; válido)
+```
+
+### Agent (`desktop-agent/src/index.ts`)
+
+- `ActiveJobState` ganha `jobId` e `usedSlots: number[]` (antes só havia
+  `activeSlot`, capturado uma vez);
+- o handler de mensagens MQTT agora atualiza `usedSlots` sempre que a AMS
+  reporta troca de slot ativo durante `RUNNING`, não só na criação do
+  job;
+- nova função pura `computeConsumptionPerSlot(usedSlots,
+  filamentSliceInfo, filenameGrams, durationMinutes)` implementa a
+  cascata de 4 níveis retornando um `Map<slotIndex, {grams, quality,
+  weightDiscount}>` — nível 1 usa os dados reais por `trayId` do
+  `slice_info.config` (já granular, não precisa dividir); níveis 2/3
+  dividem o total estimado igualmente entre `usedSlots` (decisão (b)
+  acima); nível 4 nunca inventa peso;
+- **correção do desconto de purga/flush não escalado
+  (`index.ts:360-364` na numeração antes desta mudança):** em
+  `FAILED`/`PAUSE_STOP`/`STOP`, tanto o valor base quanto
+  `weightDiscount` (desconto de purga por cor, vindo do
+  `slice_info.config`) agora são escalados pelo mesmo `percentExecuted`
+  antes de um ser subtraído do outro — antes, `weightDiscount` era
+  subtraído em cheio mesmo num job que falhou cedo;
+- `finalizeJob` reescrita: monta os itens por slot (com lookup de
+  `spool_id` via uma única query em `ams_slots` para todos os slots
+  usados de uma vez, `.in("slot_index", ...)`), calcula `orphan_slot`
+  (decisão (c) acima) e chama `supabase.rpc("finalize_print_job", ...)`
+  uma única vez — substitui o `UPDATE` direto em `spools.current_weight`
+  + `insert` separado em `print_logs` que existia antes;
+- removidas as funções mortas `evaluateConsumption` e
+  `extractWeightFromFilename` (existiam no arquivo, implementavam uma
+  versão solta/nunca chamada da cascata de 4 níveis — a lógica real
+  agora vive em `computeConsumptionPerSlot`, chamada de fato).
+
+### Escopo
+
+Só `finalizeJob` e o rastreamento de estado do job em `index.ts`, mais a
+migration nova. Nada em AMS (UI), Orçamento, Estoque, Tags, autenticação,
+ou na tela de "pendente de pesagem" (`needs_weighing` continua sendo
+gravado do mesmo jeito que o frontend já lê).
+
+**Efeito colateral visível esperado, não é bug:** um job multicolor agora
+gera várias linhas em `print_logs` (uma por slot usado) em vez de uma só.
+O histórico recente da aba AMS (`limit(10)`, já existente, não alterado)
+vai mostrar essas linhas separadamente.
+
+### Validações executadas
+
+- `tsc --noEmit` e `npm run build` em `desktop-agent`: sem erro.
+- Lógica pura de `computeConsumptionPerSlot` + escala de purga: validada
+  com uma reimplementação isolada rodada via `node` (8 cenários: exact
+  multicolor, exact parcial não inventa peso pro slot sem dado,
+  estimated_filename dividido, estimated_duration dividido, unknown não
+  desconta, `usedSlots` vazio cai no slot 0, purga escalada
+  proporcionalmente, unknown nunca é escalado) — todos passaram. É uma
+  reimplementação da mesma lógica pra teste, não uma importação direta do
+  módulo real (não há harness de testes no repo).
+- **A migration e a função `finalize_print_job` foram executadas de
+  verdade** — não só lidas — num Postgres 16 local (`docker`/`psql`
+  disponíveis no ambiente), com um stub mínimo de `auth.users`/
+  `auth.uid()`/`auth.role()`. Cenários testados com dado real inserido e
+  consultado de volta:
+  1. job multicolor com 3 slots (2 com spool exato + 1 órfão): deduziu
+     corretamente `987.5g`/`494.8g` nos dois spools certos, e a linha do
+     slot órfão ficou com `spool_id NULL`, `orphan_slot=true`, sem
+     deduzir de ninguém;
+  2. reprocessar o mesmo `job_id`: nenhuma linha nova, nenhum desconto
+     adicional (idempotência confirmada);
+  3. job `unknown`: `needs_weighing=true`, saldo do spool intacto;
+  4. `spool_id` de outro usuário: `RAISE EXCEPTION`, `ROLLBACK`, zero
+     linhas inseridas (atomicidade/checagem de dono confirmadas).
+- **O que não pôde ser validado:** hardware real (impressora Bambu Lab
+  física, payload MQTT bruto, `.3mf` real via FTPS) — todo o ambiente de
+  teste usou dados inseridos manualmente, não uma execução ponta a ponta
+  do Agent contra uma impressora. A pergunta da investigação (a) (existe
+  `task_id` no payload real?) continua em aberto até alguém inspecionar
+  um payload de verdade.
+
+### Pendências
+
+- P0.1 (migrations não reproduzíveis do zero) continua aberta — achados
+  novos documentados acima e no backlog, não corrigidos nesta tarefa.
+- P0.4 (validar FTPS/slice_info.config com arquivos reais) continua
+  aberta — sem hardware nesta sessão.
+- Investigação (a) fica em aberto pra confirmação futura com hardware
+  real (ver acima).
+
 ## 20/09/2026 — Auto-start do Desktop Agent no logon do Windows (Tarefa Agendada)
 
 **Objetivo desta etapa:** só o mecanismo de "iniciar automaticamente" —

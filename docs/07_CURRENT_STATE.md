@@ -39,8 +39,8 @@ O Filamap já possui Web App, Desktop Agent, integração Supabase, MQTT, tentat
 - tentativa de baixar `.3mf` via FTPS;
 - parser de `slice_info.config`;
 - finalização em FINISH/FAILED/STOP;
-- baixa de peso;
-- gravação de `print_logs`.
+- baixa de peso multicolor, idempotente e atômica por job (20/09/2026);
+- gravação de `print_logs` (uma linha por slot/spool efetivamente usado no job).
 
 ### Banco/security
 
@@ -68,9 +68,15 @@ No código atual, `agent-state.json` já implementa persistência do `ActiveJobS
 
 ### 2. Documento v1.1 menciona `needs_weighing` como fallback sem inventar peso
 
-No código atual, `finalizeJob()` estima por tempo e possui fallback inicial de 35 g; depois grava `needs_weighing: false`.
-
-Portanto, o comportamento real atual é diferente da descrição antiga.
+**Resolvida em 20/09/2026.** Até então, `finalizeJob()` estimava por
+tempo e possuía um fallback fixo de 35 g quando não havia nenhum dado —
+divergindo do texto original que dizia "sem inventar peso" — e sempre
+gravava `needs_weighing: false`, mesmo em estimativas. Agora
+`finalizeJob()` usa a cascata de 4 níveis (`consumption_quality`); o
+fallback fixo de 35 g foi removido — quando não há nenhum dado real, o
+consumo fica em 0g com `consumption_quality: 'unknown'` e
+`needs_weighing: true`, coerente com a descrição original. Ver
+`docs/09_CHANGELOG.md`.
 
 ### 3. Migrations não reproduzem o banco usado pelo código
 
@@ -78,7 +84,16 @@ O código usa `print_logs`, `catalog_items`, `price_paid` e várias colunas de t
 
 ### 4. RPC segura existe, mas não é usada na baixa atual
 
-`deduct_spool_filament()` foi endurecida, porém `finalizeJob()` atualiza `spools.current_weight` diretamente.
+**Parcialmente resolvida em 20/09/2026.** `finalizeJob()` não faz mais
+`UPDATE` direto em `spools.current_weight` — passou a chamar uma função
+Postgres (`public.finalize_print_job`, nova, `SECURITY DEFINER` +
+checagem de `auth.uid()`, mesmo padrão de segurança de
+`deduct_spool_filament()`). Ainda é tecnicamente verdade que
+`deduct_spool_filament()` especificamente continua sem uso — a nova
+função foi escrita separada porque precisa descontar múltiplos spools
+numa mesma transação atômica (um por slot do job), o que
+`deduct_spool_filament()` (um spool por chamada) não cobre sozinha sem
+perder a atomicidade entre os descontos. Ver `docs/09_CHANGELOG.md`.
 
 ### 5. `start-agent.bat` não inicia o Agent como está hoje
 
@@ -95,15 +110,46 @@ não depender dessa resposta: detectam em tempo de execução qual dos dois
 existe em `desktop-agent/` e usam esse. `start-agent.bat` em si não foi
 alterado (fora do escopo desta tarefa).
 
+### 6. Migrations 001-005 não aplicam do zero em pelo menos 5 pontos distintos
+
+Investigado em 20/09/2026 executando de verdade num Postgres local (não
+só lendo): a coluna `ams_slots.user_id` (usada por `002`) só é criada em
+`004`; `print_logs`/`catalog_items` (também usadas por `002`) só são
+criadas em `005`; `filament_presets` (usada por `002`) não é criada por
+nenhuma migration; `005_reconciliation_schema.sql` tem dois blocos
+`do push ... end push;` que não são sintaxe válida de `DO` block do
+Postgres; `20260918_add_consumption_quality.sql` altera a tabela errada
+(`print_jobs`, legada, em vez de `print_logs`, a real) e também usa
+dollar-quoting inválido (`DO \$\$`). Nenhum desses pontos foi corrigido
+(fora do escopo das tarefas que os encontraram) — comandos exatos de
+reprodução em `docs/09_CHANGELOG.md`. Aprofunda o que P0.1 já registrava
+de forma mais genérica.
+
 ## Limitações críticas atuais
 
 ### Consumo multicolor
 
-`currentJob.activeSlot` é capturado no início do job e a finalização baixa um spool. O parser pode retornar múltiplos filamentos, mas a baixa não percorre todos eles.
+**Corrigido em 20/09/2026:** `desktop-agent/src/index.ts` agora rastreia
+todos os slots vistos como ativos durante `RUNNING` num job
+(`currentJob.usedSlots`), não só o capturado no início. A finalização
+gera uma linha de `print_logs` por slot efetivamente usado, com desconto
+individual do spool certo — ver `docs/09_CHANGELOG.md` para a cascata de
+4 níveis e a decisão de como dividir a estimativa quando não há
+granularidade por cor (slots usados > 1 e sem `slice_info.config`).
 
 ### Idempotência/transação
 
-Não existe identificador único de job/finalização que impeça baixa dupla. Atualizar spool e inserir log não ocorre em uma única transação.
+**Corrigido em 20/09/2026:** nova função Postgres
+`public.finalize_print_job` (`SECURITY DEFINER`, `search_path` fixo)
+recebe o job inteiro (identificado por um `job_id` gerado pelo Agent e
+persistido em `agent-state.json`) e roda numa única transação: checa
+idempotência (job já processado? não faz nada), verifica dono de cada
+spool, desconta o peso e insere todas as linhas de log — tudo ou nada.
+Substitui o `UPDATE` direto + `insert` separado que existia antes. Não há
+ainda um identificador de job confirmado vindo da própria impressora
+(payload MQTT) — ver `docs/09_CHANGELOG.md`, investigação (a), para o
+porquê e a limitação residual (job que começa e termina inteiro com o
+Agent desligado).
 
 ### Status online/offline da impressora
 
@@ -206,10 +252,13 @@ Para validar o build completo no Windows do projeto, executar `npm install`/`npm
 
 Antes de acrescentar novas funcionalidades de negócio, estabilizar o núcleo de inventário automático:
 
-1. tornar o schema 100% reproduzível por migrations;
-2. validar arquivo FTPS/slice info com casos reais;
-3. corrigir consumo multicolor;
-4. implementar finalização atômica/idempotente;
-5. decidir política explícita de consumo quando não houver dado autoritativo;
-6. fechar leitura NFC/deep link;
+1. tornar o schema 100% reproduzível por migrations (ainda pendente —
+   ver "Divergência 6" acima e P0.1 no backlog: pelo menos 5 pontos de
+   falha confirmados por execução real em 20/09/2026);
+2. validar arquivo FTPS/slice info com casos reais (ainda pendente — sem
+   hardware nesta sessão);
+3. ~~corrigir consumo multicolor~~ — feito em 20/09/2026;
+4. ~~implementar finalização atômica/idempotente~~ — feito em 20/09/2026;
+5. ~~decidir política explícita de consumo quando não houver dado autoritativo~~ — feito em 20/09/2026 (cascata de 4 níveis);
+6. fechar leitura NFC/deep link (ainda pendente — só o `?tag=` no carregamento);
 7. somente então evoluir onboarding e experiência comercial.

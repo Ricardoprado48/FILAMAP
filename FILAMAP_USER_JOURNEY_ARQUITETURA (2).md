@@ -1,7 +1,7 @@
 # FILAMAP
 ## Jornada do Utilizador e Funcionamento Técnico
 
-**Versão:** 1.3  
+**Versão:** 1.4  
 **Tipo de documento:** Product Journey + Technical Architecture — **fonte oficial de estado do projeto** (ver Seção 62)  
 **Produto:** Filamap  
 **Categoria:** SaaS / IoT / Automação para impressão 3D  
@@ -10,6 +10,17 @@
 ---
 
 ## Log de atualizações
+
+**v1.4** — Correções trazidas por trabalho técnico real em 20/09/2026
+(não auditoria, implementação): consumo multicolor, finalização
+idempotente/atômica e a cascata de 4 níveis de `consumption_quality`
+foram implementados e validados com execução real (Postgres local +
+`tsc`/build) — ver detalhe no aviso da Seção 62 e o changelog completo em
+`docs/09_CHANGELOG.md`. `GEMINI.md`, lido nesta mesma sessão, já lista
+este documento como item 1 da ordem de precedência (Seção 1) — a
+pendência registrada na v1.3 abaixo ("GEMINI.md precisa ser corrigido")
+parece já ter sido resolvida em algum momento não capturado no changelog
+deste documento; sinalizado aqui em vez de presumido silenciosamente.
 
 **v1.3** — Decisão explícita de Ricardo: este documento é a fonte oficial
 de estado do projeto, não `docs/07_CURRENT_STATE.md`/`GEMINI.md`. Os
@@ -1847,7 +1858,7 @@ Retirar bobina
 
 ---
 
-# 62. Estado Real de Implementação (v1.3 — fonte oficial de estado)
+# 62. Estado Real de Implementação (v1.4 — fonte oficial de estado)
 
 > **📌 Aviso v1.3 (19/09/2026) — este documento é a fonte oficial do
 > projeto, por decisão explícita de Ricardo.** A estrutura `docs/00`–`09` +
@@ -1862,30 +1873,47 @@ Retirar bobina
 > incorporadas aqui como estado confirmado, em vez de tratadas como uma
 > fonte concorrente:
 >
-> - **`needs_weighing` não funciona como deveria.** Fallback/estimativa
->   está gravando `needs_weighing: false` em vez de `true` — reintroduz o
->   problema de apresentar estimativa como medição exata (viola a BR-05
->   registrada nos docs do projeto).
-> - **Consumo multicolor está incompleto**: o job desconta um único slot
->   (capturado no início, nunca atualizado durante trocas de cor), mesmo
->   quando o parser identifica múltiplos filamentos.
+> - ~~**`needs_weighing` não funciona como deveria.**~~ **Corrigido em
+>   20/09/2026:** substituído pela cascata de 4 níveis
+>   (`consumption_quality`); o fallback fixo de 35g foi removido,
+>   `needs_weighing` agora é derivado corretamente como
+>   `(consumption_quality = 'unknown')`.
+> - ~~**Consumo multicolor está incompleto**~~ **Corrigido em
+>   20/09/2026:** o Agent rastreia todos os slots usados durante o job
+>   (não só o inicial) e gera uma linha de log/desconto por slot.
 > - **`slice_info.config`/FTPS ainda não têm validação com arquivo real**
->   documentada de forma confiável.
+>   documentada de forma confiável. **Ainda em aberto** — sem hardware
+>   físico disponível nas sessões até agora.
 > - **A lacuna de migrations é maior do que a coluna `ams_slots.user_id`** —
 >   tabelas inteiras (`print_logs`, `catalog_items`, `filament_presets`)
->   existem no banco real mas não em nenhuma migration versionada.
-> - **A RPC segura que foi endurecida não é usada** na baixa real
->   (`finalizeJob()` faz `UPDATE` direto) — sem impacto de segurança (RLS
->   protege), mas sem atomicidade/idempotência entre baixa e log.
-> - **Leitura de NFC não fecha o ciclo** no frontend — `startScanning()`
->   existe no hook mas não é chamado, e o parâmetro `?tag=` gravado na tag
->   não é interpretado no carregamento da página.
+>   existem no banco real mas não em nenhuma migration versionada. **Ainda
+>   em aberto, e mais grave do que estava registrado aqui:** em 20/09/2026
+>   isso foi executado de verdade contra um Postgres vazio (não só lido) e
+>   confirmado com pelo menos 5 pontos de falha distintos, incluindo dois
+>   blocos de sintaxe SQL inválida (`do push...end push` e `DO \$\$` com
+>   barra invertida) que quebram mesmo depois de resolver a ordem das
+>   tabelas. Ver `docs/08_BACKLOG.md` (P0.1) e `docs/09_CHANGELOG.md`.
+> - ~~**A RPC segura que foi endurecida não é usada** na baixa real~~
+>   **Corrigido em 20/09/2026, de forma diferente do esperado:** em vez de
+>   passar a usar `deduct_spool_filament()`, foi criada uma função nova
+>   (`public.finalize_print_job`) porque a baixa precisa ser atômica para
+>   *vários* spools de uma vez (um job multicolor descontando N slots numa
+>   única transação) — `deduct_spool_filament()` só cobre um spool por
+>   chamada. `deduct_spool_filament()` em si continua sem uso.
+> - **Leitura de NFC não fecha o ciclo** no frontend — isso já estava
+>   desatualizado antes desta v1.4: `startScanning()` foi integrado à UI
+>   (aba AMS) numa sessão anterior a 20/09/2026; o que ainda falta é só o
+>   deep link passivo via `?tag=` no carregamento da página. Ver
+>   `docs/07_CURRENT_STATE.md` ("NFC de leitura").
 >
-> **Pendência aberta:** `GEMINI.md` ainda declara a si mesmo (e a
-> `docs/07_CURRENT_STATE.md`) como superiores a este documento — uma
-> contradição direta com esta decisão. Recomendo atualizar `GEMINI.md` pra
-> refletir que este arquivo é a fonte oficial; posso preparar essa versão
-> corrigida se for útil.
+> **Pendência de v1.3 — já parece resolvida, não confirmada por quem
+> corrigiu:** este parágrafo dizia que `GEMINI.md` se autodeclarava acima
+> deste documento. Lido nesta sessão (20/09/2026), `GEMINI.md` (Seção 1)
+> já lista este arquivo como item 1 da ordem de precedência — a correção
+> parece ter sido feita em algum momento entre a v1.3 e agora, sem deixar
+> rastro no changelog deste documento nem em `docs/06_DECISIONS.md`. Não
+> apago o parágrafo original pra não apagar histórico; só registro que o
+> estado atual de `GEMINI.md` já reflete o que era pedido aqui.
 >
 > **Como isso se mantém confiável:** este documento não tem acesso direto
 > ao repositório, ao Supabase de produção ou à impressora — tudo que entra

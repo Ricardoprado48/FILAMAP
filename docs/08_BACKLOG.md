@@ -10,23 +10,38 @@ Este backlog foi criado a partir do código auditado em 18/09/2026. Prioridade i
 
 **Concluído quando:** um projeto Supabase vazio consegue receber todas as migrations e executar Web App + Agent sem criação manual no dashboard.
 
+**Investigação em 20/09/2026 (executada de verdade, num Postgres local, não só lida):** rodar 001→005 em ordem contra um banco vazio quebra em pelo menos 3 pontos distintos, confirmados com erro real do Postgres:
+
+1. `002_rls_hardening.sql` falha em `ALTER TABLE public.ams_slots ALTER COLUMN user_id...` — a coluna só é criada em `004`, que vem depois no número do arquivo.
+2. Mesmo reordenando 004 antes de 002, `002` ainda falha tentando alterar `public.print_logs`/`catalog_items` — essas tabelas só são criadas em `005`, também depois na ordem numérica.
+3. Mesmo com 001→004→005→002→003 (ordem mínima que funciona pras duas primeiras), `002` falha de novo em `public.filament_presets` — essa tabela **não é criada por nenhuma migration**, nem em 005; só existe hoje porque foi criada manualmente no dashboard.
+4. `005_reconciliation_schema.sql` tem dois blocos `do push ... end push;` (linhas ~37 e ~45) — **não é sintaxe válida de `DO` block do Postgres** (o correto é `DO $$ ... END $$;`); mesmo pulando os problemas 1-3, `005` sozinha já falha com `ERROR: syntax error at or near "push"`.
+5. `20260918_add_consumption_quality.sql` tem dois problemas independentes: altera `public.print_jobs` (tabela legada, sem uso — ver comentário em `002_rls_hardening.sql:35`) em vez de `public.print_logs` (a tabela real), e usa `DO \$\$ ... END \$\$;` com barra invertida antes dos cifrões, que também não é dollar-quoting válido.
+
+Nenhum desses 5 pontos foi corrigido nesta tarefa (fora do escopo autorizado — só reportado). `docs/09_CHANGELOG.md` tem os comandos exatos usados pra reproduzir cada erro.
+
 ### P0.2 — Idempotência + transação de finalização
 
-**Problema:** baixa do spool e criação de log são operações separadas e repetíveis.
-
-**Objetivo:** criar identidade estável do job/evento e uma operação atômica no banco que:
-
-- verifique dono;
-- impeça duplicação;
-- desconte saldo;
-- grave movimentos/logs;
-- marque job finalizado.
+- [x] corrigido em 20/09/2026 — nova função `public.finalize_print_job`
+  (`20260920_add_print_logs_job_tracking.sql`), chamada por
+  `desktop-agent/src/index.ts::finalizeJob`. Recebe o job inteiro (job_id +
+  array de itens por spool) e roda numa única transação: checa se o
+  `job_id` já foi processado (idempotência — reprocessar não faz nada),
+  verifica dono de cada spool via `auth.uid()`, desconta o peso e insere
+  todas as linhas de `print_logs`, tudo ou nada. `job_id` é gerado pelo
+  Agent (`crypto.randomUUID()`) no início do job e persistido em
+  `agent-state.json` — ver investigação (a) no changelog sobre por que não
+  foi usado um identificador vindo do payload MQTT da impressora. Validado
+  com execução real num Postgres local (não só leitura) — ver changelog.
 
 ### P0.3 — Corrigir consumo multicolor/AMS
 
-**Problema:** job atual tende a descontar um único spool.
-
-**Objetivo:** mapear todos os filamentos usados pelo job para seus slots/spools e aplicar consumo individual.
+- [x] corrigido em 20/09/2026 — `desktop-agent/src/index.ts` agora
+  rastreia todos os slots vistos como ativos durante `RUNNING`
+  (`currentJob.usedSlots`), não só o slot inicial. Cada slot usado vira uma
+  linha própria em `print_logs`, com seu próprio spool e desconto. Ver
+  `docs/09_CHANGELOG.md` para a decisão de como dividir a estimativa
+  quando não há granularidade por cor (níveis 2/3 da cascata).
 
 ### P0.4 — Validar FTPS + `slice_info.config` com arquivos reais
 
@@ -42,14 +57,15 @@ Registrar estrutura observada e criar testes de parser.
 
 ### P0.5 — Política de fallback de consumo
 
-Decidir e documentar o que acontece se não houver peso autoritativo.
-
-O comportamento atual (`0,22 g/min` / fallback 35 g) não deve ser tratado como exato. Definir se:
-
-- estima e marca qualidade;
-- pede reconciliação;
-- não baixa até obter dado melhor;
-- outra política explicitamente aprovada.
+- [x] corrigido em 20/09/2026 — cascata de 4 níveis implementada e
+  wireada (existia código morto parcial, `evaluateConsumption`/
+  `extractWeightFromFilename`, nunca chamado — removido e substituído por
+  `computeConsumptionPerSlot`, que efetivamente decide `consumption_quality`
+  por slot): `exact` (slice_info.config real) → `estimated_filename` →
+  `estimated_duration` → `unknown` (não desconta, `needs_weighing: true`,
+  nunca inventa peso). O antigo fallback fixo de 35g quando nada estava
+  disponível foi removido — hoje isso cai em `unknown`/0g. Ver
+  `docs/09_CHANGELOG.md`.
 
 ### P0.6 — Status online/offline da impressora travava em "ONLINE" com o Agent morto
 
@@ -93,7 +109,9 @@ Integrar estratégia em camadas:
 
 ### P1.3 — Schema de qualidade do consumo
 
-Adicionar origem/qualidade ao log/movimento, evitando que estimado pareça exato.
+- [x] corrigido em 20/09/2026 — junto com P0.2/P0.3/P0.5:
+  `print_logs.consumption_quality` (exact/estimated_filename/
+  estimated_duration/unknown). Ver `docs/09_CHANGELOG.md`.
 
 ### P1.4 — Histórico/ledger de movimentos
 

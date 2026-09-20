@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import dgram from "node:dgram";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 
@@ -29,10 +30,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 });
 
 interface ActiveJobState {
+  jobId: string; // chave de idempotência (não há task_id/job_id confirmado no payload MQTT real -- ver relatório, investigação (a))
   subtaskName: string;
   maxProgressPercent: number;
   lastProgressPercent: number;
-  activeSlot: number;
+  activeSlot: number; // último slot ativo reportado (mantido por compat/log)
+  usedSlots: number[]; // TODOS os slots vistos como ativos durante RUNNING, não só o inicial
   startTime: number;
   totalCostTime: number; // Segundos estimados pelo fatiador
   filamentGrams: number;  // Gramas calculadas pelo fatiador (se informadas)
@@ -259,10 +262,12 @@ async function startAgent() {
             }
             
             currentJob = {
+              jobId: randomUUID(),
               subtaskName: taskName || "Impressão A1",
               maxProgressPercent: progress,
               lastProgressPercent: progress,
               activeSlot: activeSlotIndex,
+              usedSlots: [activeSlotIndex],
               startTime: Date.now(),
               totalCostTime: totalCostTime,
               filamentGrams: extractedGrams || 0,
@@ -274,8 +279,24 @@ async function startAgent() {
             }
           } else {
             currentJob.lastProgressPercent = progress;
+            let stateChanged = false;
             if (progress > currentJob.maxProgressPercent) {
               currentJob.maxProgressPercent = progress;
+              stateChanged = true;
+            }
+            // Rastreia troca de slot ativo pela AMS durante o job -- é o
+            // que permite descontar TODOS os carretéis usados num job
+            // multicolor, não só o slot capturado no início.
+            if (activeSlotIndex !== currentJob.activeSlot) {
+              currentJob.activeSlot = activeSlotIndex;
+              stateChanged = true;
+            }
+            if (!currentJob.usedSlots.includes(activeSlotIndex)) {
+              currentJob.usedSlots.push(activeSlotIndex);
+              console.log(`🎨 Troca de slot detectada durante o job -- slot ${activeSlotIndex} adicionado (usados até agora: ${currentJob.usedSlots.join(", ")})`);
+              stateChanged = true;
+            }
+            if (stateChanged) {
               saveJobState(currentJob);
             }
           }
@@ -331,80 +352,133 @@ async function startAgent() {
   }
 }
 
+interface JobConsumptionItem {
+  spool_id: string | null;
+  slot_index: number;
+  grams: number;
+  consumption_quality: "exact" | "estimated_filename" | "estimated_duration" | "unknown";
+  orphan_slot: boolean;
+}
+
+// Cascata de 4 níveis (nunca é escolha, é sempre tentativa em ordem):
+// 1. exact          -- totalGrams por slot/tray, direto do slice_info.config real via FTPS.
+// 2. estimated_filename -- peso único no nome do arquivo/subtask_name, dividido
+//    igualmente entre os slots detectados como usados (decisão de produto
+//    reportada na investigação (b) -- não há granularidade por cor nesse nível).
+// 3. estimated_duration -- duração x vazão genérica (~0.22g/min), mesma divisão.
+// 4. unknown        -- nenhum dado real -- NÃO desconta nada (grams=0), só loga.
+function computeConsumptionPerSlot(
+  usedSlots: number[],
+  filamentSliceInfo: FilamentSliceInfo[] | undefined,
+  filenameGrams: number,
+  durationMinutes: number
+): Map<number, { grams: number; quality: JobConsumptionItem["consumption_quality"]; weightDiscount: number }> {
+  const perSlot = new Map<number, { grams: number; quality: JobConsumptionItem["consumption_quality"]; weightDiscount: number }>();
+  const exactSlices = (filamentSliceInfo || []).filter((f) => f.totalGrams > 0);
+
+  if (exactSlices.length > 0) {
+    // Nível 1: exato, já granular por slot -- não precisa dividir nada.
+    for (const f of exactSlices) {
+      perSlot.set(f.trayId, { grams: f.totalGrams, quality: "exact", weightDiscount: f.weightDiscount || 0 });
+    }
+    // Slot que a AMS reportou como usado mas o slicer não descreveu --
+    // não inventa peso pra ele, fica unknown mesmo estando no meio de um job "exact".
+    for (const slot of usedSlots) {
+      if (!perSlot.has(slot)) perSlot.set(slot, { grams: 0, quality: "unknown", weightDiscount: 0 });
+    }
+    return perSlot;
+  }
+
+  let totalGrams = 0;
+  let quality: JobConsumptionItem["consumption_quality"] = "unknown";
+  if (filenameGrams > 0) {
+    totalGrams = filenameGrams;
+    quality = "estimated_filename";
+  } else if (durationMinutes > 0) {
+    // Média de vazão típica de FDM na A1 (aprox 12g a 15g por hora = ~0.22g por minuto)
+    totalGrams = Math.round(durationMinutes * 0.22 * 10) / 10;
+    quality = "estimated_duration";
+  }
+
+  const slots = usedSlots.length > 0 ? usedSlots : [0];
+  if (quality === "unknown" || totalGrams <= 0) {
+    for (const slot of slots) perSlot.set(slot, { grams: 0, quality: "unknown", weightDiscount: 0 });
+    return perSlot;
+  }
+
+  const perSlotGrams = Math.round((totalGrams / slots.length) * 10) / 10;
+  for (const slot of slots) perSlot.set(slot, { grams: perSlotGrams, quality, weightDiscount: 0 });
+  return perSlot;
+}
+
 async function finalizeJob(printerId: string, printData: any, percentExecuted: number, finishStatus: string) {
   try {
+    const jobId = currentJob?.jobId || randomUUID();
     const subtaskName = printData.subtask_name || (currentJob ? currentJob.subtaskName : "Trabalho 3D");
     const durationMinutes = Math.round((printData.mc_cost_time || 0) / 60);
-    const slotIdx = currentJob ? currentJob.activeSlot : 0;
+    // Job que começou e terminou inteiro com o Agent desligado nunca tem
+    // currentJob capturado -- cai no slot 0 como já acontecia antes desta
+    // mudança (limitação conhecida, não nova: sem captura, não há como
+    // saber que outros slots foram usados nem pegar slice_info.config).
+    const usedSlots = currentJob?.usedSlots?.length ? currentJob.usedSlots : [currentJob?.activeSlot ?? 0];
+
+    const perSlot = computeConsumptionPerSlot(
+      usedSlots,
+      currentJob?.filamentSliceInfo,
+      currentJob?.filamentGrams || 0,
+      durationMinutes
+    );
 
     const { data: slotRows } = await supabase
       .from("ams_slots")
-      .select("spool_id, spool:spools(*)")
+      .select("slot_index, spool_id")
       .eq("printer_id", printerId)
-      .eq("slot_index", slotIdx);
+      .in("slot_index", Array.from(perSlot.keys()));
+    const spoolBySlot = new Map<number, string | null>((slotRows || []).map((r: any) => [r.slot_index, r.spool_id]));
 
-    const slotRecord = slotRows?.[0];
-    const spoolId = slotRecord?.spool_id ?? null;
-    const currentSpool = (slotRecord as any)?.spool;
+    const items: JobConsumptionItem[] = [];
+    for (const [slotIdx, { grams, quality, weightDiscount }] of perSlot) {
+      let finalGrams = grams;
+      if (quality !== "unknown") {
+        // Escala tanto o valor base quanto o desconto de purga/flush por
+        // percentExecuted -- em FAILED/PAUSE_STOP/STOP (percentExecuted < 100),
+        // um job que falhou cedo não deve ter nem o consumo nem o desconto de
+        // purga aplicados em cheio, os dois avançam proporcionalmente juntos.
+        const scaledGrams = Math.round(grams * (percentExecuted / 100) * 10) / 10;
+        const scaledDiscount = weightDiscount > 0 ? Math.round(weightDiscount * (percentExecuted / 100) * 10) / 10 : 0;
+        finalGrams = Math.max(0, Math.round((scaledGrams - scaledDiscount) * 10) / 10);
+      }
 
-    // Lógica inteligente de peso vinda do fatiador:
-    // 1. Se possuímos o slice_info.config exato do fatiador, usamos o totalGrams daquele slot/tray!
-    // 2. Se o fatiador indicou gramatura explícita (ex via nome do arquivo), usa ela.
-    // 3. Senão, faz uma estimativa calibrada baseada no tempo real de impressão do fatiador (~0.2g por minuto de impressão padrão A1 ou fallback de 35g).
-    let calculatedGrams = 35; 
-    let sliceInfoFound = false;
-    let activeFilamentSlice: FilamentSliceInfo | undefined;
+      const spoolId = spoolBySlot.get(slotIdx) ?? null;
+      items.push({
+        spool_id: spoolId,
+        slot_index: slotIdx,
+        grams: finalGrams,
+        consumption_quality: quality,
+        orphan_slot: !spoolId,
+      });
 
-    if (currentJob?.filamentSliceInfo && currentJob.filamentSliceInfo.length > 0) {
-      activeFilamentSlice = currentJob.filamentSliceInfo.find(
-        (f) => f.trayId === slotIdx
-      );
-      if (activeFilamentSlice && activeFilamentSlice.totalGrams > 0) {
-        calculatedGrams = activeFilamentSlice.totalGrams;
-        sliceInfoFound = true;
-        console.log(`📊 Peso exato do fatiador identificado para Tray ${slotIdx}: ${calculatedGrams}g`);
+      if (!spoolId) {
+        console.warn(`⚠️ Slot ${slotIdx} usado no job mas sem spool_id em ams_slots -- log órfão, sem desconto (${finalGrams}g não debitados de ninguém).`);
       }
     }
 
-    if (!sliceInfoFound) {
-      if (currentJob && currentJob.filamentGrams > 0) {
-        calculatedGrams = currentJob.filamentGrams;
-      } else if (durationMinutes > 0) {
-        // Média de vazão típica de FDM na A1 (aprox 12g a 15g por hora = ~0.22g por minuto)
-        calculatedGrams = Math.round((durationMinutes * 0.22) * 10) / 10;
-      }
-    }
-
-    let estimatedUsedG = Math.max(1, Math.round((calculatedGrams * (percentExecuted / 100)) * 10) / 10);
-
-    // Aplicar desconto de peso por cor, se disponível
-    if (activeFilamentSlice && activeFilamentSlice.weightDiscount > 0) {
-      const prevUsed = estimatedUsedG;
-      estimatedUsedG = Math.max(0, Math.round((estimatedUsedG - activeFilamentSlice.weightDiscount) * 10) / 10);
-      console.log(`💸 Desconto de peso aplicado para cor ${activeFilamentSlice.color}: -${activeFilamentSlice.weightDiscount}g (De ${prevUsed}g para ${estimatedUsedG}g)`);
-    }
-
-    if (spoolId && currentSpool) {
-      const prevWeight = currentSpool.current_weight || 0;
-      const nextWeight = Math.max(0, Math.round((prevWeight - estimatedUsedG) * 10) / 10);
-      
-      await supabase.from("spools").update({ current_weight: nextWeight }).eq("id", spoolId);
-      console.log(`📉 Estoque abatido com base no fatiador/tempo: ${currentSpool.color_name} (-${estimatedUsedG}g)`);
-    }
-
-    await supabase.from("print_logs").insert({
-      printer_id: printerId,
-      spool_id: spoolId,
-      slot_index: slotIdx,
-      subtask_name: subtaskName,
-      filament_used_g: estimatedUsedG,
-      print_duration_minutes: durationMinutes,
-      status: finishStatus,
-      needs_weighing: false,
-      completed_at: new Date().toISOString(),
+    // Chamada única e atômica: idempotência, checagem de dono, desconto de
+    // cada spool e inserção de todas as linhas de log -- tudo ou nada.
+    // Substitui o UPDATE direto + insert separado que existia antes.
+    const { data: logRows, error } = await supabase.rpc("finalize_print_job", {
+      p_job_id: jobId,
+      p_printer_id: printerId,
+      p_subtask_name: subtaskName,
+      p_print_duration_minutes: durationMinutes,
+      p_status: finishStatus,
+      p_items: items,
     });
 
-    console.log(`📝 Log gravado com sucesso (${finishStatus}) - Consumo: ${estimatedUsedG}g`);
+    if (error) throw error;
+
+    const totalDeducted = items.reduce((acc, it) => acc + (it.spool_id ? it.grams : 0), 0);
+    console.log(`📝 Job ${jobId} finalizado (${finishStatus}) -- ${logRows?.length ?? items.length} linha(s) de log, ${totalDeducted}g debitados no total.`);
   } catch (e: any) {
     console.error("❌ Falha ao finalizar trabalho:", e.message);
   }
@@ -415,50 +489,3 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
-/**
- * Avalia os dados de consumo obtidos da impressora e define o nível de qualidade.
- * Baseado na arquitetura oficial de 4 níveis do Filamap.
- */
-function evaluateConsumption(sliceInfoData: any, filename: string, durationMinutes: number) {
-  if (sliceInfoData && typeof sliceInfoData.totalGrams === 'number') {
-    return {
-      consumption_quality: 'exact',
-      grams: sliceInfoData.totalGrams,
-      shouldDeduct: true,
-      sourceMessage: 'Extraído diretamente do slice_info.config (100% exato)'
-    };
-  }
-  
-  const weightFromName = extractWeightFromFilename(filename);
-  if (weightFromName) {
-    return {
-      consumption_quality: 'estimated_filename',
-      grams: weightFromName,
-      shouldDeduct: true,
-      sourceMessage: 'Estimativa obtida através do nome do ficheiro'
-    };
-  }
-  
-  if (durationMinutes && durationMinutes > 0) {
-    const estimatedGrams = durationMinutes * 0.22;
-    return {
-      consumption_quality: 'estimated_duration',
-      grams: estimatedGrams,
-      shouldDeduct: true,
-      sourceMessage: 'Estimativa baseada na duração do trabalho'
-    };
-  }
-  
-  return {
-    consumption_quality: 'unknown',
-    grams: 0,
-    shouldDeduct: false,
-    sourceMessage: 'Sem dados de consumo disponíveis — requer conferência física'
-  };
-}
-
-function extractWeightFromFilename(filename: string): number | null {
-  if (!filename) return null;
-  const match = filename.match(/(\d+)\s*g/i);
-  return match ? parseInt(match[1], 10) : null;
-}

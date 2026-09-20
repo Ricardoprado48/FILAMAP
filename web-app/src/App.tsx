@@ -1,4 +1,5 @@
 ﻿import React, { useEffect, useRef, useState } from "react";
+import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 
@@ -530,6 +531,12 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "16px", minHeight: "100vh", boxSizing: "border-box" }}>
+      <style>{`
+        @keyframes filamapNfcPulse {
+          0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.55; }
+          100% { transform: translate(-50%, -50%) scale(1.9); opacity: 0; }
+        }
+      `}</style>
       {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -628,9 +635,22 @@ export default function App() {
                         <button onClick={handleCancelScan} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>Cancelar</button>
                       </div>
                     ) : (
-                      <div style={{ marginTop: 6 }}>
-                        <div style={{ color: "#475569", fontSize: 12, marginBottom: 8 }}>Vazio</div>
-                        <button onClick={() => handleScanSlot(slotIdx)} style={{ width: "100%", padding: 4, background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #38bdf8", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer" }}>📡 Ler tag NFC</button>
+                      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                        <div style={{ position: "relative", width: 60, height: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <span style={{ position: "absolute", top: "50%", left: "50%", width: 60, height: 60, borderRadius: "50%", border: "1.5px solid #38bdf8", transform: "translate(-50%, -50%)", animation: "filamapNfcPulse 2s ease-out infinite", animationDelay: "0s", pointerEvents: "none" }} />
+                          <span style={{ position: "absolute", top: "50%", left: "50%", width: 60, height: 60, borderRadius: "50%", border: "1.5px solid #38bdf8", transform: "translate(-50%, -50%)", animation: "filamapNfcPulse 2s ease-out infinite", animationDelay: "1s", pointerEvents: "none" }} />
+                          <button
+                            onClick={() => handleScanSlot(slotIdx)}
+                            aria-label="Ler tag NFC"
+                            style={{ position: "relative", width: 60, height: 60, borderRadius: "50%", background: "#0284c7", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 10px rgba(56, 189, 248, 0.35)" }}
+                          >
+                            <Nfc size={26} color="#fff" strokeWidth={2.2} />
+                          </button>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>Aproximar tag NFC</div>
+                          <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>Toque para ler</div>
+                        </div>
                       </div>
                     )}
                   </div>

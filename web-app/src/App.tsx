@@ -6,6 +6,7 @@ import { useNfc } from "./hooks/useNfc";
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline } from "./utils/printer";
+import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -69,12 +70,6 @@ export default function App() {
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
   ]);
-
-  function generateAutoTagId(mat: string, col: string) {
-    const cleanCol = col.trim().toUpperCase().replace(/[^A-Z0-9]/g, "-").replace(/-+/g, "-");
-    const rnd = Math.floor(1000 + Math.random() * 9000);
-    return `FILA-${mat.toUpperCase()}-${cleanCol || "COR"}-${rnd}`;
-  }
 
   useEffect(() => {
     localStorage.setItem("filamap_energy_tariff", energyTariff);
@@ -417,11 +412,6 @@ export default function App() {
   // (handleWriteTag). "pending": tem nfc_uid mas nunca teve gravação física
   // confirmada (ex.: veio de importação em lote via seed_spools.ts). "none":
   // sem nfc_uid nenhum.
-  function getNfcStatus(spool: Spool): "written" | "pending" | "none" {
-    if (spool.nfc_written_at) return "written";
-    if (spool.nfc_uid) return "pending";
-    return "none";
-  }
 
   const filteredInventory = inventory.filter((item) => {
     const matchesSearch = item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1157,5 +1147,6 @@ export default function App() {
     </div>
   );
 }
+
 
 

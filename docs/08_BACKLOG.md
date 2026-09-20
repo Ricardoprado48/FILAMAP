@@ -61,6 +61,17 @@ O comportamento atual (`0,22 g/min` / fallback 35 g) não deve ser tratado como 
 - [ ] ler `?tag=` no carregamento (deep link passivo — ainda não
       interpretado; mecanismo separado do scan ativo acima).
 
+### P1.1b — Checar retorno de `writeTagUrl` antes de persistir `nfc_uid`
+
+**Problema:** `handleWriteTag` (aba Tags, `web-app/src/App.tsx`) ignora o
+booleano retornado por `writeTagUrl`. Falha silenciosa na gravação física
+ainda assim atualiza `spools.nfc_uid` no banco e mostra sucesso,
+divergindo chip físico e banco permanentemente.
+
+**Concluído quando:** falha de gravação física impede o UPDATE de
+`nfc_uid` e mostra erro claro ao usuário (mesmo padrão já aplicado em
+`handleSaveEdit`, ver changelog de 18/09).
+
 ### P1.2 — Descoberta/re-descoberta robusta
 
 Integrar estratégia em camadas:

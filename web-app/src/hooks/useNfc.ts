@@ -8,15 +8,25 @@ import { useState, useCallback } from "react";
 function extractTagIdFromMessage(message: any): string | null {
   if (!message || !message.records) return null;
   for (const record of message.records) {
-    if (record.recordType !== "url" && record.recordType !== "text") continue;
+    // "absolute-url" cobre leitores/chips que não normalizam o record type
+    // de uma URI NDEF para "url" — mesmo conteúdo, rótulo diferente.
+    if (record.recordType !== "url" && record.recordType !== "absolute-url" && record.recordType !== "text") continue;
     try {
       const decoder = new TextDecoder(record.encoding || "utf-8");
-      const text = decoder.decode(record.data);
-      const url = new URL(text);
-      const tagParam = url.searchParams.get("tag");
-      if (tagParam) return tagParam;
+      const text = decoder.decode(record.data).trim();
+      try {
+        const url = new URL(text);
+        const tagParam = url.searchParams.get("tag");
+        if (tagParam) return tagParam;
+      } catch {
+        // texto não é uma URL absoluta válida (ex.: prefixo do identifier
+        // code da URI NDEF não expandido pelo leitor) — tenta extrair
+        // "tag=" direto da query string bruta antes de desistir do registro
+        const match = text.match(/[?&]tag=([^&#]+)/);
+        if (match) return decodeURIComponent(match[1]);
+      }
     } catch {
-      // registro não é uma URL com ?tag= válida — tenta o próximo
+      // registro não decodifica como texto válido — tenta o próximo
     }
   }
   return null;

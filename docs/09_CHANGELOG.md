@@ -2,6 +2,82 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Investigação: leitura de tag na AMS ainda cai no placeholder mesmo após o fix de 18/09
+
+Relatado pelo usuário: tag já gravada num carretel real via aba Tags;
+ao ler essa mesma tag num slot da AMS, o resultado é sempre o placeholder
+"PETG Preto 1000g" (o auto-cadastro de tag desconhecida).
+
+**Formato exato gravado** (`handleWriteTag`, `web-app/src/App.tsx`, fora
+do escopo desta alteração — não editado): registro NDEF `recordType:
+"url"`, `data` = `https://filamap.pages.dev/?tag=<encodeURIComponent(finalTagId)>`.
+Em paralelo, `spools.nfc_uid` recebe o `finalTagId` cru (sem wrapper de
+URL, sem encoding).
+
+**Formato exato esperado na leitura** (`extractTagIdFromMessage`,
+`web-app/src/hooks/useNfc.ts`, já corrigido em 18/09 para decodificar o
+registro NDEF em vez de usar `event.serialNumber`): decodifica o
+registro, faz `new URL(texto)` e lê `searchParams.get("tag")` — que já
+vem desencodado pelo próprio `URLSearchParams`, batendo com o
+`finalTagId` cru gravado no banco.
+
+**Comparação:** os dois formatos batem no papel, no código já mesclado
+em 18/09 (commit `c479d43`). Não foi possível reproduzir o bug com
+hardware NFC real nesta sessão (ambiente remoto sem dispositivo físico),
+então a causa exata do sintoma relatado não pôde ser confirmada
+empiricamente. Hipótese mais provável, dado o padrão já visto nesta
+mesma conversa: o dispositivo usado para testar (provavelmente acessando
+`https://filamap.pages.dev`, a URL fixa gravada nas tags — não confundir
+com o ambiente local `npm run dev` do desenvolvedor) pode ainda não
+estar rodando o commit `c479d43`; não há visibilidade nem credenciais de
+deploy do Cloudflare Pages nesta sessão para confirmar.
+
+**Achado relacionado, fora do escopo autorizado (aba Tags, não
+alterado):** `handleWriteTag` chama `await writeTagUrl(...)` e ignora o
+retorno booleano — se a gravação física falhar, o código atualiza
+`spools.nfc_uid` no banco e mostra "✅ gravado com sucesso" mesmo assim,
+divergindo permanentemente o chip físico do banco. Isso reproduziria
+exatamente o sintoma relatado (tag sempre cai no fallback de
+desconhecida). Não corrigido por estar em `web-app/src/App.tsx` dentro
+da aba Tags, fora do escopo travado desta tarefa — recomendado como
+follow-up.
+
+**Hardening aplicado (dentro do escopo, leitura/AMS apenas),
+`web-app/src/hooks/useNfc.ts`:**
+- aceita também `recordType === "absolute-url"` (variação de rótulo do
+  mesmo tipo de registro NDEF de URI, dependendo do leitor);
+- `trim()` no texto decodificado antes de interpretar;
+- fallback: se `new URL(texto)` falhar (ex.: prefixo do identifier code
+  da URI NDEF não expandido pelo leitor, texto sem esquema), tenta
+  extrair `tag=` direto da query string bruta via regex antes de
+  desistir do registro.
+- validado com teste unitário isolado (Node, fora do repositório) para
+  os casos: registro normal, `absolute-url`, prefixo não expandido, tag
+  com acento/espaço, e ausência de registro válido — todos batendo com o
+  esperado.
+
+**Não corrigido / não validado:**
+- reprodução em hardware NFC real;
+- causa raiz definitiva do sintoma relatado (permanece como hipótese de
+  deploy desatualizado no dispositivo de teste, ou como o achado do
+  `writeTagUrl` sem checagem de retorno);
+- carretéis já afetados por qualquer uma dessas causas **não foram
+  corrigidos automaticamente** — spools com `brand: "Voolt3D"`,
+  `material: "PETG"`, `color_name: "Preto"`, `initial_weight: 1000`,
+  `spool_tare_weight: 218` que o usuário não criou manualmente são
+  candidatos a placeholder-fantasma e devem ser revisados/removidos
+  manualmente no Estoque.
+
+## 20/09/2026 — Inversão de hierarquia visual no card de slot ocupado (AMS)
+
+- `web-app/src/App.tsx`: no card de slot ocupado da aba AMS, a Cor
+  (`spool.color_name`) passa a ser o texto principal (14px/700/claro) e
+  o Material (`spool.material`) vira o texto secundário (11px, tom mais
+  discreto) — inversão simples de qual campo ocupa qual estilo já
+  existente, sem novo campo nem mudança de dado;
+  peso/saldo e botão "Ejetar" mantidos como estavam.
+- validado com `tsc --noEmit` e `npm run build`.
+
 ## 20/09/2026 — Redesign do estado vazio do card de slot na aba AMS
 
 - só visual, sem tocar em lógica de leitura NFC, schema ou outras abas;

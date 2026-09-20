@@ -624,8 +624,8 @@ export default function App() {
                     </div>
                     {spool ? (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{spool.material}</div>
-                        <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.color_name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{spool.color_name}</div>
+                        <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.material}</div>
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
                         <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
                       </div>

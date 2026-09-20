@@ -2,6 +2,61 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Investigação: `ERROR: 42P01: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` no Supabase real
+
+**Causa investigada, nenhum código alterado** — o arquivo commitado está
+correto; a causa é externa ao repositório.
+
+**Como foi validado:** copiado byte-a-byte (`md5sum` conferido) o
+arquivo `supabase/migrations/20260920_add_print_logs_job_tracking.sql`
+para um Postgres 16 local limpo (com stub mínimo de `auth.users` /
+`auth.uid()` / `auth.role()`), aplicado sozinho via `psql -f` com
+`ON_ERROR_STOP=1`. Resultado: `ALTER TABLE`, `COMMENT`, `CREATE INDEX` e
+`CREATE FUNCTION` — todos com sucesso, sem nenhum erro. Como
+`check_function_bodies` é `on` por padrão no Postgres, o próprio
+`CREATE FUNCTION` já compila o corpo plpgsql inteiro nesse momento; se
+`v_owner` estivesse de fato mal declarada ou usada fora de contexto, o
+erro teria aparecido aqui, e não apareceu.
+
+Em seguida, chamada funcional real da RPC (`SELECT *
+FROM public.finalize_print_job(...)`) dentro de uma transação de teste
+(`BEGIN ... ROLLBACK`), com um spool de 1000g e um item de 50g:
+primeira chamada desconta corretamente para 950g; segunda chamada com o
+mesmo `job_id` é idempotente — retorna a mesma linha, sem descontar de
+novo (950g mantido). Nenhuma menção a `v_owner` em nenhum erro em
+nenhuma das duas chamadas.
+
+**Conclusão:** não é bug real na função (hipótese descartada por
+execução real). É aplicação parcial ou corrupção do texto durante a
+cópia para o SQL Editor do Supabase — a causa exata de qual caractere
+específico se perdeu não pôde ser confirmada nesta sessão (sandboxed,
+sem acesso ao projeto Supabase real do usuário para inspecionar o que
+efetivamente foi executado lá). Hipótese mais provável, dado o padrão
+do erro: a linha 86 (`v_owner UUID;`, dentro do bloco `DECLARE`) não
+chegou a ser executada — se o corpo `$$ ... $$` for colado
+parcialmente (por exemplo, começando a partir de uma linha no meio do
+`DECLARE`, ou com uma ferramenta intermediária tratando `$$` como
+delimitador de algo e cortando o texto ali), o Postgres pode compilar
+uma função onde `v_owner` nunca foi declarada; nesse caso o uso de
+`SELECT ... INTO v_owner FROM ...` faz o parser de plpgsql tentar
+resolver `v_owner` como identificador de tabela/relação, exatamente o
+erro relatado.
+
+**Recomendação de recuperação (sem alterar o arquivo, que já está
+correto):**
+1. Não copiar o SQL editando manualmente ou colando de uma janela que
+   possa reformatar texto (ex.: apps de chat/notas que tratam `$$` como
+   marcação). Preferir copiar direto do GitHub (botão "Raw" do arquivo)
+   ou usar `supabase db push` / `supabase migration up` via CLI ligado
+   ao projeto, que aplica o arquivo como está no disco, sem colar manual.
+2. O arquivo é seguro para reaplicar do zero: todo `ALTER TABLE` usa
+   `ADD COLUMN IF NOT EXISTS`, o índice usa `CREATE UNIQUE INDEX IF NOT
+   EXISTS`, e a função usa `CREATE OR REPLACE FUNCTION` — rodar de novo
+   não duplica nada nem falha por já existir.
+3. Depois de reaplicar, confirmar com:
+   `SELECT prosrc FROM pg_proc WHERE proname = 'finalize_print_job';`
+   e conferir se a linha `v_owner UUID;` aparece no `DECLARE` retornado.
+
 ## 20/09/2026 — Consumo multicolor + finalização idempotente/atômica + cascata de 4 níveis
 
 Três problemas que se cruzam em `finalizeJob()` (P0.2, P0.3, P0.5 do

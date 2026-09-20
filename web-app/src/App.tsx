@@ -33,6 +33,7 @@ interface Spool {
   initial_weight?: number;
   spool_tare_weight?: number;
   price_paid?: number;
+  nfc_written_at?: string | null;
 }
 
 interface CatalogItem {
@@ -464,6 +465,7 @@ export default function App() {
       nfc_uid: finalTagId,
       current_weight: netWeight,
       spool_tare_weight: parseFloat(tareWeight) || 218,
+      nfc_written_at: new Date().toISOString(),
     }).eq("id", writerSpool.id);
 
     if (error) {
@@ -478,6 +480,16 @@ export default function App() {
     setTareWeight("");
     setActiveTab("inventory");
     await loadData();
+  }
+
+  // "written": nfc_written_at confirma escrita física real via NDEFReader.write()
+  // (handleWriteTag). "pending": tem nfc_uid mas nunca teve gravação física
+  // confirmada (ex.: veio de importação em lote via seed_spools.ts). "none":
+  // sem nfc_uid nenhum.
+  function getNfcStatus(spool: Spool): "written" | "pending" | "none" {
+    if (spool.nfc_written_at) return "written";
+    if (spool.nfc_uid) return "pending";
+    return "none";
   }
 
   const filteredInventory = inventory.filter((item) => {
@@ -741,8 +753,10 @@ export default function App() {
                             <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
                             <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                               <span>{spool.brand}</span>
-                              {spool.nfc_uid ? (
-                                <span title={spool.nfc_uid} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🏷️ {spool.nfc_uid}</span>
+                              {getNfcStatus(spool) === "written" ? (
+                                <span title={`Tag física gravada em ${new Date(spool.nfc_written_at!).toLocaleString()} — ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>✅ Tag gravada</span>
+                              ) : getNfcStatus(spool) === "pending" ? (
+                                <span title={`Possui nfc_uid ("${spool.nfc_uid}") mas nenhuma escrita física confirmada ainda`} style={{ background: "rgba(251, 191, 36, 0.15)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⏳ Aguardando gravação</span>
                               ) : (
                                 <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
                               )}
@@ -1067,13 +1081,16 @@ export default function App() {
                 required
               >
                 <option value="">Selecione um carretel do estoque...</option>
-                {inventory.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.nfc_uid ? "🏷️ " : "⚠️ "}
-                    {`${s.color_name} — ${s.brand} — ${s.material}`}
-                    {s.nfc_uid ? "" : " (sem tag)"}
-                  </option>
-                ))}
+                {inventory.map((s) => {
+                  const nfcStatus = getNfcStatus(s);
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : "⚠️ "}
+                      {`${s.color_name} — ${s.brand} — ${s.material}`}
+                      {nfcStatus === "written" ? " (tag gravada)" : nfcStatus === "pending" ? " (aguardando gravação física)" : " (sem tag)"}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 

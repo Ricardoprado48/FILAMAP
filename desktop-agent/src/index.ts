@@ -245,7 +245,7 @@ async function startAgent() {
       username: "bblp",
       password: PRINTER_ACCESS_CODE,
       rejectUnauthorized: false,
-      reconnectPeriod: 5000,
+      reconnectPeriod: 0,
     });
 
     function requestStatusPush() {
@@ -612,5 +612,6 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+
 
 

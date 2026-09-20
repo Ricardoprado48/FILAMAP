@@ -16,6 +16,10 @@ import {
   fetchCatalog,
   fetchPrintLogs,
 } from "./services/dataService";
+import {
+  createCatalogItem,
+  deleteCatalogItem,
+} from "./services/catalogService";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -198,7 +202,7 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from("catalog_items").insert({
+    const { error } = await createCatalogItem({
       name: calcPartName.trim().toUpperCase(),
       material: "PETG/PLA",
       weight_g: totalFilamentWeight,
@@ -230,7 +234,7 @@ export default function App() {
   async function handleDeleteCatalogItem(e: React.MouseEvent, id: string, name: string) {
     e.stopPropagation();
     if (!window.confirm(`Excluir "${name}" do catálogo?`)) return;
-    await supabase.from("catalog_items").delete().eq("id", id);
+    await deleteCatalogItem(id);
     await loadData();
   }
 

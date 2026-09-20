@@ -5,10 +5,10 @@ import mqtt from "mqtt";
 import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
-import dgram from "node:dgram";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
+import { findPrinter } from "./discovery";
 
 dotenv.config();
 
@@ -65,47 +65,6 @@ function saveJobState(state: ActiveJobState | null) {
 
 let currentJob: ActiveJobState | null = loadJobState();
 
-async function discoverPrinterIp(): Promise<string> {
-  if (PRINTER_IP) return PRINTER_IP;
-
-  console.log("🔍 Procurando impressora Bambu Lab automaticamente na rede local...");
-  return new Promise((resolve) => {
-    const socket = dgram.createSocket("udp4");
-    let resolved = false;
-
-    socket.on("error", () => {
-      socket.close();
-      if (!resolved) { resolved = true; resolve(""); }
-    });
-
-    socket.bind(() => {
-      try { socket.setBroadcast(true); } catch (e) {}
-      const message = Buffer.from("BBLP");
-      socket.send(message, 0, message.length, 2021, "255.255.255.255", (err) => {
-        if (err && !resolved) { socket.close(); resolved = true; resolve(""); }
-      });
-    });
-
-    socket.on("message", (msg, rinfo) => {
-      const text = msg.toString();
-      if ((text.includes("BBLP") || text.includes(PRINTER_SERIAL)) && !resolved) {
-        resolved = true;
-        socket.close();
-        console.log(`✅ Impressora encontrada automaticamente no IP: ${rinfo.address}`);
-        resolve(rinfo.address);
-      }
-    });
-
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        try { socket.close(); } catch (e) {}
-        resolve("");
-      }
-    }, 4000);
-  });
-}
-
 // Extrai gramatura estimada do nome do arquivo ou metadados se o fatiador incluir (ex: "peca_15g.gcode")
 function extractGramsFromName(taskName: string): number | null {
   const match = taskName.match(/_(\d+(?:\.\d+)?)g/i) || taskName.match(/(\d+(?:\.\d+)?)g\b/i);
@@ -129,11 +88,15 @@ async function startAgent() {
   }
 
   if (!PRINTER_IP) {
-    PRINTER_IP = await discoverPrinterIp();
+    const found = await findPrinter({ printerSerial: PRINTER_SERIAL, accessCode: PRINTER_ACCESS_CODE });
+    if (found) {
+      PRINTER_IP = found.ip;
+      console.log(`✅ Impressora encontrada automaticamente (${found.method}) no IP: ${PRINTER_IP}`);
+    }
   }
 
   if (!PRINTER_IP) {
-    console.error("❌ Erro: Não foi possível localizar a impressora na rede local.");
+    console.error("❌ Erro: Não foi possível localizar a impressora na rede local (broadcast e varredura de sub-rede falharam).");
     process.exit(1);
   }
 
@@ -184,12 +147,19 @@ async function startAgent() {
     process.on("SIGINT", gracefulShutdown);
     process.on("SIGTERM", gracefulShutdown);
 
-    const client = mqtt.connect(`mqtts://${PRINTER_IP}:8883`, {
-      username: "bblp",
-      password: PRINTER_ACCESS_CODE,
-      rejectUnauthorized: false,
-      reconnectPeriod: 5000,
-    });
+    let client: mqtt.MqttClient;
+    let statusPushInterval: NodeJS.Timeout | null = null;
+    let disconnectedSince: number | null = null;
+    let rediscoveryInProgress = false;
+
+    // Falha persistente (não uma queda passageira): mais de
+    // PERSISTENT_DISCONNECT_MS sem uma conexão MQTT confirmada. Com
+    // reconnectPeriod de 5s isso equivale a ~12 tentativas seguidas sem
+    // sucesso -- longo o bastante pra não disparar em blips passageiros de
+    // Wi-Fi/roaming entre APs, curto o bastante pra não deixar o Agent
+    // preso indefinidamente no IP antigo depois de uma troca real (ver
+    // relatório, item 4).
+    const PERSISTENT_DISCONNECT_MS = 60_000;
 
     function requestStatusPush() {
       const payload = JSON.stringify({ pushing: { sequence_id: "0", command: "pushall" } });
@@ -200,19 +170,93 @@ async function startAgent() {
     let activeSlotIndex = 0;
     let lastSyncTime = 0;
 
-    client.on("connect", () => {
-      console.log("✅ Conectado ao broker MQTT da Bambu Lab A1!");
-      updateStatus(printer.id, true);
-      client.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
-      setInterval(() => { if (client.connected) requestStatusPush(); }, 10000);
-    });
+    function connectMqttClient(ip: string) {
+      const c = mqtt.connect(`mqtts://${ip}:8883`, {
+        username: "bblp",
+        password: PRINTER_ACCESS_CODE,
+        rejectUnauthorized: false,
+        reconnectPeriod: 5000,
+      });
 
-    client.on("close", () => {
-      console.log("🔌 Conexão MQTT fechada.");
-      updateStatus(printer.id, false);
-    });
+      c.on("connect", () => {
+        console.log("✅ Conectado ao broker MQTT da Bambu Lab A1!");
+        disconnectedSince = null;
+        updateStatus(printer.id, true);
+        c.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
+        // Guardado por statusPushInterval pra não empilhar um setInterval
+        // novo a cada reconexão automática do mqtt.js (o evento "connect"
+        // dispara de novo em cada uma delas, não só na primeira).
+        if (!statusPushInterval) {
+          statusPushInterval = setInterval(() => { if (client.connected) requestStatusPush(); }, 10000);
+        }
+      });
 
-    client.on("message", async (_topic, payload) => {
+      c.on("close", () => {
+        console.log("🔌 Conexão MQTT fechada.");
+        updateStatus(printer.id, false);
+        if (disconnectedSince === null) disconnectedSince = Date.now();
+      });
+
+      c.on("offline", () => {
+        if (disconnectedSince === null) disconnectedSince = Date.now();
+      });
+
+      c.on("error", (err) => {
+        console.error("⚠️ Erro MQTT:", err.message);
+      });
+
+      c.on("message", onMqttMessage);
+
+      client = c;
+    }
+
+    connectMqttClient(PRINTER_IP);
+
+    // Verifica periodicamente se a falha atingiu o critério de "persistente"
+    // e, se sim, chama findPrinter() de novo em vez de continuar tentando
+    // reconectar no mesmo IP pra sempre.
+    setInterval(async () => {
+      if (rediscoveryInProgress || disconnectedSince === null) return;
+      if (Date.now() - disconnectedSince < PERSISTENT_DISCONNECT_MS) return;
+
+      rediscoveryInProgress = true;
+      console.warn(
+        `⚠️ Sem conexão MQTT confirmada há mais de ${PERSISTENT_DISCONNECT_MS / 1000}s no IP ${PRINTER_IP} -- iniciando redescoberta automática da impressora...`
+      );
+
+      const found = await findPrinter({ printerSerial: PRINTER_SERIAL, accessCode: PRINTER_ACCESS_CODE });
+
+      if (found && found.ip !== PRINTER_IP) {
+        console.log(`🔁 Impressora redescoberta em novo IP (${found.method}): ${found.ip} (antigo: ${PRINTER_IP})`);
+        const oldClient = client;
+        PRINTER_IP = found.ip;
+        disconnectedSince = null;
+        if (statusPushInterval) {
+          clearInterval(statusPushInterval);
+          statusPushInterval = null;
+        }
+        connectMqttClient(PRINTER_IP);
+        try { oldClient.removeAllListeners(); oldClient.end(true); } catch (e) {}
+        try {
+          await supabase.from("printers").update({ ip_address: PRINTER_IP }).eq("id", printer.id);
+        } catch (e: any) {
+          console.error("❌ Falha ao atualizar ip_address da impressora no Supabase:", e.message);
+        }
+      } else if (found) {
+        console.log(`ℹ️ Redescoberta confirmou o mesmo IP (${PRINTER_IP}) -- o endereço não é o problema; aguardando o cliente MQTT reconectar sozinho.`);
+        disconnectedSince = Date.now();
+      } else {
+        console.error(
+          `❌ Redescoberta falhou -- broadcast e varredura de sub-rede não encontraram a impressora na rede. ` +
+          `Tentando de novo em ${PERSISTENT_DISCONNECT_MS / 1000}s. Verifique se a impressora está ligada e na mesma rede.`
+        );
+        disconnectedSince = Date.now();
+      }
+
+      rediscoveryInProgress = false;
+    }, 10000);
+
+    async function onMqttMessage(_topic: string, payload: Buffer) {
       try {
         const raw = JSON.parse(payload.toString());
         const print = raw.print;
@@ -346,7 +390,7 @@ async function startAgent() {
       } catch (err: any) {
         console.error("Erro no processamento:", err.message);
       }
-    });
+    }
   } catch (err: any) {
     console.error("❌ Erro de inicialização:", err.message || err);
   }

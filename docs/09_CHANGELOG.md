@@ -2,6 +2,96 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Descoberta em camadas + redescoberta automática do Agent (P1.2)
+
+**Investigação antes da implementação (itens (a) e (b) pedidos na
+tarefa):**
+
+- **(a) Broadcast BBLP/porta 2021:** já estava implementado em
+  `desktop-agent/src/index.ts` (função `discoverPrinterIp`, chamada só no
+  startup quando `PRINTER_IP` está vazio no `.env`) — broadcast UDP em
+  `255.255.255.255:2021` com payload `"BBLP"`, confirmação por resposta
+  contendo `"BBLP"` ou o `PRINTER_SERIAL` esperado, timeout de 4s,
+  implementação assíncrona (não bloqueia o processo). Nenhum motivo
+  encontrado para reescrever essa parte — só extraída como está para
+  `discovery.ts`, reutilizável. **Divergência encontrada e corrigida na
+  Seção 62** do documento de arquitetura: o texto ali dizia que "o Agent
+  ainda depende de um IP fixo configurado manualmente", o que já estava
+  desatualizado em relação ao código antes desta tarefa (a descoberta por
+  broadcast no startup já existia) — corrigido para descrever com precisão
+  o que realmente faltava (varredura de sub-rede + redescoberta durante a
+  execução).
+- **(b) Faixa de sub-rede para o fallback de varredura:** usa
+  `os.networkInterfaces()` do Node para ler o IP e a máscara reais de cada
+  interface IPv4 não-interna do sistema — nunca um valor fixo como
+  `192.168.1.x`. A faixa de hosts é calculada bit a bit a partir de
+  endereço + máscara. Quando a máscara real resultaria em mais de 256
+  hosts (ex.: uma `/16` ou maior), assume uma `/24` derivada do próprio IP
+  local detectado em vez de varrer a faixa inteira (custo de tempo/rede
+  alto demais para uma varredura de fallback) — essa suposição é logada
+  explicitamente quando ocorre.
+- **Critério de "falha persistente" escolhido:** 60 segundos contínuos
+  sem uma conexão MQTT confirmada (ou seja, sem o evento `connect` do
+  cliente MQTT), verificado por um checador a cada 10s. Com o
+  `reconnectPeriod` de 5s já existente, isso equivale a ~12 tentativas de
+  reconexão sem sucesso. Critério de tempo (não contagem de tentativas)
+  porque é mais simples de raciocinar e já é naturalmente proporcional ao
+  `reconnectPeriod` configurado; 60s foi escolhido por ser longo o
+  bastante para não disparar em quedas passageiras de Wi-Fi/roaming entre
+  APs, e curto o bastante para não deixar o Agent preso no IP antigo por
+  muito tempo depois de uma troca real.
+
+**Implementado:**
+
+- `desktop-agent/src/discovery.ts` — reescrito de script de diagnóstico
+  SSDP isolado (multicast 239.255.255.250:1900, nunca integrado, protocolo
+  diferente do broadcast realmente usado pelo Agent) para um módulo
+  reutilizável: `findPrinter({ printerSerial, accessCode })` tenta
+  broadcast BBLP primeiro e, se falhar, varredura de sub-rede na porta
+  MQTT (8883), com as tentativas por IP paralelizadas e timeout curto
+  (1.5s por IP por padrão), confirmando o IP certo pela resposta no tópico
+  MQTT específico do serial esperado.
+- `desktop-agent/src/index.ts` — `discoverPrinterIp` local removido, usa
+  `findPrinter()` no startup. A criação do cliente MQTT foi extraída para
+  `connectMqttClient(ip)` (chamável de novo em caso de redescoberta). Um
+  checador periódico (10s) mede o tempo desde a última conexão confirmada
+  (`disconnectedSince`, atualizado nos eventos `close`/`offline` do
+  cliente MQTT); ao atingir o limiar de 60s, chama `findPrinter()` de
+  novo:
+  - IP novo e diferente do atual → encerra o cliente antigo, conecta no
+    IP novo (`connectMqttClient`), atualiza `printers.ip_address` no
+    Supabase;
+  - mesmo IP → não é problema de endereço, deixa o cliente MQTT existente
+    continuar tentando reconectar sozinho;
+  - nenhum IP encontrado nas duas camadas → não trava o Agent, loga
+    claramente o erro (capturado em `agent.log` pelo redirecionamento
+    externo já existente via `run-agent.ps1`) e tenta de novo depois de
+    outros 60s.
+  - **Correção relacionada, no mesmo trecho:** o `setInterval` do
+    `requestStatusPush` (heartbeat MQTT a cada 10s) estava sendo recriado
+    a cada evento `connect`, que dispara em toda reconexão automática do
+    `mqtt.js` (não só na primeira vez) — isso empilhava um `setInterval`
+    novo por reconexão. Corrigido com uma guarda (`statusPushInterval`)
+    para criar só uma vez; ficou direto no caminho que já estava sendo
+    reescrito para a redescoberta.
+
+**Escopo:** só descoberta/reconexão do Agent
+(`desktop-agent/src/discovery.ts` e `desktop-agent/src/index.ts`, na parte
+de conexão/reconexão). Nada em `finalizeJob`, schema, AMS/Estoque/Tags no
+frontend foi tocado — confirmado revisando o diff antes de finalizar.
+Entrada manual de IP na UI continua fora de escopo (por `.env`).
+
+**Validações executadas:** `tsc --noEmit` e `npm run build` sem erros;
+teste isolado (script Node fora do repositório) do cálculo de faixa de
+sub-rede com `/24`, `/25`, `/16` e `/12` confirmando que a rede calculada,
+o fallback de `/24` assumido e a exclusão do próprio IP/host de rede/host
+de broadcast estão corretos. **Não foi possível testar contra hardware
+real** (sem impressora física nesta sessão) — o comportamento de rede real
+(troca de IP de fato, bloqueio de broadcast entre bandas/VLAN, tempo real
+de resposta MQTT numa rede congestionada) continua sem confirmação em
+campo. Recomenda-se validar em uma rede real antes de considerar este item
+do backlog (P1.2) totalmente encerrado.
+
 ## 20/09/2026 — Causa raiz real e correção: `ERROR: 42P01: relation "v_owner" does not exist` ao aplicar `20260920_add_print_logs_job_tracking.sql` no Supabase real
 
 **Correção da investigação anterior nesta mesma data.** A primeira

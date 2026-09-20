@@ -2001,10 +2001,37 @@ válida como próximo passo, mas ainda não foi implementada.
 
 - Confirmação de que o payload MQTT expõe a amarração "filamento do
   projeto → slot físico da AMS" no formato esperado.
-- Descoberta em camadas (SSDP → varredura de sub-rede → manual) descrita na
-  nota da Seção 8 — hoje só existe um script de diagnóstico SSDP isolado,
-  ainda não integrado ao Agent principal, e o Agent ainda depende de um IP
-  fixo configurado manualmente.
+- ~~Descoberta em camadas (SSDP → varredura de sub-rede → manual) descrita
+  na nota da Seção 8~~ **Corrigido em 20/09/2026, com uma correção ao que
+  estava registrado aqui:** este item já estava impreciso antes da
+  correção — o Agent **não** dependia de IP fixo manual; `index.ts` já
+  fazia uma tentativa automática de broadcast BBLP/porta 2021 no startup
+  (`.env.example` já documentava `PRINTER_IP` em branco = descoberta
+  automática). O que realmente faltava era (1) a varredura de sub-rede
+  como fallback e (2) redescoberta automática durante a execução quando a
+  conexão MQTT falha de forma persistente — o `discovery.ts` citado era
+  mesmo um script de diagnóstico isolado (SSDP multicast em 239.255.255.250,
+  porta 1900, protocolo diferente do broadcast BBLP realmente usado),
+  nunca integrado, e foi substituído por um módulo reutilizável.
+  Implementado: `findPrinter()` em `desktop-agent/src/discovery.ts`
+  encapsula as duas camadas (broadcast BBLP como primeira tentativa,
+  depois varredura de sub-rede na porta 8883/MQTT confirmando pelo número
+  de série, faixa determinada via `os.networkInterfaces()` — nunca
+  hardcoded — com fallback documentado para /24 quando a máscara real for
+  maior que 256 hosts). `desktop-agent/src/index.ts` chama `findPrinter()`
+  no startup e monitora falha persistente de MQTT (60s contínuos sem
+  conexão confirmada, ~12 tentativas de reconexão com o `reconnectPeriod`
+  de 5s já existente); ao atingir o limiar, chama `findPrinter()` de novo,
+  reconecta no IP novo se for diferente e atualiza `printers.ip_address`.
+  Se a redescoberta falhar nas duas camadas, o Agent não trava — continua
+  tentando a cada 60s e loga claramente (via `agent.log`, já redirecionado
+  externamente por `run-agent.ps1`). Entrada manual de IP na UI continua
+  fora de escopo (por `.env`, como já era). **Não validado com hardware
+  real** (sem impressora física nesta sessão) — a lógica de
+  broadcast/varredura/reconexão foi revisada e o `tsc`/build passa, mas o
+  comportamento de rede real (troca de IP de verdade, isolamento de
+  banda/VLAN) continua sem confirmação em campo. Ver `docs/08_BACKLOG.md`
+  (P1.2) e `docs/09_CHANGELOG.md`.
 - Persistência do job ativo em disco (Seção 36 já previa isso pra eventos
   gerais — fica mais crítico agora porque o job ativo também vai carregar o
   breakdown de peso por slot vindo do `slice_info.config`, hoje só em

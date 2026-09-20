@@ -111,12 +111,22 @@ Registrar estrutura observada e criar testes de parser.
 
 ### P1.2 — Descoberta/re-descoberta robusta
 
-Integrar estratégia em camadas:
+- [x] descoberta rápida (broadcast BBLP/porta 2021) — já existia, extraída
+  em 20/09/2026 para `desktop-agent/src/discovery.ts::findPrinter()`;
+- [x] varredura de sub-rede como fallback — adicionada em 20/09/2026,
+  faixa determinada via `os.networkInterfaces()` (nunca hardcoded),
+  confirmação por conexão MQTT (8883) + serial esperado, IPs testados em
+  paralelo;
+- [x] redescoberta automática quando a conexão MQTT falha de forma
+  persistente (60s contínuos sem conexão confirmada) — adicionada em
+  20/09/2026 em `desktop-agent/src/index.ts`; reconecta no IP novo e
+  atualiza `printers.ip_address` quando muda, ou continua tentando a
+  cada 60s sem travar o processo quando as duas camadas falham;
+- [ ] entrada manual de IP na UI — continua fora de escopo, por `.env`
+  como antes.
 
-1. descoberta rápida;
-2. mecanismo alternativo/varredura controlada;
-3. entrada manual de IP;
-4. redescoberta quando conexão persistente falhar.
+**Não validado com hardware real** nesta sessão (sem impressora física
+disponível) — ver aviso na Seção 62 do documento de arquitetura.
 
 ### P1.3 — Schema de qualidade do consumo
 

@@ -6,29 +6,28 @@ import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 import { findPrinter } from "./discovery";
 import { computeConsumptionPerSlot, extractGramsFromName, JobConsumptionItem } from "./consumption";
+import { resolveConfig } from "./config/store";
+import { runSetupWizardIfNeeded } from "./config/setupWizard";
 
 dotenv.config();
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim().replace(/['"]/g, "").replace(/\/$/, "");
-const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY || "").trim().replace(/['"]/g, "");
-const AGENT_EMAIL = (process.env.AGENT_EMAIL || "").trim();
-const AGENT_PASSWORD = (process.env.AGENT_PASSWORD || "").trim();
-let PRINTER_IP = (process.env.PRINTER_IP || "").trim().replace(/['"]/g, "");
-const PRINTER_SERIAL = (process.env.PRINTER_SERIAL || "").trim().replace(/['"]/g, "");
-const PRINTER_ACCESS_CODE = (process.env.PRINTER_ACCESS_CODE || "").trim().replace(/['"]/g, "");
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !AGENT_EMAIL || !AGENT_PASSWORD || !PRINTER_SERIAL) {
-  console.error("❌ Erro: Configure SUPABASE_URL, SUPABASE_ANON_KEY, AGENT_EMAIL, AGENT_PASSWORD e PRINTER_SERIAL no .env");
-  process.exit(1);
-}
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: true },
-});
+// Preenchidos em startAgent(), depois que a config (env/.env > arquivo
+// salvo do onboarding > defaults) é resolvida e, se algo essencial ainda
+// faltar, o assistente interativo (runSetupWizardIfNeeded) roda e salva o
+// resultado -- não dá mais erro fatal síncrono na carga do módulo pedindo
+// pra editar o .env, porque o cliente comercial não deve precisar disso.
+let SUPABASE_URL = "";
+let SUPABASE_ANON_KEY = "";
+let AGENT_EMAIL = "";
+let AGENT_PASSWORD = "";
+let PRINTER_IP = "";
+let PRINTER_SERIAL = "";
+let PRINTER_ACCESS_CODE = "";
+let supabase: SupabaseClient;
 
 interface ActiveJobState {
   jobId: string; // chave de idempotência (não há task_id/job_id confirmado no payload MQTT real -- ver relatório, investigação (a))
@@ -68,6 +67,28 @@ let currentJob: ActiveJobState | null = loadJobState();
 
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
+
+  const config = await runSetupWizardIfNeeded(resolveConfig());
+  SUPABASE_URL = config.supabaseUrl;
+  SUPABASE_ANON_KEY = config.supabaseAnonKey;
+  AGENT_EMAIL = config.agentEmail;
+  AGENT_PASSWORD = config.agentPassword;
+  PRINTER_IP = config.printerIp;
+  PRINTER_SERIAL = config.printerSerial;
+  PRINTER_ACCESS_CODE = config.printerAccessCode;
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !AGENT_EMAIL || !AGENT_PASSWORD || !PRINTER_SERIAL) {
+    // Defesa extra: não deveria ser possível chegar aqui (o assistente
+    // acima só retorna com esses campos preenchidos, ou já terminou o
+    // processo), mas evita seguir com um cliente Supabase inválido se algo
+    // mudar nessa lógica no futuro.
+    console.error("❌ Configuração incompleta mesmo após o assistente inicial. Encerrando.");
+    process.exit(1);
+  }
+
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: true },
+  });
 
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email: AGENT_EMAIL,

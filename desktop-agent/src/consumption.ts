@@ -99,3 +99,30 @@ export function computeConsumptionPerSlot(
 
   return perSlot;
 }
+
+export function computeFinalGrams(
+  grams: number,
+  weightDiscount: number,
+  percentExecuted: number,
+  quality: ConsumptionQuality
+): number {
+  if (quality === "unknown") {
+    return 0;
+  }
+
+  const safePercent = Math.max(0, Math.min(100, percentExecuted));
+
+  const scaledGrams =
+    Math.round(grams * (safePercent / 100) * 10) / 10;
+
+  const scaledDiscount =
+    weightDiscount > 0
+      ? Math.round(weightDiscount * (safePercent / 100) * 10) / 10
+      : 0;
+
+  return Math.max(
+    0,
+    Math.round((scaledGrams - scaledDiscount) * 10) / 10
+  );
+}
+

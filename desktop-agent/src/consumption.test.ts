@@ -1,7 +1,7 @@
 ﻿import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeConsumptionPerSlot } from "./consumption";
+import { computeConsumptionPerSlot, computeFinalGrams } from "./consumption";
 import type { FilamentSliceInfo } from "./ftpsParser";
 
 function slice(
@@ -145,3 +145,53 @@ test("sem slots conhecidos: usa slot 0 como fallback", () => {
     weightDiscount: 0,
   });
 });
+
+test("final grams: impressão completa aplica desconto integral", () => {
+  assert.equal(
+    computeFinalGrams(50, 5, 100, "exact"),
+    45
+  );
+});
+
+test("final grams: impressão interrompida aplica consumo e desconto proporcionalmente", () => {
+  assert.equal(
+    computeFinalGrams(50, 10, 50, "exact"),
+    20
+  );
+});
+
+test("final grams: estimated_filename também respeita percentual executado", () => {
+  assert.equal(
+    computeFinalGrams(40, 0, 25, "estimated_filename"),
+    10
+  );
+});
+
+test("final grams: quality unknown nunca desconta peso", () => {
+  assert.equal(
+    computeFinalGrams(100, 0, 100, "unknown"),
+    0
+  );
+});
+
+test("final grams: percentual acima de 100 é limitado a 100", () => {
+  assert.equal(
+    computeFinalGrams(50, 5, 150, "exact"),
+    45
+  );
+});
+
+test("final grams: percentual negativo é limitado a zero", () => {
+  assert.equal(
+    computeFinalGrams(50, 5, -20, "exact"),
+    0
+  );
+});
+
+test("final grams: desconto nunca produz consumo negativo", () => {
+  assert.equal(
+    computeFinalGrams(5, 10, 100, "exact"),
+    0
+  );
+});
+

@@ -9,7 +9,7 @@ import dgram from "node:dgram";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { computeConsumptionPerSlot } from "./consumption";
+import { computeConsumptionPerSlot, computeFinalGrams } from "./consumption";
 import type { JobConsumptionItem } from "./consumption";
 
 dotenv.config();
@@ -506,16 +506,12 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
 
     const items: JobConsumptionItem[] = [];
     for (const [slotIdx, { grams, quality, weightDiscount }] of perSlot) {
-      let finalGrams = grams;
-      if (quality !== "unknown") {
-        // Escala tanto o valor base quanto o desconto de purga/flush por
-        // percentExecuted -- em FAILED/PAUSE_STOP/STOP (percentExecuted < 100),
-        // um job que falhou cedo não deve ter nem o consumo nem o desconto de
-        // purga aplicados em cheio, os dois avançam proporcionalmente juntos.
-        const scaledGrams = Math.round(grams * (percentExecuted / 100) * 10) / 10;
-        const scaledDiscount = weightDiscount > 0 ? Math.round(weightDiscount * (percentExecuted / 100) * 10) / 10 : 0;
-        finalGrams = Math.max(0, Math.round((scaledGrams - scaledDiscount) * 10) / 10);
-      }
+      const finalGrams = computeFinalGrams(
+        grams,
+        weightDiscount,
+        percentExecuted,
+        quality
+      );
 
       const spoolId = spoolBySlot.get(slotIdx) ?? null;
       items.push({
@@ -557,6 +553,7 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+
 
 
 

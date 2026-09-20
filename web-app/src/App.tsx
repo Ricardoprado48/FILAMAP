@@ -2,93 +2,9 @@
 import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
-
-interface Printer {
-  id: string;
-  serial: string;
-  model: string;
-  ip_address: string;
-  is_online: boolean;
-  last_seen_at?: string | null;
-  current_task?: string;
-  print_progress?: number;
-  remaining_time_min?: number;
-  current_layer?: number;
-  total_layers?: number;
-  nozzle_temp?: number;
-  nozzle_target_temp?: number;
-  bed_temp?: number;
-  bed_target_temp?: number;
-  gcode_state?: string;
-  active_slot_index?: number;
-}
-
-interface Spool {
-  id: string;
-  nfc_uid: string;
-  brand: string;
-  material: string;
-  color_name: string;
-  color_hex: string;
-  current_weight: number;
-  initial_weight?: number;
-  spool_tare_weight?: number;
-  price_paid?: number;
-  nfc_written_at?: string | null;
-}
-
-interface CatalogItem {
-  id: string;
-  name: string;
-  material: string;
-  weight_g: number;
-  print_hours: number;
-  accessories_cost: number;
-  production_cost: number;
-  sale_price: number;
-  created_at: string;
-}
-
-interface PrintLog {
-  id: string;
-  subtask_name: string;
-  filament_used_g?: number;
-  print_duration_minutes: number;
-  slot_index: number;
-  completed_at: string;
-  status: string;
-  needs_weighing?: boolean;
-  spool_id?: string;
-  spool?: Spool;
-}
-
-const POPULAR_BRANDS = [
-  "Voolt3D", "3D Fila", "Bambu Lab", "Creality", "Anycubic", "Elegoo",
-  "Easy Print", "Esun", "Fusion", "GTMax3D", "MasterPrint", "Multifila",
-  "PolyMaker", "PrintaLot", "Sulun", "Suntop", "TopRecicla", "Outra..."
-];
-
-const TARE_PRESETS = [
-  { label: "Voolt Vazado (218g)", val: "218" },
-  { label: "Voolt Fechado/Antigo (250g)", val: "250" },
-  { label: "Voolt Transparente (195g)", val: "195" },
-  { label: "MasterPrint (230g)", val: "230" },
-  { label: "Padrão (220g)", val: "220" }
-];
-
-// O Desktop Agent grava last_seen_at a cada heartbeat de 15s (independente
-// da conexão MQTT com a impressora estar de pé ou não — é o sinal de "o
-// processo do Agent ainda está rodando"). 30s = 2 ciclos de heartbeat: uma
-// folga cobre uma gravação perdida por instabilidade de rede sem deixar a
-// impressora aparecer "ONLINE" por muito tempo depois que o processo
-// realmente morreu (PC desligado, hibernação, crash, queda de energia —
-// nenhum desses casos consegue gravar is_online:false na saída).
-const PRINTER_ONLINE_THRESHOLD_MS = 30000;
-
-function isPrinterOnline(printer?: Printer | null): boolean {
-  if (!printer?.last_seen_at) return false;
-  return Date.now() - new Date(printer.last_seen_at).getTime() < PRINTER_ONLINE_THRESHOLD_MS;
-}
+import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
+import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
+import { isPrinterOnline } from "./utils/printer";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);

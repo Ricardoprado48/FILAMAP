@@ -100,6 +100,16 @@ página (nenhum parsing de `location.search`) — esse é um mecanismo
 diferente (deep link passivo via qualquer leitor NFC do SO, não a leitura
 ativa dentro do app) e segue como lacuna separada.
 
+**Risco identificado em 20/09/2026, não corrigido:** `handleWriteTag`
+(aba Tags) ignora o retorno booleano de `writeTagUrl(...)`. Se a
+gravação física na tag falhar, o código ainda assim atualiza
+`spools.nfc_uid` no banco e exibe mensagem de sucesso — divergindo
+permanentemente o conteúdo do chip físico do valor salvo no banco. Isso
+reproduz o sintoma "leitura de tag já gravada sempre cai no
+auto-cadastro de desconhecida". Ver `docs/09_CHANGELOG.md` (entrada de
+20/09) para a investigação completa; correção pendente por estar fora do
+escopo autorizado até o momento (aba Tags).
+
 ### Onboarding
 
 O Agent depende de configuração por `.env`. Não existe onboarding comercial guiado no código auditado.

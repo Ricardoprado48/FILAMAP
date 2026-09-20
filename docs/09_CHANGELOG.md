@@ -2,6 +2,23 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Redesign do estado vazio do card de slot na aba AMS
+
+- só visual, sem tocar em lógica de leitura NFC, schema ou outras abas;
+- `web-app/src/App.tsx`: o botão outline pequeno ("📡 Ler tag NFC") do
+  estado vazio de cada card de slot foi substituído por um alvo circular
+  de 60px (fundo `#0284c7`, ícone `Nfc` do lucide-react centralizado),
+  com dois anéis concêntricos (`#38bdf8`) em animação de pulso contínua
+  (`@keyframes filamapNfcPulse`, scale + fade, 2s, defasados em 1s) e
+  texto abaixo ("Aproximar tag NFC" / "Toque para ler");
+- número do slot e bolinha de status no topo do card mantidos como
+  estavam; `onClick` continua chamando `handleScanSlot(slotIdx)`, sem
+  mudança de comportamento;
+- validado com `tsc --noEmit` e `npm run build` (ambos sem erro) e com
+  preview visual isolado (HTML/CSS espelhando os mesmos estilos) via
+  screenshot; não foi possível validar na aba AMS autenticada real dentro
+  desta sessão (sem credenciais de login do usuário no ambiente).
+
 ## 18/09/2026 — Leitura de tag na aba AMS nunca reconhecia carretel já gravado
 
 - causa raiz confirmada: `writeTagUrl` (aba Tags) grava um registro NDEF do

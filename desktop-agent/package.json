@@ -7,7 +7,10 @@
   "scripts": {
     "build": "tsc",
     "start": "tsc && node dist/index.js",
-    "package-exe": "tsc && pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe"
+    "package-exe": "tsc && pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "test:integration": "vitest run tests/integration"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "pkg": "^5.8.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.9"
   }
 }

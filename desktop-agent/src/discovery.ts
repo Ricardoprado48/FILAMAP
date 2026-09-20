@@ -89,15 +89,15 @@ interface LocalRangeInfo {
   rangeDescriptions: string[];
 }
 
-function ipToInt(ip: string): number {
+export function ipToInt(ip: string): number {
   return ip.split(".").reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
 }
 
-function intToIp(int: number): string {
+export function intToIp(int: number): string {
   return [24, 16, 8, 0].map((shift) => (int >>> shift) & 0xff).join(".");
 }
 
-function prefixLength(maskInt: number): number {
+export function prefixLength(maskInt: number): number {
   let count = 0;
   for (let i = 31; i >= 0; i--) {
     if ((maskInt >>> i) & 1) count++;
@@ -111,7 +111,7 @@ function prefixLength(maskInt: number): number {
 // Se a máscara real resultar numa faixa maior que MAX_SUBNET_SCAN_HOSTS,
 // assume uma /24 a partir do IP local detectado (razão documentada na
 // descrição retornada) em vez de varrer a faixa inteira.
-function hostsInRange(address: string, netmask: string): { ips: string[]; description: string } {
+export function hostsInRange(address: string, netmask: string): { ips: string[]; description: string } {
   const addrInt = ipToInt(address);
   const maskInt = ipToInt(netmask);
   const prefix = prefixLength(maskInt);

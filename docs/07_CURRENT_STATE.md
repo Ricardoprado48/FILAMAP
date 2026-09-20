@@ -80,6 +80,21 @@ O código usa `print_logs`, `catalog_items`, `price_paid` e várias colunas de t
 
 `deduct_spool_filament()` foi endurecida, porém `finalizeJob()` atualiza `spools.current_weight` diretamente.
 
+### 5. `start-agent.bat` não inicia o Agent como está hoje
+
+`start-agent.bat` (raiz do repo) roda `cd /d C:\FILAMAP\desktop-agent` e
+`npm run dev`. `desktop-agent/package.json` não tem script `dev` — só
+`build`, `start` e `package-exe` (`dev` só existe em
+`web-app/package.json`, pro Vite). Ou seja, hoje esse `.bat` falharia com
+"Missing script: dev" se executado. Não foi possível confirmar com o
+usuário qual é de fato o método usado em produção (o `.exe` empacotado
+via `pkg`, ou `node dist/index.js` direto) — `docs/03_FEATURES.md` cita
+os dois sem diferenciar. Os scripts de auto-start adicionados em
+20/09/2026 (ver seção "Auto-start do Agent" abaixo) foram desenhados pra
+não depender dessa resposta: detectam em tempo de execução qual dos dois
+existe em `desktop-agent/` e usam esse. `start-agent.bat` em si não foi
+alterado (fora do escopo desta tarefa).
+
 ## Limitações críticas atuais
 
 ### Consumo multicolor
@@ -116,6 +131,28 @@ SIGINT/SIGTERM (Ctrl+C, `kill`) — é só um atalho pro caso de fechamento
 limpo, não é a proteção principal (que é o cálculo por recência no
 frontend). Ver `docs/09_CHANGELOG.md` (entrada de 20/09) para o racional
 completo do limiar escolhido.
+
+### Auto-start do Agent (Windows)
+
+**Adicionado em 20/09/2026:** até então o Agent só subia manualmente
+(`npm start`, o `.exe` empacotado, ou o `start-agent.bat` — que, como
+descrito na divergência 5 acima, hoje não funciona). Nada iniciava
+sozinho no boot/logon do Windows.
+
+Adicionados `desktop-agent/install-autostart.ps1`,
+`desktop-agent/run-agent.ps1` e `desktop-agent/uninstall-autostart.ps1`:
+registram/removem uma Tarefa Agendada do Windows ("FilamapAgentAutoStart")
+disparada no logon do usuário atual, sem janela visível, com até 3
+reinícios automáticos (1 min de intervalo) em caso de falha, sem parar
+por economia de bateria, e sem o limite padrão de 72h do Task Scheduler
+(que mataria um processo de vida longa como esse). `run-agent.ps1`
+detecta em tempo de execução se existe `filamap-agent.exe` (preferido) ou
+`dist/index.js` e usa o que encontrar — ver divergência 5 sobre por que
+essa escolha não foi presumida. Todo stdout/stderr do Agent é redirecionado
+para `desktop-agent/agent.log`, sobrescrito a cada novo início (já que a
+tarefa roda sem janela, sem isso não haveria nenhuma visibilidade). Isso é
+só o mecanismo de auto-start — o instalador completo/auto-update (P2.3 no
+backlog) continua pendente. Ver `docs/09_CHANGELOG.md`.
 
 ### NFC de leitura
 

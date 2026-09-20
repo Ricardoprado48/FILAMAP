@@ -2,6 +2,99 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Auto-start do Desktop Agent no logon do Windows (Tarefa Agendada)
+
+**Objetivo desta etapa:** só o mecanismo de "iniciar automaticamente" —
+não o instalador completo do backlog P2.3 (empacotamento, auto-update),
+que continua em aberto.
+
+**Investigação do método de execução real (item 1 da tarefa) — não deu
+pra confirmar com certeza qual é.** Apurado no repositório, sem presumir:
+
+- `desktop-agent/package.json` tem só três scripts: `build` (`tsc`),
+  `start` (`tsc && node dist/index.js`) e `package-exe` (`tsc && pkg
+  dist/index.js --targets node18-win-x64 --output filamap-agent.exe`).
+  **Não existe script `dev`** nesse `package.json`.
+- `start-agent.bat` (raiz do repo) — único script de inicialização do
+  Agent encontrado — roda `cd /d C:\FILAMAP\desktop-agent` seguido de
+  `npm run dev`. Como esse script `dev` não existe em
+  `desktop-agent/package.json` (só existe em `web-app/package.json`,
+  pro Vite), `start-agent.bat` executado hoje contra este repositório
+  falharia com "Missing script: dev" — ou seja, não é (ou não é mais) o
+  jeito real de subir o Agent, ao menos não como está commitado.
+- `docs/03_FEATURES.md` (linha "Instalador/tray/service robusto") cita
+  "Há `.exe`, `start-agent.bat` e script `pkg`" sem diferenciar qual dos
+  dois (`.exe` ou `node` direto) é o usado de fato em produção.
+- Não há node_modules/dist/.exe commitados (estão no `.gitignore`) que
+  permitissem inferir qual foi gerado por último numa máquina real.
+
+**Decisão tomada diante da ambiguidade:** em vez de presumir um dos dois
+e arriscar quebrar o fluxo real do usuário, `run-agent.ps1` (novo)
+decide em tempo de execução — prefere `filamap-agent.exe` se existir em
+`desktop-agent/`, senão cai para `node dist/index.js`. Isso cobre os dois
+casos sem exigir a resposta antes de entregar a tarefa. **Pergunta em
+aberto pro usuário:** qual dos dois você usa hoje de fato (ou roda outra
+coisa que não aparece no repo)? Isso ajuda a simplificar/confirmar esse
+script depois.
+
+**Arquivos novos:**
+
+- `desktop-agent/run-agent.ps1`: script chamado pela Tarefa Agendada.
+  Faz `Set-Location` pro próprio diretório (garante que `.env` seja
+  encontrado — `dotenv.config()` em `index.ts` carrega relativo ao
+  `cwd`), decide entre `.exe`/`node` como descrito acima, e redireciona
+  todo stdout/stderr (`*>>`) pra `desktop-agent/agent.log`, sobrescrito
+  (linha de cabeçalho com timestamp) a cada novo início — a tarefa roda
+  sem janela visível, então sem esse redirecionamento se perderia toda a
+  visibilidade que hoje vem do terminal aberto manualmente. Não precisou
+  alterar `index.ts`: a redireção é inteiramente externa ao processo do
+  Agent (stdout/stderr de qualquer processo, Node ou `.exe` empacotado,
+  já saem normalmente; só precisavam ser capturados).
+- `desktop-agent/install-autostart.ps1`: registra a Tarefa Agendada
+  `FilamapAgentAutoStart` via `Register-ScheduledTask`:
+  - gatilho `New-ScheduledTaskTrigger -AtLogOn -User <usuário atual>`;
+  - ação: `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy
+    Bypass -File run-agent.ps1`, com `-WorkingDirectory` apontando pra
+    `desktop-agent/` (não só `run-agent.ps1` faz `Set-Location`, a ação
+    da tarefa em si também já inicia no diretório certo — dupla
+    garantia);
+  - `RestartCount 3` + `RestartInterval` de 1 min: reinício automático
+    em falha, como pedido;
+  - `AllowStartIfOnBatteries` + `DontStopIfGoingOnBatteries`: não para
+    por economia de energia (notebook);
+  - `ExecutionTimeLimit` zerado: desliga o limite padrão de 72h do Task
+    Scheduler — sem isso, o Windows mataria o Agent sozinho depois de 3
+    dias rodando contínuo, mesmo sem nenhum erro;
+  - idempotente (`-Force`): rodar de novo atualiza a tarefa em vez de
+    falhar por já existir.
+  - comentário no topo documenta como verificar (`schtasks /query /tn
+    "FilamapAgentAutoStart" /v /fo list`, ou `schtasks /run /tn
+    "FilamapAgentAutoStart"` pra testar sem esperar o logon) e onde fica
+    o log.
+- `desktop-agent/uninstall-autostart.ps1`: remove a mesma tarefa
+  (`Unregister-ScheduledTask`) de forma limpa, sem mexer num processo já
+  em execução nem apagar o log.
+
+**Escopo:** só os três scripts PowerShell novos, mais documentação. Não
+alterei `desktop-agent/src/index.ts` (a redireção de log é externa, não
+precisou tocar na lógica do Agent), nem `start-agent.bat`, nem nada em
+AMS, Orçamento, Estoque, Tags ou consumo automático. Nenhuma migration
+nova.
+
+**Validações executadas:** revisão manual da sintaxe dos três scripts
+PowerShell (nomes de cmdlet/parâmetros do módulo `ScheduledTasks`
+conferidos um a um). **Não foi possível executar/testar em Windows real**
+nesta sessão (ambiente Linux, sem PowerShell nem Task Scheduler) — não
+consigo confirmar que `Register-ScheduledTask` roda sem elevação em toda
+configuração de conta, nem o comportamento exato da redireção `*>>` com
+um `.exe` nativo vs. `node.exe`. Recomendo testar com `schtasks /run /tn
+"FilamapAgentAutoStart"` logo após instalar, conferir `agent.log`, e só
+depois confiar no gatilho de logon.
+
+- `docs/08_BACKLOG.md` (P2.3, sub-item marcado) e `docs/07_CURRENT_STATE.md`
+  (nova seção "Auto-start do Agent (Windows)" + divergência 5 sobre
+  `start-agent.bat`) atualizados.
+
 ## 20/09/2026 — `printers.is_online` travava em "ONLINE" quando o Agent morria sem aviso
 
 **Problema confirmado pelo usuário:** `printers.is_online` só era gravado

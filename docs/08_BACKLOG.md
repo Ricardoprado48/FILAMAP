@@ -130,6 +130,12 @@ Usar mecanismo seguro do SO/credencial local em vez de arquivo texto como soluç
 
 Empacotamento robusto para Windows e, se desejado, outros sistemas.
 
+- [x] **auto-start via Tarefa Agendada** — adicionado em 20/09/2026:
+  `desktop-agent/install-autostart.ps1` + `run-agent.ps1` +
+  `uninstall-autostart.ps1`. Só o mecanismo de "iniciar sozinho no
+  logon"; o resto de P2.3 (instalador de fato, auto-update) continua em
+  aberto. Ver `docs/09_CHANGELOG.md`.
+
 ### P2.4 — Offline queue
 
 Persistir eventos/ações quando Supabase estiver indisponível e sincronizar com idempotência.

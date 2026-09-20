@@ -2,6 +2,45 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Indicador de gravação física real da tag NFC (`nfc_written_at`)
+
+**Problema:** o Estoque e o seletor da aba Tags só distinguiam "tem
+`nfc_uid`" vs "não tem". Isso não diz se alguém de fato encostou o
+celular e confirmou a escrita NDEF naquele carretel, ou se o `nfc_uid`
+veio de importação em lote (`desktop-agent/seed_spools.ts` +
+`filamentos_bambu.json`) sem nenhuma tag física gravada ainda.
+
+- nova migration `supabase/migrations/20260920_add_nfc_written_at.sql`:
+  adiciona `spools.nfc_written_at TIMESTAMPTZ`, nullable, sem default e
+  sem backfill — linhas existentes continuam com o campo `NULL` até
+  passarem por uma gravação física real;
+- `web-app/src/App.tsx`, `handleWriteTag`: agora grava
+  `nfc_written_at: new Date().toISOString()` no mesmo `UPDATE` que já
+  só roda depois que `writeTagUrl(...)` confirma sucesso (fix de
+  20/09/2026 anterior) — ou seja, o timestamp só existe quando a escrita
+  física foi confirmada pelo `NDEFReader.write()`, nunca em cadastro/edição
+  manual nem em importação em lote;
+- nova função `getNfcStatus(spool)` classifica cada carretel em três
+  estados: `written` (`nfc_written_at` preenchido), `pending` (tem
+  `nfc_uid` mas nunca teve gravação física confirmada) e `none` (sem
+  `nfc_uid`);
+- Estoque (`inventory`): o badge que já existia ao lado da marca passou
+  de 2 para 3 estados — ✅ "Tag gravada" (verde, com tooltip mostrando
+  data/hora e o `nfc_uid`), ⏳ "Aguardando gravação" (âmbar, tooltip
+  explicando a origem), ⚠️ "Sem tag" (vermelho, inalterado). Visualmente
+  distinto do botão de atalho 🏷️ que já existia na linha (esse botão
+  continua só navegando pra aba Tags, sem mudar de ícone);
+- aba Tags, `<select>` de carretel: mesmo critério de 3 estados aplicado
+  ao prefixo/sufixo de cada `<option>` (✅/⏳/⚠️ + texto);
+- escopo: só Estoque e o seletor da aba Tags. Nenhuma alteração em AMS,
+  Orçamento ou lógica de consumo automático/desconto de peso;
+- validado com `tsc --noEmit` e `npm run build`, ambos sem erro. Não foi
+  possível testar a gravação em hardware NFC real nesta sessão (mesma
+  limitação das entradas anteriores) — a lógica foi conferida lendo o
+  código (`handleWriteTag` só chega no `UPDATE` após `wroteToTag` ser
+  `true`).
+- `docs/08_BACKLOG.md`: novo item.
+
 ## 20/09/2026 — Falha na gravação física da tag não impedia mais persistir `nfc_uid` no banco
 
 Autorizado como follow-up do achado registrado na entrada anterior

@@ -65,6 +65,14 @@ O comportamento atual (`0,22 g/min` / fallback 35 g) não deve ser tratado como 
 
 - [x] corrigido em 20/09/2026 — ver `docs/09_CHANGELOG.md`.
 
+### P1.1c — Indicador de gravação física real da tag (`nfc_written_at`)
+
+- [x] adicionado em 20/09/2026 — coluna `spools.nfc_written_at`
+  (migration `20260920_add_nfc_written_at.sql`), preenchida só quando
+  `handleWriteTag` confirma escrita física via `writeTagUrl`; indicador
+  de 3 estados (gravada/aguardando/sem tag) no Estoque e no seletor da
+  aba Tags. Ver `docs/09_CHANGELOG.md`.
+
 ### P1.2 — Descoberta/re-descoberta robusta
 
 Integrar estratégia em camadas:

@@ -110,6 +110,13 @@ com um early-return quando `writeTagUrl` retorna `false`; o erro já era
 exibido via `nfcError` no formulário da aba Tags. Ver
 `docs/09_CHANGELOG.md` (entradas de 20/09) para a investigação completa.
 
+**Adicionado em 20/09/2026:** `spools.nfc_written_at` (migration
+`20260920_add_nfc_written_at.sql`) registra quando a gravação física foi
+de fato confirmada por `handleWriteTag`. Estoque e o seletor da aba Tags
+agora distinguem: tag gravada fisicamente, `nfc_uid` pendente de gravação
+física (ex.: veio de importação em lote), ou sem tag nenhuma. Ver
+`docs/09_CHANGELOG.md`.
+
 ### Onboarding
 
 O Agent depende de configuração por `.env`. Não existe onboarding comercial guiado no código auditado.

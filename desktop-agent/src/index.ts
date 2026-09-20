@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 import { computeConsumptionPerSlot, buildJobConsumptionItems } from "./consumption";
+import { decideRediscovery } from "./networkRediscovery";
 import type { JobConsumptionItem } from "./consumption";
 
 dotenv.config();
@@ -263,7 +264,19 @@ async function startAgent() {
     let statusPushInterval: NodeJS.Timeout | null = null;
 
     async function rediscoverPrinter() {
-      if (rediscoveryInProgress || client.connected) return;
+      const initialDecision = decideRediscovery({
+        rediscoveryInProgress,
+        clientConnected: client.connected,
+        previousIp: PRINTER_IP,
+        discoveredIp: "",
+      });
+
+      if (
+        initialDecision.action === "skip_in_progress" ||
+        initialDecision.action === "skip_connected"
+      ) {
+        return;
+      }
 
       rediscoveryInProgress = true;
       const previousIp = PRINTER_IP;
@@ -277,22 +290,33 @@ async function startAgent() {
 
           const newIp = await discoverPrinterIp();
 
-          // A conexão pode ter voltado enquanto a descoberta estava em andamento.
-          if (client.connected) {
+          const decision = decideRediscovery({
+            rediscoveryInProgress: false,
+            clientConnected: client.connected,
+            previousIp,
+            discoveredIp: newIp,
+          });
+
+          if (decision.action === "skip_connected") {
             PRINTER_IP = previousIp;
             return;
           }
 
-          if (newIp) {
-            PRINTER_IP = newIp;
+          if (
+            decision.action === "reconnect_same_ip" ||
+            decision.action === "reconnect_new_ip"
+          ) {
+            PRINTER_IP = decision.targetIp;
 
-            client.options.host = newIp;
-            client.options.hostname = newIp;
+            client.options.host = decision.targetIp;
+            client.options.hostname = decision.targetIp;
 
-            if (newIp === previousIp) {
-              console.log(`✅ Impressora reencontrada no mesmo IP: ${newIp}`);
+            if (decision.action === "reconnect_same_ip") {
+              console.log(`✅ Impressora reencontrada no mesmo IP: ${decision.targetIp}`);
             } else {
-              console.log(`✅ Impressora reencontrada. IP atualizado: ${previousIp} -> ${newIp}`);
+              console.log(
+                `✅ Impressora reencontrada. IP atualizado: ${previousIp} -> ${decision.targetIp}`
+              );
             }
 
             if (!client.reconnecting) {
@@ -304,7 +328,7 @@ async function startAgent() {
 
           PRINTER_IP = previousIp;
           console.warn("⚠️ Impressora ainda não encontrada. Nova tentativa em 15 segundos...");
-          await new Promise(resolve => setTimeout(resolve, 15000));
+          await new Promise((resolve) => setTimeout(resolve, 15000));
         }
       } catch (error: any) {
         PRINTER_IP = previousIp;
@@ -316,7 +340,6 @@ async function startAgent() {
         rediscoveryInProgress = false;
       }
     }
-
     client.on("connect", () => {
       console.log(`✅ Conectado ao broker MQTT da Bambu Lab A1 em ${PRINTER_IP}!`);
       updateStatus(printer.id, true);
@@ -543,6 +566,7 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+
 
 
 

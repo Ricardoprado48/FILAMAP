@@ -9,6 +9,7 @@ interface Printer {
   model: string;
   ip_address: string;
   is_online: boolean;
+  last_seen_at?: string | null;
   current_task?: string;
   print_progress?: number;
   remaining_time_min?: number;
@@ -74,6 +75,20 @@ const TARE_PRESETS = [
   { label: "MasterPrint (230g)", val: "230" },
   { label: "Padrão (220g)", val: "220" }
 ];
+
+// O Desktop Agent grava last_seen_at a cada heartbeat de 15s (independente
+// da conexão MQTT com a impressora estar de pé ou não — é o sinal de "o
+// processo do Agent ainda está rodando"). 30s = 2 ciclos de heartbeat: uma
+// folga cobre uma gravação perdida por instabilidade de rede sem deixar a
+// impressora aparecer "ONLINE" por muito tempo depois que o processo
+// realmente morreu (PC desligado, hibernação, crash, queda de energia —
+// nenhum desses casos consegue gravar is_online:false na saída).
+const PRINTER_ONLINE_THRESHOLD_MS = 30000;
+
+function isPrinterOnline(printer?: Printer | null): boolean {
+  if (!printer?.last_seen_at) return false;
+  return Date.now() - new Date(printer.last_seen_at).getTime() < PRINTER_ONLINE_THRESHOLD_MS;
+}
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -518,6 +533,7 @@ export default function App() {
 
   const activePrinter = printers[0];
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
+  const printerOnline = isPrinterOnline(activePrinter);
 
   if (!session) {
     return (
@@ -566,8 +582,8 @@ export default function App() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, background: activePrinter?.is_online ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)", color: activePrinter?.is_online ? "#34d399" : "#f87171", border: `1px solid ${activePrinter?.is_online ? "#059669" : "#dc2626"}` }}>
-              {activePrinter?.is_online ? "ONLINE" : "OFFLINE"}
+            <span style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, background: printerOnline ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)", color: printerOnline ? "#34d399" : "#f87171", border: `1px solid ${printerOnline ? "#059669" : "#dc2626"}` }}>
+              {printerOnline ? "ONLINE" : "OFFLINE"}
             </span>
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
               Sair

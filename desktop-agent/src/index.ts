@@ -154,12 +154,32 @@ async function startAgent() {
       await supabase.from("printers").update({ ip_address: PRINTER_IP, is_online: true }).eq("id", printer.id);
     }
 
-    // Heartbeat a cada 15s
+    // Heartbeat a cada 15s — grava last_seen_at independente do estado da
+    // conexão MQTT com a impressora, é o sinal de "o processo do Agent
+    // ainda está rodando" que o frontend usa pra decidir online/offline.
     setInterval(async () => {
       try {
-        await supabase.from("printers").update({ is_online: true, updated_at: new Date().toISOString() }).eq("id", printer.id);
+        const nowIso = new Date().toISOString();
+        await supabase.from("printers").update({ is_online: true, updated_at: nowIso, last_seen_at: nowIso }).eq("id", printer.id);
       } catch (e) {}
     }, 15000);
+
+    // Gravação de is_online:false num encerramento limpo (Ctrl+C, `kill`).
+    // É só um caminho rápido — a proteção real contra o Agent morrer sem
+    // aviso (queda de energia, crash, hibernação) é o frontend calcular
+    // online pela recência de last_seen_at, não por depender de alguém
+    // conseguir gravar `false` na saída.
+    let shuttingDown = false;
+    async function gracefulShutdown() {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      try {
+        await supabase.from("printers").update({ is_online: false }).eq("id", printer.id);
+      } catch (e) {}
+      process.exit(0);
+    }
+    process.on("SIGINT", gracefulShutdown);
+    process.on("SIGTERM", gracefulShutdown);
 
     const client = mqtt.connect(`mqtts://${PRINTER_IP}:8883`, {
       username: "bblp",
@@ -266,6 +286,7 @@ async function startAgent() {
           lastSyncTime = now;
           const telemetryData: Record<string, unknown> = {
             is_online: true,
+            last_seen_at: new Date().toISOString(),
             gcode_state: currentState,
             active_slot_index: activeSlotIndex,
           };

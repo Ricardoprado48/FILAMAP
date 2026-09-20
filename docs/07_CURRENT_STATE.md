@@ -90,6 +90,33 @@ O código usa `print_logs`, `catalog_items`, `price_paid` e várias colunas de t
 
 Não existe identificador único de job/finalização que impeça baixa dupla. Atualizar spool e inserir log não ocorre em uma única transação.
 
+### Status online/offline da impressora
+
+**Risco corrigido em 20/09/2026:** `printers.is_online` só era gravado
+como `true` (no login do Agent, no heartbeat de 15s e a cada telemetria
+MQTT) — nunca havia um caminho confiável para gravar `false` quando o
+processo do Agent parava de rodar sem um encerramento limpo (PC
+desligado, hibernação, queda de energia, crash do processo). Resultado: o
+app mostrava "ONLINE" indefinidamente mesmo com tudo desligado de
+verdade.
+
+Corrigido com `printers.last_seen_at` (migration
+`20260920_add_printers_last_seen_at.sql`), atualizado pelo Agent a cada
+heartbeat (15s, independente do estado da conexão MQTT) e a cada
+telemetria MQTT sincronizada. O frontend parou de ler `is_online`
+diretamente — calcula online/offline no cliente comparando
+`last_seen_at` com o momento atual: online se a diferença for menor que
+`PRINTER_ONLINE_THRESHOLD_MS` (30s, 2× o ciclo de heartbeat, folga para
+absorver uma gravação perdida por instabilidade de rede sem deixar a UI
+presa em "ONLINE" por muito tempo depois que o Agent realmente parou).
+`is_online` continua existindo na tabela e sendo gravado (compatibilidade
+com o que já lia o campo), mas deixou de ser a fonte de verdade exibida.
+Além disso, o Agent agora grava `is_online: false` num handler de
+SIGINT/SIGTERM (Ctrl+C, `kill`) — é só um atalho pro caso de fechamento
+limpo, não é a proteção principal (que é o cálculo por recência no
+frontend). Ver `docs/09_CHANGELOG.md` (entrada de 20/09) para o racional
+completo do limiar escolhido.
+
 ### NFC de leitura
 
 `startScanning()` já está integrado na aba AMS (botão "Ler tag NFC" por

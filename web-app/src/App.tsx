@@ -9,6 +9,12 @@ import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 import { filterInventory, groupByMaterial, materialTotals } from "./utils/inventory";
 import { filterAndSortCatalog, pendingWeighingLogs as selectPendingWeighingLogs, isPrinterPrinting } from "./utils/selectors";
 import { computeBudgetSummary } from "./utils/budget";
+import { fetchPrinters, fetchAmsSlots, fetchInventory, fetchCatalog, fetchPrintLogs } from "./services/dataService";
+import { insertCatalogItem, deleteCatalogItem as deleteCatalogItemById } from "./services/catalogService";
+import {
+  findSpoolByNfcUid, createPlaceholderSpool, assignSpoolToSlot, ejectSlot as ejectSlotService,
+  updateSpoolWeight, updateSpoolFields, deleteSpool as deleteSpoolService, writeTagToSpool,
+} from "./services/spoolService";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -110,25 +116,25 @@ export default function App() {
   async function loadData() {
     if (!session) return;
 
-    const { data: pData } = await supabase.from("printers").select("*");
+    const pData = await fetchPrinters();
     if (pData && pData.length > 0) {
       setPrinters(pData);
       const printerId = pData[0].id;
-      const { data: slotData } = await supabase.from("ams_slots").select("slot_index, spool:spools(*)").eq("printer_id", printerId);
+      const slotData = await fetchAmsSlots(printerId);
       if (slotData) {
         const slotsMap: Record<number, Spool | null> = { 0: null, 1: null, 2: null, 3: null };
-        slotData.forEach((s: any) => { slotsMap[s.slot_index] = s.spool; });
+        slotData.forEach((s) => { slotsMap[s.slot_index] = s.spool; });
         setActiveSlots(slotsMap);
       }
     }
 
-    const { data: invData } = await supabase.from("spools").select("*").order("color_name", { ascending: true });
+    const invData = await fetchInventory();
     if (invData) setInventory(invData);
 
-    const { data: catData } = await supabase.from("catalog_items").select("*");
+    const catData = await fetchCatalog();
     if (catData) setCatalog(catData);
 
-    const { data: logsData } = await supabase.from("print_logs").select("*, spool:spools(*)").order("completed_at", { ascending: false }).limit(10);
+    const logsData = await fetchPrintLogs();
     if (logsData) setPrintLogs(logsData);
   }
 
@@ -168,7 +174,7 @@ export default function App() {
       return;
     }
 
-    const { error } = await supabase.from("catalog_items").insert({
+    const { error } = await insertCatalogItem({
       name: calcPartName.trim().toUpperCase(),
       material: "PETG/PLA",
       weight_g: totalFilamentWeight,
@@ -200,7 +206,7 @@ export default function App() {
   async function handleDeleteCatalogItem(e: React.MouseEvent, id: string, name: string) {
     e.stopPropagation();
     if (!window.confirm(`Excluir "${name}" do catálogo?`)) return;
-    await supabase.from("catalog_items").delete().eq("id", id);
+    await deleteCatalogItemById(id);
     await loadData();
   }
 
@@ -252,21 +258,14 @@ export default function App() {
 
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
-    let { data: spool } = await supabase.from("spools").select("*").eq("nfc_uid", nfcUid).single();
+    let spool = await findSpoolByNfcUid(nfcUid);
     let isNewSpool = false;
     if (!spool) {
-      const { data: created } = await supabase.from("spools").insert({
-        nfc_uid: nfcUid, brand: "Voolt3D", material: "PETG", color_name: "Preto",
-        color_hex: "#111827", initial_weight: 1000, current_weight: 1000,
-        spool_tare_weight: 218, price_paid: 85.00,
-      }).select().single();
-      spool = created;
+      spool = await createPlaceholderSpool(nfcUid);
       isNewSpool = true;
     }
     if (spool) {
-      await supabase.from("ams_slots").upsert({
-        printer_id: printers[0].id, slot_index: slotIdx, spool_id: spool.id, updated_at: new Date().toISOString(),
-      }, { onConflict: "printer_id,slot_index" });
+      await assignSpoolToSlot(printers[0].id, slotIdx, spool.id);
       setNfcUid(null);
       await loadData();
       // Tag desconhecida: o carretel foi criado com placeholders (marca/material/cor/
@@ -281,7 +280,7 @@ export default function App() {
   async function handleEjectSlot(e: React.MouseEvent, slotIdx: number) {
     e.stopPropagation();
     if (printers.length === 0) return;
-    await supabase.from("ams_slots").update({ spool_id: null, updated_at: new Date().toISOString() }).eq("printer_id", printers[0].id).eq("slot_index", slotIdx);
+    await ejectSlotService(printers[0].id, slotIdx);
     await loadData();
   }
 
@@ -296,7 +295,7 @@ export default function App() {
     e.preventDefault();
     if (!weighingSpool) return;
     const net = Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0));
-    await supabase.from("spools").update({ current_weight: net, spool_tare_weight: parseFloat(modalTare) || 218 }).eq("id", weighingSpool.id);
+    await updateSpoolWeight(weighingSpool.id, net, parseFloat(modalTare) || 218);
     setWeighingSpool(null);
     await loadData();
   }
@@ -315,12 +314,12 @@ export default function App() {
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!editingSpool) return;
-    const { data, error } = await supabase.from("spools").update({
+    const { data, error } = await updateSpoolFields(editingSpool.id, {
       brand: editBrand, material: editMaterial, color_name: editColorName,
       color_hex: editColorHex, spool_tare_weight: parseFloat(editTare) || 218,
       current_weight: parseFloat(editWeight) || 0,
       price_paid: parseFloat(editPrice) || 85.00,
-    }).eq("id", editingSpool.id).select();
+    });
 
     if (error) {
       alert("Erro ao salvar carretel: " + error.message);
@@ -350,8 +349,7 @@ export default function App() {
 
   async function handleDeleteSpool(spool: Spool) {
     if (!window.confirm(`Excluir carretel "${spool.color_name}"?`)) return;
-    await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
-    await supabase.from("spools").delete().eq("id", spool.id);
+    await deleteSpoolService(spool.id);
     await loadData();
   }
 
@@ -372,12 +370,12 @@ export default function App() {
     // formulário; aqui só interrompemos antes de tocar no banco.
     if (!wroteToTag) return;
 
-    const { error } = await supabase.from("spools").update({
+    const { error } = await writeTagToSpool(writerSpool.id, {
       nfc_uid: finalTagId,
       current_weight: netWeight,
       spool_tare_weight: parseFloat(tareWeight) || 218,
       nfc_written_at: new Date().toISOString(),
-    }).eq("id", writerSpool.id);
+    });
 
     if (error) {
       alert("Erro ao gravar tag: " + error.message);

@@ -2,6 +2,27 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Falha na gravação física da tag não impedia mais persistir `nfc_uid` no banco
+
+Autorizado como follow-up do achado registrado na entrada anterior
+(P1.1b do backlog).
+
+- `web-app/src/App.tsx`, `handleWriteTag`: passa a checar o retorno
+  booleano de `writeTagUrl(...)` antes de atualizar `spools.nfc_uid`. Se
+  a gravação física falhar (`wroteToTag === false`), a função retorna
+  cedo e o UPDATE nunca roda — sem mensagem de sucesso falsa, sem
+  divergência entre o chip físico e o banco;
+- o erro em si já era exibido: `useNfc.writeTagUrl` seta `error` (via
+  `setError`) em caso de falha, e o formulário da aba Tags já renderiza
+  esse `nfcError` logo abaixo do botão de submit — não foi necessário
+  adicionar nenhum alerta novo;
+- escopo: só a aba Tags (`handleWriteTag`), nada em Orçamento, Estoque,
+  AMS ou lógica de consumo automático; nenhuma migration alterada;
+- validado com `tsc --noEmit` e `npm run build`, ambos sem erro. Não foi
+  possível validar em hardware NFC real nesta sessão (mesma limitação já
+  registrada na entrada anterior).
+- `docs/08_BACKLOG.md` (P1.1b) marcado como concluído.
+
 ## 20/09/2026 — Investigação: leitura de tag na AMS ainda cai no placeholder mesmo após o fix de 18/09
 
 Relatado pelo usuário: tag já gravada num carretel real via aba Tags;

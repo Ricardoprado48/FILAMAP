@@ -1,25 +1,27 @@
-{
-  "name": "desktop-agent",
-  "version": "1.0.0",
-  "description": "Filamap Desktop Agent for Bambu Lab A1",
-  "main": "dist/index.js",
-  "bin": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "tsc && node dist/index.js",
-    "package-exe": "tsc && pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "adm-zip": "^0.6.1",
-    "basic-ftp": "^6.2.1",
-    "dotenv": "^16.4.5",
-    "fast-xml-parser": "^5.11.1",
-    "mqtt": "^5.3.5",
-    "ws": "^8.21.3"
-  },
-  "devDependencies": {
-    "pkg": "^5.8.1",
-    "typescript": "^5.3.3"
-  }
+﻿{
+    "name":  "desktop-agent",
+    "version":  "1.0.0",
+    "description":  "Filamap Desktop Agent for Bambu Lab A1",
+    "main":  "dist/index.js",
+    "bin":  "dist/index.js",
+    "scripts":  {
+                    "build":  "tsc",
+                    "start":  "tsc \u0026\u0026 node dist/index.js",
+                    "package-exe":  "tsc \u0026\u0026 pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe",
+                    "test":  "tsc \u0026\u0026 node --test dist/consumption.test.js"
+                },
+    "dependencies":  {
+                         "@supabase/supabase-js":  "^2.39.0",
+                         "adm-zip":  "^0.6.1",
+                         "basic-ftp":  "^6.2.1",
+                         "dotenv":  "^16.4.5",
+                         "fast-xml-parser":  "^5.11.1",
+                         "mqtt":  "^5.3.5",
+                         "ws":  "^8.21.3"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^26.6.2",
+                            "pkg":  "^5.8.1",
+                            "typescript":  "^5.3.3"
+                        }
 }

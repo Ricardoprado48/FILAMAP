@@ -69,44 +69,101 @@ async function discoverPrinterIp(): Promise<string> {
   if (PRINTER_IP) return PRINTER_IP;
 
   console.log("🔍 Procurando impressora Bambu Lab automaticamente na rede local...");
+
   return new Promise((resolve) => {
-    const socket = dgram.createSocket("udp4");
+    const ports = [2021, 1990];
+    const sockets: dgram.Socket[] = [];
     let resolved = false;
 
-    socket.on("error", () => {
-      socket.close();
-      if (!resolved) { resolved = true; resolve(""); }
-    });
-
-    socket.bind(() => {
-      try { socket.setBroadcast(true); } catch (e) {}
-      const message = Buffer.from("BBLP");
-      socket.send(message, 0, message.length, 2021, "255.255.255.255", (err) => {
-        if (err && !resolved) { socket.close(); resolved = true; resolve(""); }
-      });
-    });
-
-    socket.on("message", (msg, rinfo) => {
-      const text = msg.toString();
-      if ((text.includes("BBLP") || text.includes(PRINTER_SERIAL)) && !resolved) {
-        resolved = true;
-        socket.close();
-        console.log(`✅ Impressora encontrada automaticamente no IP: ${rinfo.address}`);
-        resolve(rinfo.address);
+    function cleanup() {
+      for (const socket of sockets) {
+        try {
+          socket.close();
+        } catch (_) {}
       }
-    });
+    }
+
+    function finish(ip: string) {
+      if (resolved) return;
+
+      resolved = true;
+      cleanup();
+
+      if (ip) {
+        console.log(`✅ Impressora encontrada automaticamente no IP: ${ip}`);
+      }
+
+      resolve(ip);
+    }
+
+    function handleMessage(msg: Buffer, rinfo: dgram.RemoteInfo) {
+      const text = msg.toString("utf8");
+
+      const isBambu =
+        text.includes("urn:bambulab-com:device:3dprinter") ||
+        text.toLowerCase().includes("devmodel.bambu.com") ||
+        text.includes(PRINTER_SERIAL);
+
+      if (!isBambu) return;
+
+      const usnMatch = text.match(/^USN:\s*(.+)$/im);
+      const announcedSerial = usnMatch?.[1]?.trim() ?? "";
+
+      if (
+        announcedSerial &&
+        PRINTER_SERIAL &&
+        announcedSerial !== PRINTER_SERIAL &&
+        !announcedSerial.includes(PRINTER_SERIAL)
+      ) {
+        return;
+      }
+
+      let detectedIp = rinfo.address;
+
+      const locationMatch = text.match(/^LOCATION:\s*(.+)$/im);
+
+      if (locationMatch?.[1]) {
+        const location = locationMatch[1].trim();
+        const ipMatch = location.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+
+        if (ipMatch?.[0]) {
+          detectedIp = ipMatch[0];
+        }
+      }
+
+      finish(detectedIp);
+    }
+
+    for (const port of ports) {
+      try {
+        const socket = dgram.createSocket({
+          type: "udp4",
+          reuseAddr: true,
+        });
+
+        sockets.push(socket);
+
+        socket.on("error", (error) => {
+          console.warn(
+            `⚠️ Falha ao escutar descoberta Bambu na porta ${port}: ${error.message}`
+          );
+        });
+
+        socket.on("message", handleMessage);
+
+        socket.bind(port, "0.0.0.0", () => {
+          try {
+            socket.addMembership("239.255.255.250");
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }
 
     setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        try { socket.close(); } catch (e) {}
-        resolve("");
-      }
-    }, 4000);
+      finish("");
+    }, 12000);
   });
 }
-
-// Extrai gramatura estimada do nome do arquivo ou metadados se o fatiador incluir (ex: "peca_15g.gcode")
 function extractGramsFromName(taskName: string): number | null {
   const match = taskName.match(/_(\d+(?:\.\d+)?)g/i) || taskName.match(/(\d+(?:\.\d+)?)g\b/i);
   if (match && match[1]) {
@@ -200,16 +257,82 @@ async function startAgent() {
     let activeSlotIndex = 0;
     let lastSyncTime = 0;
 
+    let rediscoveryInProgress = false;
+    let statusPushInterval: NodeJS.Timeout | null = null;
+
+    async function rediscoverPrinter() {
+      if (rediscoveryInProgress || client.connected) return;
+
+      rediscoveryInProgress = true;
+      const previousIp = PRINTER_IP;
+
+      try {
+        console.warn("🔍 Conexão MQTT perdida. Procurando a impressora novamente na rede...");
+
+        while (!client.connected) {
+          // Força nova descoberta em vez de reutilizar o IP conhecido.
+          PRINTER_IP = "";
+
+          const newIp = await discoverPrinterIp();
+
+          // A conexão pode ter voltado enquanto a descoberta estava em andamento.
+          if (client.connected) {
+            PRINTER_IP = previousIp;
+            return;
+          }
+
+          if (newIp) {
+            PRINTER_IP = newIp;
+
+            client.options.host = newIp;
+            client.options.hostname = newIp;
+
+            if (newIp === previousIp) {
+              console.log(`✅ Impressora reencontrada no mesmo IP: ${newIp}`);
+            } else {
+              console.log(`✅ Impressora reencontrada. IP atualizado: ${previousIp} -> ${newIp}`);
+            }
+
+            if (!client.reconnecting) {
+              client.reconnect();
+            }
+
+            return;
+          }
+
+          PRINTER_IP = previousIp;
+          console.warn("⚠️ Impressora ainda não encontrada. Nova tentativa em 15 segundos...");
+          await new Promise(resolve => setTimeout(resolve, 15000));
+        }
+      } catch (error: any) {
+        PRINTER_IP = previousIp;
+        console.error(
+          "❌ Falha durante a redescoberta da impressora:",
+          error?.message ?? error
+        );
+      } finally {
+        rediscoveryInProgress = false;
+      }
+    }
+
     client.on("connect", () => {
-      console.log("✅ Conectado ao broker MQTT da Bambu Lab A1!");
+      console.log(`✅ Conectado ao broker MQTT da Bambu Lab A1 em ${PRINTER_IP}!`);
       updateStatus(printer.id, true);
+
       client.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
-      setInterval(() => { if (client.connected) requestStatusPush(); }, 10000);
+
+      if (!statusPushInterval) {
+        statusPushInterval = setInterval(() => {
+          if (client.connected) requestStatusPush();
+        }, 10000);
+      }
     });
 
     client.on("close", () => {
       console.log("🔌 Conexão MQTT fechada.");
       updateStatus(printer.id, false);
+
+      void rediscoverPrinter();
     });
 
     client.on("message", async (_topic, payload) => {
@@ -489,3 +612,5 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+
+

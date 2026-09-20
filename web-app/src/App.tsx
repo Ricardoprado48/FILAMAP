@@ -9,6 +9,13 @@ import { isPrinterOnline } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 import { filterInventory, groupInventoryByMaterial } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
+import {
+  fetchPrinters,
+  fetchActiveSlots,
+  fetchInventory,
+  fetchCatalog,
+  fetchPrintLogs,
+} from "./services/dataService";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -109,28 +116,34 @@ export default function App() {
   async function loadData() {
     if (!session) return;
 
-    const { data: pData } = await supabase.from("printers").select("*");
+    const pData = await fetchPrinters();
+
     if (pData && pData.length > 0) {
       setPrinters(pData);
-      const printerId = pData[0].id;
-      const { data: slotData } = await supabase.from("ams_slots").select("slot_index, spool:spools(*)").eq("printer_id", printerId);
-      if (slotData) {
-        const slotsMap: Record<number, Spool | null> = { 0: null, 1: null, 2: null, 3: null };
-        slotData.forEach((s: any) => { slotsMap[s.slot_index] = s.spool; });
+
+      const slotsMap =
+        await fetchActiveSlots(pData[0].id);
+
+      if (slotsMap) {
         setActiveSlots(slotsMap);
       }
     }
 
-    const { data: invData } = await supabase.from("spools").select("*").order("color_name", { ascending: true });
-    if (invData) setInventory(invData);
+    const invData = await fetchInventory();
+    if (invData) {
+      setInventory(invData);
+    }
 
-    const { data: catData } = await supabase.from("catalog_items").select("*");
-    if (catData) setCatalog(catData);
+    const catData = await fetchCatalog();
+    if (catData) {
+      setCatalog(catData);
+    }
 
-    const { data: logsData } = await supabase.from("print_logs").select("*, spool:spools(*)").order("completed_at", { ascending: false }).limit(10);
-    if (logsData) setPrintLogs(logsData);
+    const logsData = await fetchPrintLogs();
+    if (logsData) {
+      setPrintLogs(logsData);
+    }
   }
-
   useEffect(() => {
     if (session) {
       loadData();
@@ -1148,6 +1161,8 @@ export default function App() {
     </div>
   );
 }
+
+
 
 
 

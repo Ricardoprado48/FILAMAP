@@ -1,7 +1,7 @@
 ﻿import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeConsumptionPerSlot, computeFinalGrams } from "./consumption";
+import { computeConsumptionPerSlot, computeFinalGrams, buildJobConsumptionItems } from "./consumption";
 import type { FilamentSliceInfo } from "./ftpsParser";
 
 function slice(
@@ -193,5 +193,122 @@ test("final grams: desconto nunca produz consumo negativo", () => {
     computeFinalGrams(5, 10, 100, "exact"),
     0
   );
+});
+
+test("build items: associa corretamente spool ao slot", () => {
+  const perSlot = new Map([
+    [0, { grams: 30, quality: "exact" as const, weightDiscount: 0 }],
+    [1, { grams: 20, quality: "exact" as const, weightDiscount: 0 }],
+  ]);
+
+  const spoolBySlot = new Map<number, string | null>([
+    [0, "spool-a"],
+    [1, "spool-b"],
+  ]);
+
+  const items = buildJobConsumptionItems(
+    perSlot,
+    spoolBySlot,
+    100
+  );
+
+  assert.deepEqual(items, [
+    {
+      spool_id: "spool-a",
+      slot_index: 0,
+      grams: 30,
+      consumption_quality: "exact",
+      orphan_slot: false,
+    },
+    {
+      spool_id: "spool-b",
+      slot_index: 1,
+      grams: 20,
+      consumption_quality: "exact",
+      orphan_slot: false,
+    },
+  ]);
+});
+
+test("build items: slot sem spool vira orphan_slot", () => {
+  const perSlot = new Map([
+    [2, { grams: 15, quality: "exact" as const, weightDiscount: 0 }],
+  ]);
+
+  const spoolBySlot = new Map<number, string | null>();
+
+  const items = buildJobConsumptionItems(
+    perSlot,
+    spoolBySlot,
+    100
+  );
+
+  assert.deepEqual(items[0], {
+    spool_id: null,
+    slot_index: 2,
+    grams: 15,
+    consumption_quality: "exact",
+    orphan_slot: true,
+  });
+});
+
+test("build items: unknown nunca produz gramas para débito", () => {
+  const perSlot = new Map([
+    [0, { grams: 50, quality: "unknown" as const, weightDiscount: 0 }],
+  ]);
+
+  const spoolBySlot = new Map<number, string | null>([
+    [0, "spool-a"],
+  ]);
+
+  const items = buildJobConsumptionItems(
+    perSlot,
+    spoolBySlot,
+    100
+  );
+
+  assert.equal(items[0].grams, 0);
+  assert.equal(items[0].consumption_quality, "unknown");
+  assert.equal(items[0].orphan_slot, false);
+});
+
+test("build items: impressão parcial aplica percentual antes da RPC", () => {
+  const perSlot = new Map([
+    [0, { grams: 40, quality: "exact" as const, weightDiscount: 4 }],
+  ]);
+
+  const spoolBySlot = new Map<number, string | null>([
+    [0, "spool-a"],
+  ]);
+
+  const items = buildJobConsumptionItems(
+    perSlot,
+    spoolBySlot,
+    50
+  );
+
+  assert.equal(items[0].grams, 18);
+});
+
+test("build items: multicolor preserva um item por slot", () => {
+  const perSlot = new Map([
+    [0, { grams: 25, quality: "exact" as const, weightDiscount: 0 }],
+    [2, { grams: 10, quality: "exact" as const, weightDiscount: 0 }],
+  ]);
+
+  const spoolBySlot = new Map<number, string | null>([
+    [0, "spool-a"],
+    [2, "spool-c"],
+  ]);
+
+  const items = buildJobConsumptionItems(
+    perSlot,
+    spoolBySlot,
+    100
+  );
+
+  assert.equal(items.length, 2);
+  assert.equal(items[0].slot_index, 0);
+  assert.equal(items[1].slot_index, 2);
 });
 

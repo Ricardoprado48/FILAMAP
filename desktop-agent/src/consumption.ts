@@ -126,3 +126,32 @@ export function computeFinalGrams(
   );
 }
 
+export function buildJobConsumptionItems(
+  perSlot: Map<number, SlotConsumption>,
+  spoolBySlot: Map<number, string | null>,
+  percentExecuted: number
+): JobConsumptionItem[] {
+  const items: JobConsumptionItem[] = [];
+
+  for (const [slotIdx, { grams, quality, weightDiscount }] of perSlot) {
+    const spoolId = spoolBySlot.get(slotIdx) ?? null;
+
+    const finalGrams = computeFinalGrams(
+      grams,
+      weightDiscount,
+      percentExecuted,
+      quality
+    );
+
+    items.push({
+      spool_id: spoolId,
+      slot_index: slotIdx,
+      grams: finalGrams,
+      consumption_quality: quality,
+      orphan_slot: !spoolId,
+    });
+  }
+
+  return items;
+}
+

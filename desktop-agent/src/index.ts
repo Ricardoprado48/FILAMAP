@@ -9,7 +9,7 @@ import dgram from "node:dgram";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { computeConsumptionPerSlot, computeFinalGrams } from "./consumption";
+import { computeConsumptionPerSlot, buildJobConsumptionItems } from "./consumption";
 import type { JobConsumptionItem } from "./consumption";
 
 dotenv.config();
@@ -504,29 +504,19 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
       .in("slot_index", Array.from(perSlot.keys()));
     const spoolBySlot = new Map<number, string | null>((slotRows || []).map((r: any) => [r.slot_index, r.spool_id]));
 
-    const items: JobConsumptionItem[] = [];
-    for (const [slotIdx, { grams, quality, weightDiscount }] of perSlot) {
-      const finalGrams = computeFinalGrams(
-        grams,
-        weightDiscount,
-        percentExecuted,
-        quality
-      );
+    const items = buildJobConsumptionItems(
+      perSlot,
+      spoolBySlot,
+      percentExecuted
+    );
 
-      const spoolId = spoolBySlot.get(slotIdx) ?? null;
-      items.push({
-        spool_id: spoolId,
-        slot_index: slotIdx,
-        grams: finalGrams,
-        consumption_quality: quality,
-        orphan_slot: !spoolId,
-      });
-
-      if (!spoolId) {
-        console.warn(`⚠️ Slot ${slotIdx} usado no job mas sem spool_id em ams_slots -- log órfão, sem desconto (${finalGrams}g não debitados de ninguém).`);
+    for (const item of items) {
+      if (item.orphan_slot) {
+        console.warn(
+          `⚠️ Slot ${item.slot_index} usado no job mas sem spool_id em ams_slots -- log órfão, sem desconto (${item.grams}g não debitados de ninguém).`
+        );
       }
     }
-
     // Chamada única e atômica: idempotência, checagem de dono, desconto de
     // cada spool e inserção de todas as linhas de log -- tudo ou nada.
     // Substitui o UPDATE direto + insert separado que existia antes.
@@ -553,6 +543,7 @@ async function updateStatus(printerId: string, isOnline: boolean) {
 }
 
 startAgent();
+
 
 
 

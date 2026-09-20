@@ -5,12 +5,12 @@ import mqtt from "mqtt";
 import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
-import dgram from "node:dgram";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 import { computeConsumptionPerSlot, buildJobConsumptionItems } from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
+import { discoverPrinterIp } from "./printerDiscovery";
 import type { JobConsumptionItem } from "./consumption";
 
 dotenv.config();
@@ -68,105 +68,6 @@ function saveJobState(state: ActiveJobState | null) {
 
 let currentJob: ActiveJobState | null = loadJobState();
 
-async function discoverPrinterIp(): Promise<string> {
-  if (PRINTER_IP) return PRINTER_IP;
-
-  console.log("🔍 Procurando impressora Bambu Lab automaticamente na rede local...");
-
-  return new Promise((resolve) => {
-    const ports = [2021, 1990];
-    const sockets: dgram.Socket[] = [];
-    let resolved = false;
-
-    function cleanup() {
-      for (const socket of sockets) {
-        try {
-          socket.close();
-        } catch (_) {}
-      }
-    }
-
-    function finish(ip: string) {
-      if (resolved) return;
-
-      resolved = true;
-      cleanup();
-
-      if (ip) {
-        console.log(`✅ Impressora encontrada automaticamente no IP: ${ip}`);
-      }
-
-      resolve(ip);
-    }
-
-    function handleMessage(msg: Buffer, rinfo: dgram.RemoteInfo) {
-      const text = msg.toString("utf8");
-
-      const isBambu =
-        text.includes("urn:bambulab-com:device:3dprinter") ||
-        text.toLowerCase().includes("devmodel.bambu.com") ||
-        text.includes(PRINTER_SERIAL);
-
-      if (!isBambu) return;
-
-      const usnMatch = text.match(/^USN:\s*(.+)$/im);
-      const announcedSerial = usnMatch?.[1]?.trim() ?? "";
-
-      if (
-        announcedSerial &&
-        PRINTER_SERIAL &&
-        announcedSerial !== PRINTER_SERIAL &&
-        !announcedSerial.includes(PRINTER_SERIAL)
-      ) {
-        return;
-      }
-
-      let detectedIp = rinfo.address;
-
-      const locationMatch = text.match(/^LOCATION:\s*(.+)$/im);
-
-      if (locationMatch?.[1]) {
-        const location = locationMatch[1].trim();
-        const ipMatch = location.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-
-        if (ipMatch?.[0]) {
-          detectedIp = ipMatch[0];
-        }
-      }
-
-      finish(detectedIp);
-    }
-
-    for (const port of ports) {
-      try {
-        const socket = dgram.createSocket({
-          type: "udp4",
-          reuseAddr: true,
-        });
-
-        sockets.push(socket);
-
-        socket.on("error", (error) => {
-          console.warn(
-            `⚠️ Falha ao escutar descoberta Bambu na porta ${port}: ${error.message}`
-          );
-        });
-
-        socket.on("message", handleMessage);
-
-        socket.bind(port, "0.0.0.0", () => {
-          try {
-            socket.addMembership("239.255.255.250");
-          } catch (_) {}
-        });
-      } catch (_) {}
-    }
-
-    setTimeout(() => {
-      finish("");
-    }, 12000);
-  });
-}
 function extractGramsFromName(taskName: string): number | null {
   const match = taskName.match(/_(\d+(?:\.\d+)?)g/i) || taskName.match(/(\d+(?:\.\d+)?)g\b/i);
   if (match && match[1]) {
@@ -189,7 +90,7 @@ async function startAgent() {
   }
 
   if (!PRINTER_IP) {
-    PRINTER_IP = await discoverPrinterIp();
+    PRINTER_IP = await discoverPrinterIp(PRINTER_SERIAL);
   }
 
   if (!PRINTER_IP) {
@@ -288,7 +189,7 @@ async function startAgent() {
           // Força nova descoberta em vez de reutilizar o IP conhecido.
           PRINTER_IP = "";
 
-          const newIp = await discoverPrinterIp();
+          const newIp = await discoverPrinterIp(PRINTER_SERIAL);
 
           const decision = decideRediscovery({
             rediscoveryInProgress: false,

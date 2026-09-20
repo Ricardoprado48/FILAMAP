@@ -1,4 +1,4 @@
-# 07 — Estado Atual do Projeto
+﻿# 07 — Estado Atual do Projeto
 
 **Snapshot auditado:** 18/09/2026  
 **Base:** conteúdo do ZIP `desktop-agent.zip` fornecido para auditoria.
@@ -262,3 +262,109 @@ Antes de acrescentar novas funcionalidades de negócio, estabilizar o núcleo de
 5. ~~decidir política explícita de consumo quando não houver dado autoritativo~~ — feito em 20/09/2026 (cascata de 4 níveis);
 6. fechar leitura NFC/deep link (ainda pendente — só o `?tag=` no carregamento);
 7. somente então evoluir onboarding e experiência comercial.
+
+<!-- AUTO: -->
+
+## Estado consolidado — Níveis 1 e 2 concluídos
+
+Atualização: 20/09/2026
+
+### Nível 1 — Confiabilidade do dado ✅
+
+Concluído e validado:
+
+- consumo multicolor considerando os slots/spools efetivamente usados no job;
+- finalização atômica do job através da RPC `finalize_print_job`;
+- idempotência por `job_id`, evitando desconto duplicado em reprocessamento;
+- persistência do job ativo em `agent-state.json`;
+- classificação de consumo:
+  - `exact`;
+  - `estimated_filename`;
+  - `estimated_duration`;
+  - `unknown`;
+- suporte a `orphan_slot` quando um slot utilizado não possui spool associado;
+- índice único `print_logs_job_spool_uniq`;
+- `needs_weighing` preservado por compatibilidade e derivado do nível `unknown`.
+
+### Nível 2A — Robustez de rede ✅
+
+A redescoberta automática da impressora está implementada e validada.
+
+Fluxo validado:
+
+1. conexão MQTT é perdida;
+2. Agent inicia descoberta SSDP da Bambu Lab;
+3. localiza novamente a impressora pelo serial;
+4. identifica eventual novo endereço IP;
+5. atualiza o host MQTT;
+6. reconecta automaticamente.
+
+Teste real executado:
+
+- IP anterior: `192.168.15.13`;
+- novo IP encontrado: `192.168.15.17`;
+- reconexão automática concluída sem reiniciar o Agent.
+
+Também foi removida a concorrência entre a reconexão automática do MQTT.js e a rotina própria de redescoberta, deixando apenas uma tentativa controlada.
+
+Commits relacionados:
+
+- `e55faac` — `feat: add automatic printer network rediscovery`
+- `0a52b7c` — `fix: prevent duplicate mqtt rediscovery attempts`
+
+### Nível 2B — Reconciliação das migrations ✅
+
+O histórico de migrations foi reconciliado com o schema remoto.
+
+Principais correções:
+
+- criada `0015_bootstrap_missing_dependencies.sql`;
+- bootstrap passou a criar antes da migration `002`:
+  - `catalog_items`;
+  - `print_logs`;
+  - `filament_presets`;
+  - `ams_slots.user_id`;
+- `005_reconciliation_schema.sql` simplificada para reconciliação complementar;
+- removida a migration inválida `20260918_add_consumption_quality.sql`;
+- migrations de 20/09 receberam versões únicas:
+  - `20260920190000_add_print_logs_job_tracking.sql`;
+  - `20260920190100_add_nfc_written_at.sql`;
+  - `20260920190200_add_printers_last_seen_at.sql`;
+- schema local e remoto ficaram alinhados;
+- migrations aplicadas com sucesso no Supabase remoto.
+
+Validado no banco remoto:
+
+- `print_logs.job_id`;
+- `print_logs.consumption_quality`;
+- `print_logs.orphan_slot`;
+- `printers.last_seen_at`;
+- `spools.nfc_written_at`;
+- RPC `finalize_print_job`.
+
+Commit relacionado:
+
+- `df64a72` — `fix: reconcile database migration history`
+
+### Estado atual
+
+Níveis 1 e 2 estão concluídos e publicados em `main`.
+
+O Desktop Agent compila e inicia normalmente com:
+
+`npm start`
+
+O Agent também foi validado reconectando automaticamente à Bambu Lab A1 após mudança de IP.
+
+### Próximo nível
+
+Nível 3 — maturidade de produto.
+
+Itens conhecidos:
+
+- adicionar testes automatizados;
+- reduzir o monólito de `App.tsx`;
+- revisar armazenamento do Access Code antes de distribuição do Agent para terceiros.
+
+<!-- AUTO: -->
+

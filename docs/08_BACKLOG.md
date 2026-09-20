@@ -1,4 +1,4 @@
-# 08 — Backlog Priorizado
+﻿# 08 — Backlog Priorizado
 
 Este backlog foi criado a partir do código auditado em 18/09/2026. Prioridade indica risco técnico/operacional, não esforço.
 
@@ -175,3 +175,80 @@ Após saldo confiável, adicionar alertas e previsão.
 - análise de desperdício;
 - compras/reposição;
 - rastreabilidade por lote.
+
+<!-- AUTO: -->
+
+## Atualização de backlog — 20/09/2026
+
+### Concluído — retirar das pendências
+
+Os itens abaixo NÃO devem mais ser tratados como backlog:
+
+- [x] Consumo multicolor correto.
+- [x] Finalização atômica e idempotente.
+- [x] Política de qualidade do consumo.
+- [x] Persistência e identificação de jobs.
+- [x] Tratamento de slots órfãos.
+- [x] Redescoberta automática da impressora após mudança de IP.
+- [x] Reconciliação do histórico de migrations.
+- [x] Criação de bootstrap reproduzível do schema.
+- [x] Versões únicas para migrations.
+- [x] Alinhamento das migrations locais com o Supabase remoto.
+
+### Nível 3 — Maturidade de produto
+
+#### Testes automatizados
+
+Status: pendente.
+
+Objetivo:
+
+Criar proteção contra regressões nas áreas críticas do Filamap.
+
+Prioridades iniciais:
+
+1. cálculo de consumo;
+2. `finalizeJob`;
+3. jobs multicolor;
+4. idempotência;
+5. reconexão/redescoberta;
+6. regras de estoque.
+
+#### Refatoração do Web App
+
+Status: pendente.
+
+Problema:
+
+`App.tsx` concentra responsabilidades demais.
+
+Objetivo:
+
+Extrair gradualmente componentes, hooks e regras de domínio sem realizar uma reescrita geral do frontend.
+
+A refatoração deve ocorrer por partes e com comportamento preservado.
+
+#### Segurança do Access Code da impressora
+
+Status: aceitável para uso próprio, pendente antes de distribuição pública.
+
+Situação atual:
+
+O Access Code é configurado localmente por variável de ambiente.
+
+Antes de distribuir o Desktop Agent para terceiros, revisar:
+
+- armazenamento seguro;
+- onboarding;
+- proteção das credenciais;
+- logs;
+- empacotamento do Agent.
+
+### Regra para futuras tarefas
+
+Antes de iniciar nova feature, verificar se ela pertence ao Nível 3 ou se é uma correção necessária para preservar confiabilidade, dados ou operação.
+
+Não reabrir Níveis 1 ou 2 como pendentes sem uma regressão comprovada.
+
+<!-- AUTO: -->
+

@@ -1,4 +1,4 @@
-# 09 — Changelog Técnico
+﻿# 09 — Changelog Técnico
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
@@ -697,3 +697,82 @@ Sem data de commit disponível no pacote, já existem:
 - FTPS + parser 3MF;
 - baixa automática + `print_logs`;
 - executável Windows do Agent.
+
+<!-- AUTO: -->
+
+## 20/09/2026 — Estabilização dos Níveis 1 e 2
+
+### Confiabilidade de consumo
+
+Finalizada a implementação do Nível 1.
+
+Entregas:
+
+- consumo multicolor;
+- finalização atômica;
+- idempotência;
+- `job_id`;
+- `consumption_quality`;
+- `orphan_slot`;
+- política de quatro níveis de qualidade;
+- RPC `finalize_print_job`.
+
+### Redescoberta automática de rede
+
+Implementada redescoberta SSDP da impressora Bambu Lab.
+
+O Desktop Agent agora:
+
+- detecta perda da conexão MQTT;
+- procura novamente a impressora;
+- identifica mudança de IP;
+- atualiza a conexão;
+- reconecta automaticamente.
+
+Teste real:
+
+`192.168.15.13 -> 192.168.15.17`
+
+Commits:
+
+- `e55faac` — `feat: add automatic printer network rediscovery`
+- `0a52b7c` — `fix: prevent duplicate mqtt rediscovery attempts`
+
+### Reconciliação de banco e migrations
+
+Corrigido o drift entre schema real do Supabase e histórico versionado.
+
+Alterações:
+
+- criada migration de bootstrap `0015`;
+- corrigida a dependência anterior à `002`;
+- `filament_presets`, `catalog_items` e `print_logs` passaram a fazer parte da reconstrução versionada;
+- corrigida criação de `ams_slots.user_id`;
+- removida migration inválida de `consumption_quality`;
+- migrations de 20/09 passaram a utilizar versões únicas;
+- `005` foi transformada em reconciliação complementar idempotente.
+
+O `supabase migration list --linked` foi validado com histórico local e remoto alinhados.
+
+Também foram confirmados no schema remoto:
+
+- `job_id`;
+- `consumption_quality`;
+- `orphan_slot`;
+- `last_seen_at`;
+- `nfc_written_at`;
+- `finalize_print_job`.
+
+Commit:
+
+- `df64a72` — `fix: reconcile database migration history`
+
+### Status após estabilização
+
+- Nível 1: concluído.
+- Nível 2A: concluído.
+- Nível 2B: concluído.
+- Próxima frente: Nível 3 — maturidade de produto.
+
+<!-- AUTO: -->
+

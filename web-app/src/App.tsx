@@ -7,6 +7,7 @@ import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
+import { filterInventory, groupInventoryByMaterial } from "./utils/inventory";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -413,12 +414,11 @@ export default function App() {
   // confirmada (ex.: veio de importação em lote via seed_spools.ts). "none":
   // sem nfc_uid nenhum.
 
-  const filteredInventory = inventory.filter((item) => {
-    const matchesSearch = item.color_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          item.brand.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesMat = filterMaterial === "TODOS" || item.material === filterMaterial;
-    return matchesSearch && matchesMat;
-  });
+  const filteredInventory = filterInventory(
+    inventory,
+    searchQuery,
+    filterMaterial
+  );
 
   const filteredCatalog = catalog
     .filter((item) =>
@@ -427,12 +427,8 @@ export default function App() {
     )
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
 
-  const groupedByMaterial = filteredInventory.reduce((acc, spool) => {
-    const mat = (spool.material || "OUTROS").toUpperCase();
-    if (!acc[mat]) acc[mat] = [];
-    acc[mat].push(spool);
-    return acc;
-  }, {} as Record<string, Spool[]>);
+  const groupedByMaterial =
+    groupInventoryByMaterial(filteredInventory);
 
   const pendingWeighingLogs = printLogs.filter((l) => l.needs_weighing);
   const writerSpool = inventory.find((s) => s.id === writerSpoolId) || null;
@@ -1147,6 +1143,7 @@ export default function App() {
     </div>
   );
 }
+
 
 
 

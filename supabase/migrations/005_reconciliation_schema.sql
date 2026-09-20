@@ -1,10 +1,10 @@
--- Migration 005: Reconciliação do Schema Real do Filamap
+-- Migration 005: Reconciliaï¿½ï¿½o do Schema Real do Filamap
 -- Data: 2026-09-18
 
--- 1. Garantir extensões necessárias
+-- 1. Garantir extensï¿½es necessï¿½rias
 create extension if not exists "uuid-ossp";
 
--- 2. Tabela de Catálogo de Peças (utilizada pelo Simulador/Orçamento)
+-- 2. Tabela de Catï¿½logo de Peï¿½as (utilizada pelo Simulador/Orï¿½amento)
 create table if not exists public.catalog_items (
     id uuid default uuid_generate_v4() primary key,
     user_id uuid references auth.users(id) on delete cascade not null,
@@ -18,7 +18,7 @@ create table if not exists public.catalog_items (
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 3. Tabela de Logs de Impressão (utilizada pelo Agent e Web App)
+-- 3. Tabela de Logs de Impressï¿½o (utilizada pelo Agent e Web App)
 create table if not exists public.print_logs (
     id uuid default uuid_generate_v4() primary key,
     user_id uuid references auth.users(id) on delete cascade not null,
@@ -34,15 +34,15 @@ create table if not exists public.print_logs (
 );
 
 -- 4. Adicionar colunas faltantes na tabela spools (ex: price_paid)
-do push 
+do $$
 begin
     if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'spools' and column_name = 'price_paid') then
         alter table public.spools add column price_paid numeric default 0;
     end if;
-end push;
+end $$;
 
 -- 5. Adicionar colunas de telemetria estendida na tabela printers (usadas pelo Agent)
-do push 
+do $$
 begin
     if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'printers' and column_name = 'current_task') then
         alter table public.printers add column current_task text;
@@ -74,7 +74,7 @@ begin
     if not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'printers' and column_name = 'filament_slice_info') then
         alter table public.printers add column filament_slice_info jsonb;
     end if;
-end push;
+end $$;
 
 -- 6. Habilitar RLS (Row Level Security) nas novas tabelas
 alter table public.catalog_items enable row level security;

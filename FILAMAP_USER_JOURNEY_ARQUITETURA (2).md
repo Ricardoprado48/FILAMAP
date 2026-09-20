@@ -1892,7 +1892,17 @@ Retirar bobina
 >   confirmado com pelo menos 5 pontos de falha distintos, incluindo dois
 >   blocos de sintaxe SQL inválida (`do push...end push` e `DO \$\$` com
 >   barra invertida) que quebram mesmo depois de resolver a ordem das
->   tabelas. Ver `docs/08_BACKLOG.md` (P0.1) e `docs/09_CHANGELOG.md`.
+>   tabelas. **Os dois blocos de sintaxe inválida foram corrigidos em
+>   20/09/2026** (mesma data, investigação motivada por um erro real do
+>   usuário — `could not find the nfc_written_at column of spools in the
+>   schema cache` — que levou a confirmar que `20260920_add_nfc_written_at.sql`
+>   em si não tem bug nenhum; a causa mais provável é essa mesma quebra de
+>   sintaxe em `005_reconciliation_schema.sql` interrompendo uma aplicação
+>   em lote antes de alcançar aquele arquivo). O problema da tabela
+>   `filament_presets` nunca criada por nenhuma migration **continua em
+>   aberto** — não foi tocado, por depender de confirmar a estrutura real
+>   dela no banco de produção antes de inventar uma migration pra ela. Ver
+>   `docs/08_BACKLOG.md` (P0.1) e `docs/09_CHANGELOG.md`.
 > - ~~**A RPC segura que foi endurecida não é usada** na baixa real~~
 >   **Corrigido em 20/09/2026, de forma diferente do esperado:** em vez de
 >   passar a usar `deduct_spool_filament()`, foi criada uma função nova

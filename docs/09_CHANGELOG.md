@@ -2,6 +2,99 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — Investigação: `could not find the nfc_written_at column of spools in the schema cache`
+
+**Pergunta:** o erro reportado ao aplicar `20260920_add_nfc_written_at.sql`
+no Supabase real é um bug de sintaxe (como o de
+`20260918_add_consumption_quality.sql`) ou só falta de aplicação manual?
+
+**Investigado de verdade contra Postgres local** (banco descartável,
+`auth.users`/`auth.uid()` stubados como nas investigações anteriores do
+P0.1):
+
+1. `20260920_add_nfc_written_at.sql` sozinha, direto após `001` (a tabela
+   `spools` já existe): aplica sem erro (`ALTER TABLE` / `COMMENT`,
+   `exit 0`), e a coluna `nfc_written_at` aparece corretamente em
+   `\d public.spools` com o tipo/comentário esperados. **Este arquivo não
+   tem bug de sintaxe.** A mensagem do PostgREST ("could not find the
+   column ... in the schema cache") é consistente com a coluna
+   simplesmente não existir de fato no banco real — não é um erro de
+   cache falso-positivo.
+2. Rodando a cadeia completa **na ordem documentada como mínima em
+   P0.1** (`001 → 004 → 005 → 20260918 → 20260920_add_print_logs_job_tracking
+   → 20260920_add_nfc_written_at → 20260920_add_printers_last_seen_at →
+   002 → 003`) contra um banco vazio, a cadeia **quebra antes de chegar**
+   em `20260920_add_nfc_written_at.sql`: `005_reconciliation_schema.sql`
+   tem dois blocos `do push ... end push;` — sintaxe inválida de `DO`
+   block (correto é `DO $$ ... END $$;`) — já reportada em P0.1 ponto 4,
+   nunca corrigida até hoje. Confirmado reproduzindo o erro exato:
+   `ERROR: syntax error at or near "push"`.
+3. **Causa mais provável do erro relatado:** se as migrations foram
+   aplicadas coladas juntas numa única execução no SQL Editor do
+   Supabase (mesmo padrão já identificado no incidente `v_owner` — ver
+   entrada de 20/09/2026 abaixo), um erro de sintaxe em `005` no meio do
+   lote interrompe a execução antes de alcançar os arquivos posteriores
+   (incluindo `20260920_add_nfc_written_at.sql`, que vem depois na ordem
+   alfabética/cronológica) — a coluna nunca chega a ser criada de fato,
+   e o erro do PostgREST está certo. Não é possível confirmar 100% sem
+   saber exatamente como a aplicação foi feita no ambiente real, mas o
+   comportamento reproduzido localmente é consistente com essa hipótese
+   e com o que já foi visto no incidente anterior.
+
+**Corrigido:**
+
+- `supabase/migrations/005_reconciliation_schema.sql` — os dois blocos
+  `do push ... end push;` (linhas ~37 e ~45) corrigidos para
+  `DO $$ ... END $$;`. Validado: `005` sozinha aplica limpa contra
+  Postgres local (antes: `ERROR: syntax error at or near "push"`, agora:
+  `DO` / `DO` / `ALTER TABLE` / `ALTER TABLE` / `CREATE POLICY` /
+  `CREATE POLICY`, sem erro).
+- `supabase/migrations/20260918_add_consumption_quality.sql` — achado
+  incidental ao usar este arquivo como referência de comparação (pedido
+  na tarefa): **não estava de fato corrigido**, apesar de citado como já
+  corrigido — a Seção 62 do documento de arquitetura só registra que a
+  cascata de 4 níveis foi implementada em código (`index.ts`), não que
+  esta migration tenha sido corrigida; ela continuava com `DO \$\$ ...
+  END \$\$;` (barra invertida antes dos cifrões — dollar-quoting
+  inválido) e sem `;` depois de `END IF`. Corrigida a sintaxe (removida a
+  barra invertida, adicionado o `;` faltante). **Não** corrigido o alvo
+  errado (`public.print_jobs` em vez de `public.print_logs`) de propósito
+  — essa migration já está superada por
+  `20260920_add_print_logs_job_tracking.sql` (que adiciona
+  `consumption_quality` corretamente em `print_logs`, conforme o próprio
+  cabeçalho desse arquivo já documentava); `print_jobs` é tabela legada
+  sem nenhuma referência em `web-app/src` ou `desktop-agent/src`
+  (confirmado por busca no código), então deixar a migration antiga
+  agindo só nela é inofensivo — só corrigi o que quebrava a sintaxe.
+
+**Validação executada:** cadeia completa reaplicada do zero contra um
+banco Postgres local descartável, na mesma ordem documentada em P0.1: com
+as duas correções, `001 → 004 → 005 → 20260918 →
+20260920_add_print_logs_job_tracking → 20260920_add_nfc_written_at →
+20260920_add_printers_last_seen_at` aplicam todas sem erro, e
+`nfc_written_at` é confirmada presente em `information_schema.columns`
+depois disso. A cadeia **ainda quebra em `002_rls_hardening.sql`**
+(`ERROR: relation "public.filament_presets" does not exist`) — esse é o
+ponto 3 já registrado em P0.1 (tabela nunca criada por nenhuma migration)
+e **não foi tocado nesta tarefa**: não há como inventar o schema real de
+`filament_presets` sem confirmar como ela existe de fato no banco de
+produção, e isso é maior que o que foi pedido aqui.
+
+**Ação recomendada pro usuário, pra desbloquear agora:** rodar só o
+conteúdo de `20260920_add_nfc_written_at.sql` isoladamente (não colado
+junto com outras migrations) direto no SQL Editor do Supabase real —
+ele é válido e independente, não depende de nenhuma das correções acima
+para funcionar sozinho. Depois de rodar, se o PostgREST continuar
+reportando a coluna como ausente por mais alguns segundos, um reload
+manual do schema cache (`NOTIFY pgrst, 'reload schema';` ou o botão
+correspondente no dashboard) resolve — mas o mais provável, dado o que
+foi reproduzido aqui, é que a coluna realmente nunca chegou a ser criada
+no banco real.
+
+**Escopo:** só os dois arquivos de migration citados. Não toquei em `002`,
+`003`, na ordem/numeração dos arquivos, nem inventei a tabela
+`filament_presets`.
+
 ## 20/09/2026 — Descoberta em camadas + redescoberta automática do Agent (P1.2)
 
 **Investigação antes da implementação (itens (a) e (b) pedidos na

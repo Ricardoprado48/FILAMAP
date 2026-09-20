@@ -2,6 +2,62 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 20/09/2026 — `printers.is_online` travava em "ONLINE" quando o Agent morria sem aviso
+
+**Problema confirmado pelo usuário:** `printers.is_online` só era gravado
+como `true` — no login do Agent (`startAgent`, insert/update inicial),
+no heartbeat de 15s (`setInterval`) e a cada telemetria MQTT
+sincronizada. Não existia nenhum caminho que gravasse `false` quando o
+processo parava de rodar por um motivo que não fosse um Ctrl+C limpo (PC
+desligado, hibernação, queda de energia, crash) — sem ninguém escrevendo
+`false`, o app mostrava "ONLINE" indefinidamente com tudo desligado de
+verdade.
+
+- nova migration `supabase/migrations/20260920_add_printers_last_seen_at.sql`:
+  adiciona `printers.last_seen_at TIMESTAMPTZ`, nullable, sem default;
+- `desktop-agent/src/index.ts`:
+  - o heartbeat de 15s (`setInterval` já existente) passa a gravar
+    `last_seen_at: now()` no mesmo `UPDATE` que já grava `is_online:
+    true` — esse heartbeat roda independente do estado da conexão MQTT
+    com a impressora, então é o sinal mais confiável de "o processo do
+    Agent ainda está de pé";
+  - o objeto `telemetryData` do handler de mensagens MQTT (ciclo já
+    existente, no mínimo a cada 2.5s enquanto conectado) também passa a
+    incluir `last_seen_at: now()`;
+  - novo handler `gracefulShutdown` registrado em `SIGINT` e `SIGTERM`:
+    tenta gravar `is_online: false` antes de `process.exit(0)`. É só um
+    caminho rápido pro caso de encerramento limpo (Ctrl+C, `kill`) — não
+    é a proteção principal, porque não cobre queda de energia/crash/
+    hibernação (nenhum desses consegue rodar um handler de sinal);
+- `web-app/src/App.tsx`: nova constante `PRINTER_ONLINE_THRESHOLD_MS =
+  30000` e função `isPrinterOnline(printer)`, que calculam online no
+  cliente comparando `last_seen_at` com `Date.now()`. O badge
+  ONLINE/OFFLINE do cabeçalho (única leitura de status de impressora na
+  UI) passou de ler `activePrinter.is_online` direto para usar
+  `isPrinterOnline(activePrinter)`. `is_online` continua existindo na
+  tabela e sendo gravado (não removido do schema nem do Agent), só
+  deixou de ser a fonte de verdade exibida;
+  - **limiar escolhido: 30s (2× o ciclo de heartbeat de 15s).** O
+    heartbeat de 15s é o sinal de menor frequência garantida (roda mesmo
+    sem MQTT conectado), então sob operação normal o maior intervalo
+    possível entre duas gravações de `last_seen_at` é 15s. Um limiar de
+    30s dá folga pra absorver uma gravação perdida por instabilidade de
+    rede/Supabase sem piscar pra OFFLINE à toa, sem deixar a UI presa em
+    "ONLINE" por muito tempo depois que o Agent realmente parou. A tela
+    já faz polling de `printers` a cada 3s (`loadData`/`setInterval`
+    existente), então o recálculo de online/offline já acontece nessa
+    cadência, sem precisar de um relógio/timer novo só pra isso;
+- escopo: só o Agent (`index.ts`) e o badge de status no cabeçalho do
+  frontend. Nada em AMS, Orçamento, Estoque, Tags ou lógica de consumo
+  automático; nenhuma migration anterior alterada;
+- validado com `tsc --noEmit` e `npm run build` em `desktop-agent` e em
+  `web-app`, ambos sem erro (foi necessário `npm install` no
+  `desktop-agent` nesta sessão — não havia `node_modules`). Não foi
+  possível validar em hardware real (matar o processo do Agent de forma
+  não-limpa e observar o app cruzar o limiar de 30s) nesta sessão.
+- `docs/08_BACKLOG.md` (P0.6) e `docs/07_CURRENT_STATE.md` (nova seção
+  "Status online/offline da impressora") atualizados.
+
 ## 20/09/2026 — Indicador de gravação física real da tag NFC (`nfc_written_at`)
 
 **Problema:** o Estoque e o seletor da aba Tags só distinguiam "tem

@@ -51,6 +51,15 @@ O comportamento atual (`0,22 g/min` / fallback 35 g) não deve ser tratado como 
 - não baixa até obter dado melhor;
 - outra política explicitamente aprovada.
 
+### P0.6 — Status online/offline da impressora travava em "ONLINE" com o Agent morto
+
+- [x] corrigido em 20/09/2026 — `printers.last_seen_at` (migration
+  `20260920_add_printers_last_seen_at.sql`), atualizado a cada heartbeat
+  (15s) e a cada telemetria MQTT sincronizada pelo Agent; frontend calcula
+  online/offline pela recência de `last_seen_at` (limiar de 30s) em vez de
+  ler `is_online` diretamente. Ver `docs/09_CHANGELOG.md` e
+  `docs/07_CURRENT_STATE.md` (Status online/offline da impressora).
+
 ## P1 — Fechar os fluxos atuais
 
 ### P1.1 — Leitura NFC no frontend

@@ -100,15 +100,15 @@ página (nenhum parsing de `location.search`) — esse é um mecanismo
 diferente (deep link passivo via qualquer leitor NFC do SO, não a leitura
 ativa dentro do app) e segue como lacuna separada.
 
-**Risco identificado em 20/09/2026, não corrigido:** `handleWriteTag`
-(aba Tags) ignora o retorno booleano de `writeTagUrl(...)`. Se a
-gravação física na tag falhar, o código ainda assim atualiza
-`spools.nfc_uid` no banco e exibe mensagem de sucesso — divergindo
-permanentemente o conteúdo do chip físico do valor salvo no banco. Isso
-reproduz o sintoma "leitura de tag já gravada sempre cai no
-auto-cadastro de desconhecida". Ver `docs/09_CHANGELOG.md` (entrada de
-20/09) para a investigação completa; correção pendente por estar fora do
-escopo autorizado até o momento (aba Tags).
+**Risco corrigido em 20/09/2026:** `handleWriteTag` (aba Tags) ignorava o
+retorno booleano de `writeTagUrl(...)` — se a gravação física na tag
+falhasse, o código ainda assim atualizava `spools.nfc_uid` no banco e
+exibia mensagem de sucesso, divergindo permanentemente o conteúdo do
+chip físico do valor salvo no banco. Isso reproduziria o sintoma "leitura
+de tag já gravada sempre cai no auto-cadastro de desconhecida". Corrigido
+com um early-return quando `writeTagUrl` retorna `false`; o erro já era
+exibido via `nfcError` no formulário da aba Tags. Ver
+`docs/09_CHANGELOG.md` (entradas de 20/09) para a investigação completa.
 
 ### Onboarding
 

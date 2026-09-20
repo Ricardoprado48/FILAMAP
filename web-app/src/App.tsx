@@ -452,7 +452,13 @@ export default function App() {
     const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
     const finalTagId = customTagId.trim() || generateAutoTagId(writerSpool.material, writerSpool.color_name);
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
-    await writeTagUrl(fullTargetUrl);
+    const wroteToTag = await writeTagUrl(fullTargetUrl);
+    // Sem essa checagem, uma falha na gravação física (tag afastada cedo
+    // demais, permissão negada, etc.) ainda assim persistia nfc_uid no banco
+    // e mostrava "gravado com sucesso" — divergindo o chip físico do banco
+    // pra sempre. useNfc já expõe o erro em nfcError, renderizado abaixo do
+    // formulário; aqui só interrompemos antes de tocar no banco.
+    if (!wroteToTag) return;
 
     const { error } = await supabase.from("spools").update({
       nfc_uid: finalTagId,

@@ -94,12 +94,21 @@ function fakeDiscovery(result: { ip: string; serial: string }): DiscoveryPort {
 
 function useTempConfigDir(t: any): void {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-onboarding-test-"));
-  const previous = process.env.XDG_CONFIG_HOME;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousAppData = process.env.APPDATA;
+  // getConfigDir() (usado por mergeNonSecretConfig/loadNonSecretConfig) usa
+  // process.platform real -- em Windows isso lê APPDATA, não
+  // XDG_CONFIG_HOME, então os dois precisam ser sobrescritos pro tmpDir pra
+  // nunca tocar o config.json real do usuário, independente do SO que
+  // rodar o teste.
   process.env.XDG_CONFIG_HOME = tmpDir;
+  process.env.APPDATA = tmpDir;
 
   t.after(() => {
-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
-    else process.env.XDG_CONFIG_HOME = previous;
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previousAppData;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 }

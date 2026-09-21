@@ -42,11 +42,18 @@ test("resolveConfigDir: linux sem XDG_CONFIG_HOME cai para ~/.config", () => {
 test("mergeNonSecretConfig: persiste patch e preserva campos não alterados", (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-config-test-"));
   const originalXdg = process.env.XDG_CONFIG_HOME;
+  const originalAppData = process.env.APPDATA;
+  // getConfigDir() usa process.platform real (não um valor injetado), então
+  // em Windows é APPDATA que decide o diretório, não XDG_CONFIG_HOME -- os
+  // dois precisam apontar pro tmpDir pra isolar o teste em qualquer SO.
   process.env.XDG_CONFIG_HOME = tmpDir;
+  process.env.APPDATA = tmpDir;
 
   t.after(() => {
     if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = originalXdg;
+    if (originalAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = originalAppData;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -67,11 +74,15 @@ test("mergeNonSecretConfig: persiste patch e preserva campos não alterados", (t
 test("loadNonSecretConfig: retorna null se arquivo não existe", (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-config-test-empty-"));
   const originalXdg = process.env.XDG_CONFIG_HOME;
+  const originalAppData = process.env.APPDATA;
   process.env.XDG_CONFIG_HOME = tmpDir;
+  process.env.APPDATA = tmpDir;
 
   t.after(() => {
     if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = originalXdg;
+    if (originalAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = originalAppData;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

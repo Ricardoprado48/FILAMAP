@@ -2,6 +2,92 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 21/09/2026 — Onboarding comercial do Desktop Agent (v2)
+
+Branch `claude/agent-onboarding-v2`, criada a partir de `origin/main`
+(`5704d43`). Escopo exclusivo: onboarding comercial do Desktop Agent —
+Web App, migrations, consumo, descoberta de IP/reconexão MQTT existentes
+não foram alterados (só reutilizados). Relatório completo em
+`docs/11_AGENT_ONBOARDING_V2.md`.
+
+### Adicionado
+
+- `desktop-agent/src/printerDiscovery.ts` — extração mecânica (sem
+  mudança de comportamento) da descoberta SSDP que já existia dentro de
+  `index.ts`. Adiciona `discoverPrinter()`, que também expõe o serial
+  anunciado no campo `USN`, usado só pelo onboarding.
+- `desktop-agent/src/config/configStore.ts` — config não secreta
+  (e-mail, serial, último IP) persistida em `%APPDATA%\Filamap\config.json`
+  (Windows) e equivalentes em macOS/Linux.
+- `desktop-agent/src/config/secretStore.ts` — abstração `SecretStore`
+  para segredos (refresh token da sessão Supabase + Access Code da
+  impressora; senha nunca é persistida). `EnvSecretStore` cobre dev/CI.
+  Cofre comercial (Credential Manager/DPAPI/`keytar`) fica deliberadamente
+  **não implementado** — decisão de arquitetura documentada como
+  bloqueada, não tomada silenciosamente.
+- `desktop-agent/src/config/onboarding.ts` + `onboardingCli.ts` — decide o
+  que falta configurar, tenta descoberta automática do serial antes de
+  perguntar, monta o runtime config final. Lógica de decisão separada da
+  UI de terminal (interface `OnboardingPrompts` injetada), pensada para
+  ser trocável por uma tela gráfica sem reescrever a lógica.
+- `desktop-agent/src/config/supabaseDefaults.ts` — URL/anon key públicos
+  embutidos (mesmo par já no bundle do web-app).
+- `desktop-agent/README.md` — documenta o fluxo de onboarding, onde cada
+  dado fica, e o que falta para o instalador `.exe`.
+- 21 testes novos em `node:test` (mesmo framework já usado no projeto —
+  **Vitest não foi instalado**): `configStore.test.ts` (7),
+  `secretStore.test.ts` (7), `onboarding.test.ts` (9 + 2 unitários).
+- `docs/11_AGENT_ONBOARDING_V2.md` — relatório completo da sessão.
+
+### Alterado
+
+- `desktop-agent/src/index.ts` — bootstrap inicial trocado por
+  `bootstrapRuntimeConfig()`. Caminho `.env` completo (as 5 variáveis de
+  sempre) preservado byte a byte, verificado manualmente (processo vai
+  direto para `signInWithPassword`, `config.json` nunca criado). Caminho
+  sem `.env` completo usa a nova arquitetura. Autenticação passou a
+  aceitar `signInWithPassword` (senha) ou `refreshSession` (sessão salva);
+  refresh token inválido é descartado para não repetir a mesma falha
+  indefinidamente.
+- `desktop-agent/.env.example` — comentários atualizados (`.env` é
+  opcional/dev-only); nova variável opcional `SUPABASE_REFRESH_TOKEN`
+  documentada.
+- `desktop-agent/package.json` — script `test` passou a incluir os 3
+  novos arquivos de teste (lista explícita, mesmo padrão já usado).
+- `docs/07_CURRENT_STATE.md`, `docs/08_BACKLOG.md` — atualizados com o
+  que foi de fato implementado (ver seções específicas).
+
+### Corrigido durante a sessão (sem chegar a virar bug commitado)
+
+- Uma primeira tentativa de extrair a descoberta SSDP sobrescreveu
+  `desktop-agent/src/discovery.ts` (script diagnóstico standalone
+  pré-existente, documentado em `docs/01_ARCHITECTURE.md`, não integrado
+  ao Agent) sem lê-lo antes. Identificado antes de qualquer commit,
+  revertido via `git restore`/`git checkout`. O módulo novo foi criado com
+  outro nome (`printerDiscovery.ts`) para não colidir. `git diff` contra
+  `origin/main` confirma `src/discovery.ts` idêntico ao original.
+
+### Testes
+
+```
+Antes (baseline, origin/main):
+  npm test               → 24/24 passando
+  npm run test:integration → falha (sem .env -- preexistente)
+
+Depois:
+  npm test               → 45/45 passando
+  npx tsc --noEmit        → limpo
+  npm run test:integration → mesmo resultado da baseline (arquivo não tocado)
+```
+
+### Não implementado (ver `docs/11_AGENT_ONBOARDING_V2.md`, seções 9-11)
+
+- Cofre de segredos comercial do Windows (Credential Manager/DPAPI/
+  `keytar`) — 3 opções comparadas, decisão pendente do usuário.
+- Validação de ponta a ponta do assistente interativo com um usuário real
+  numa máquina Windows com impressora física.
+- Instalador gráfico, assinatura de código, auto-update.
+
 ## 20/09/2026 — Consumo multicolor + finalização idempotente/atômica + cascata de 4 níveis
 
 Três problemas que se cruzam em `finalizeJob()` (P0.2, P0.3, P0.5 do

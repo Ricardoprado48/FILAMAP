@@ -140,9 +140,28 @@ Mínimo:
 
 Eliminar necessidade do usuário editar `.env`.
 
+- [x] **implementado em 21/09/2026** (branch `claude/agent-onboarding-v2`):
+  `src/config/onboarding.ts` + `onboardingCli.ts` — assistente interativo
+  pergunta só o que falta (e-mail, senha só se não há sessão salva,
+  serial só se a descoberta SSDP não achar, Access Code), salva o que não
+  é segredo em `config.json`, roda sem `.env`. `.env` continua funcionando
+  para dev/CI, com prioridade total (comportamento antigo 100%
+  preservado). Sem terminal interativo e config incompleta, falha rápido
+  com mensagem clara em vez de travar. Ver `docs/11_AGENT_ONBOARDING_V2.md`.
+
 ### P2.2 — Armazenamento seguro do Access Code
 
 Usar mecanismo seguro do SO/credencial local em vez de arquivo texto como solução final.
+
+- [ ] **ainda não implementado, decisão documentada em 21/09/2026** — a
+  abstração `SecretStore` (`src/config/secretStore.ts`) já separa
+  segredos de config não secreta e está pronta para receber uma
+  implementação real (Credential Manager/DPAPI, `keytar`, ou
+  equivalente), mas essa implementação não foi escrita: exige escolher
+  uma dependência que muda o pipeline de empacotamento do `pkg`, decisão
+  que não deveria ser tomada sem o usuário. Enquanto isso, o Access Code
+  não sobrevive entre execuções fora do fluxo `.env` — 3 opções
+  comparadas em `docs/11_AGENT_ONBOARDING_V2.md`, seção 10.
 
 ### P2.3 — Instalador/auto-start/auto-update
 
@@ -152,7 +171,15 @@ Empacotamento robusto para Windows e, se desejado, outros sistemas.
   `desktop-agent/install-autostart.ps1` + `run-agent.ps1` +
   `uninstall-autostart.ps1`. Só o mecanismo de "iniciar sozinho no
   logon"; o resto de P2.3 (instalador de fato, auto-update) continua em
-  aberto. Ver `docs/09_CHANGELOG.md`.
+  aberto. Ver `docs/09_CHANGELOG.md`. Confirmado em 21/09/2026 que o
+  onboarding comercial (P2.1) funciona com esse mecanismo sem nenhuma
+  mudança adicional (checagem de `stdin.isTTY` evita travar quando a
+  Tarefa Agendada inicia o Agent sem terminal).
+- [ ] instalador gráfico (wizard `.exe`/MSI) — não implementado; decisão
+  de ferramenta (Inno Setup/NSIS/electron-builder) pendente do usuário.
+- [ ] assinatura de código — bloqueado por certificado externo, decisão
+  do dono do produto.
+- [ ] auto-update — não implementado, depende dos dois itens acima.
 
 ### P2.4 — Offline queue
 

@@ -368,4 +368,47 @@ Itens conhecidos:
 
 <!-- AUTO:LEVEL_1_2_STATUS_20260920:END -->
 
+<!-- AUTO:AGENT_ONBOARDING_V2_20260921:START -->
+
+## Onboarding comercial do Desktop Agent (v2)
+
+Atualização: 21/09/2026 — branch `claude/agent-onboarding-v2`, criada a
+partir de `origin/main` (`5704d43`).
+
+Item do "Próximo nível" acima — "revisar armazenamento do Access Code
+antes de distribuição do Agent para terceiros" — parcialmente endereçado:
+a arquitetura de onboarding comercial existe e funciona (config não
+secreta persistida, segredos por trás de uma abstração `SecretStore`,
+descoberta automática de serial reaproveitando SSDP, autenticação por
+refresh token em vez de senha salva), mas o cofre de segredos seguro do
+Windows (Credential Manager/DPAPI/`keytar`) continua **não implementado**
+por exigir uma decisão de arquitetura que não deve ser tomada
+silenciosamente — ver `docs/11_AGENT_ONBOARDING_V2.md` para a análise
+completa (3 opções comparadas) e o relatório desta sessão.
+
+Resumo do que mudou:
+
+- `src/printerDiscovery.ts` (novo): extração mecânica, sem mudança de
+  comportamento, da descoberta SSDP que já existia dentro de `index.ts`.
+- `src/config/` (novo): `configStore.ts` (config não secreta em
+  `%APPDATA%\Filamap\config.json` e equivalentes), `secretStore.ts`
+  (abstração `SecretStore`; `EnvSecretStore` cobre dev/CI, cofre comercial
+  fica documentado como bloqueado por decisão), `onboarding.ts` (decisão +
+  orquestração, sem I/O direto de terminal), `onboardingCli.ts` (única UI
+  hoje).
+- `src/index.ts`: bootstrap inicial trocado por `bootstrapRuntimeConfig()`.
+  Caminho `.env` completo preservado byte a byte (verificado
+  manualmente); caminho sem `.env` completo usa a nova arquitetura.
+- 21 testes novos (`node:test`, mesmo framework de sempre — **Vitest não
+  foi instalado**), 45/45 passando no total.
+- `desktop-agent/README.md` (novo): documenta o fluxo completo, onde cada
+  dado fica, e o que falta para o instalador `.exe`.
+
+Não alterado nesta sessão: Web App, migrations, `consumption.ts`,
+`networkRediscovery.ts`, hot-path de conexão/reconexão MQTT, auto-start
+via Tarefa Agendada (`install-autostart.ps1`/`run-agent.ps1`), testes
+pré-existentes (todos continuam passando).
+
+<!-- AUTO:AGENT_ONBOARDING_V2_20260921:END -->
+
 

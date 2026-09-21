@@ -6,31 +6,56 @@ import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 import { computeConsumptionPerSlot, buildJobConsumptionItems } from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
 import type { JobConsumptionItem } from "./consumption";
+import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
+import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
+import { resolveSecretStore, SecretStore } from "./config/secretStore";
 
 dotenv.config();
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || "").trim().replace(/['"]/g, "").replace(/\/$/, "");
-const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY || "").trim().replace(/['"]/g, "");
-const AGENT_EMAIL = (process.env.AGENT_EMAIL || "").trim();
-const AGENT_PASSWORD = (process.env.AGENT_PASSWORD || "").trim();
-let PRINTER_IP = (process.env.PRINTER_IP || "").trim().replace(/['"]/g, "");
-const PRINTER_SERIAL = (process.env.PRINTER_SERIAL || "").trim().replace(/['"]/g, "");
-const PRINTER_ACCESS_CODE = (process.env.PRINTER_ACCESS_CODE || "").trim().replace(/['"]/g, "");
+// Preenchidas por bootstrapRuntimeConfig() antes do resto do Agent rodar.
+// Se as 5 variáveis de sempre estiverem no .env, o valor é exatamente o
+// mesmo que já existia (nenhum onboarding roda). Caso contrário, vêm de
+// config.json + SecretStore + assistente interativo -- ver
+// src/config/onboarding.ts e docs/11_AGENT_ONBOARDING_V2.md.
+let SUPABASE_URL = "";
+let SUPABASE_ANON_KEY = "";
+let AGENT_EMAIL = "";
+let PRINTER_IP = "";
+let PRINTER_SERIAL = "";
+let PRINTER_ACCESS_CODE = "";
+let supabase: SupabaseClient;
+let activeSecretStore: SecretStore;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !AGENT_EMAIL || !AGENT_PASSWORD || !PRINTER_SERIAL) {
-  console.error("❌ Erro: Configure SUPABASE_URL, SUPABASE_ANON_KEY, AGENT_EMAIL, AGENT_PASSWORD e PRINTER_SERIAL no .env");
-  process.exit(1);
+async function bootstrapRuntimeConfig() {
+  activeSecretStore = resolveSecretStore();
+  const prompts = createCliPrompts();
+
+  let resolved;
+  try {
+    resolved = await resolveAgentRuntimeConfig(activeSecretStore, prompts);
+  } finally {
+    closeCliPrompts();
+  }
+
+  SUPABASE_URL = resolved.supabaseUrl;
+  SUPABASE_ANON_KEY = resolved.supabaseAnonKey;
+  AGENT_EMAIL = resolved.agentEmail;
+  PRINTER_IP = resolved.printerIp;
+  PRINTER_SERIAL = resolved.printerSerial;
+  PRINTER_ACCESS_CODE = resolved.printerAccessCode;
+
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: true },
+  });
+
+  return resolved.auth;
 }
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: true },
-});
 
 interface ActiveJobState {
   jobId: string; // chave de idempotência (não há task_id/job_id confirmado no payload MQTT real -- ver relatório, investigação (a))
@@ -79,15 +104,42 @@ function extractGramsFromName(taskName: string): number | null {
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
-  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-    email: AGENT_EMAIL,
-    password: AGENT_PASSWORD,
-  });
+  const auth = await bootstrapRuntimeConfig();
+
+  let authData;
+  let authError;
+
+  if (auth.type === "refresh_token") {
+    const result = await supabase.auth.refreshSession({ refresh_token: auth.refreshToken });
+    authData = result.data;
+    authError = result.error;
+
+    if (authError || !authData.session) {
+      // Token salvo expirou/foi revogado -- descarta pra não ficar
+      // tentando o mesmo token inválido pra sempre; próxima execução
+      // interativa pede login de novo (ver onboarding.ts).
+      console.warn("⚠️ Sessão salva expirou ou foi revogada. Descartando e encerrando.");
+      await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
+    }
+  } else {
+    const result = await supabase.auth.signInWithPassword({
+      email: AGENT_EMAIL,
+      password: auth.password,
+    });
+    authData = result.data;
+    authError = result.error;
+  }
 
   if (authError || !authData.session) {
     console.error("❌ Falha no login do agente:", authError?.message || "sessão não iniciada");
     process.exit(1);
   }
+
+  await persistSessionSecrets(
+    activeSecretStore,
+    authData.session.refresh_token ?? null,
+    PRINTER_ACCESS_CODE
+  );
 
   if (!PRINTER_IP) {
     PRINTER_IP = await discoverPrinterIp(PRINTER_SERIAL);

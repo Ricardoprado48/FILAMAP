@@ -14,6 +14,7 @@ import { discoverPrinterIp } from "./printerDiscovery";
 import type { JobConsumptionItem } from "./consumption";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
+import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 
 dotenv.config();
@@ -34,13 +35,21 @@ let activeSecretStore: SecretStore;
 
 async function bootstrapRuntimeConfig() {
   activeSecretStore = resolveSecretStore();
-  const prompts = createCliPrompts();
+
+  const useGui = process.platform === "win32";
+  const prompts = useGui
+    ? createGuiPrompts()
+    : createCliPrompts();
 
   let resolved;
   try {
     resolved = await resolveAgentRuntimeConfig(activeSecretStore, prompts);
   } finally {
-    closeCliPrompts();
+    if (useGui) {
+      resetGuiPrompts();
+    } else {
+      closeCliPrompts();
+    }
   }
 
   SUPABASE_URL = resolved.supabaseUrl;

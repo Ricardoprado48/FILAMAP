@@ -25,6 +25,14 @@ $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 $form.BackColor = [System.Drawing.Color]::FromArgb(15,23,42)
+$form.ShowInTaskbar = $true
+$form.TopMost = $true
+
+$form.Add_Shown({
+    $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+    $form.Activate()
+    $form.BringToFront()
+})
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = "FILAMAP AGENT"
@@ -176,6 +184,7 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
       "powershell.exe",
       [
         "-NoProfile",
+        "-STA",
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
@@ -278,3 +287,4 @@ export function createGuiPrompts(): OnboardingPrompts {
 export function resetGuiPrompts(): void {
   cachedResult = null;
 }
+

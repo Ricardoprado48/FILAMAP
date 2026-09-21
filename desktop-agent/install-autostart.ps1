@@ -14,6 +14,11 @@ Motivo:
 
 O run-agent.vbs deve permanecer ao lado deste arquivo.
 
+A tarefa usa MultipleInstances=IgnoreNew: se já estiver rodando, um
+novo pedido de execução (schtasks /Run, o atalho start-agent.vbs, ou o
+[Run] do instalador) é ignorado em vez de subir um segundo processo do
+Agent.
+
 O Agent empacotado esperado é:
 
     filamap-agent.exe
@@ -66,7 +71,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero) `
-    -StartWhenAvailable
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId $currentUser `

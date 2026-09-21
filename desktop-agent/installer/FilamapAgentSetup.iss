@@ -35,8 +35,17 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Files]
 Source: "payload\filamap-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "payload\start-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\install-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\uninstall-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
+
+
+[Tasks]
+
+Name: "desktopicon"; \
+    Description: "Criar um atalho na Área de Trabalho"; \
+    GroupDescription: "Atalhos adicionais:"; \
+    Flags: unchecked
 
 
 [Run]
@@ -67,8 +76,29 @@ Filename: "powershell.exe"; \
 
 [Icons]
 
+; Atalho principal. Aponta para start-agent.vbs (via wscript.exe, sem
+; janela preta) em vez do .exe diretamente -- start-agent.vbs só pede
+; ao Task Scheduler para rodar a Tarefa Agendada já registrada por
+; install-autostart.ps1, então clicar aqui nunca cria um segundo
+; processo do Agent: se já estiver rodando, MultipleInstances=IgnoreNew
+; faz o Windows ignorar o pedido.
+Name: "{group}\Filamap Agent"; \
+    Filename: "{sys}\wscript.exe"; \
+    Parameters: """{app}\start-agent.vbs"""; \
+    WorkingDir: "{app}"; \
+    IconFilename: "{app}\filamap-agent.exe"; \
+    Comment: "Iniciar o Filamap Agent"
+
 Name: "{group}\Desinstalar Filamap Agent"; \
     Filename: "{uninstallexe}"
+
+Name: "{autodesktop}\Filamap Agent"; \
+    Filename: "{sys}\wscript.exe"; \
+    Parameters: """{app}\start-agent.vbs"""; \
+    WorkingDir: "{app}"; \
+    IconFilename: "{app}\filamap-agent.exe"; \
+    Comment: "Iniciar o Filamap Agent"; \
+    Tasks: desktopicon
 
 
 [Code]

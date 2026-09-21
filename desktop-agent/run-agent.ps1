@@ -1,15 +1,17 @@
-# Executado pela Tarefa Agendada "FilamapAgentAutoStart" (ver
-# install-autostart.ps1). Não decide sozinho entre o .exe empacotado
-# (`npm run package-exe`, gera filamap-agent.exe) e `node dist\index.js`
-# (`npm run build`) -- checa em tempo de execução qual dos dois existe em
-# desktop-agent\ e usa esse. Isso existe porque o repositório não deixa
-# claro qual dos dois é usado de fato em produção hoje (ver comentário no
-# topo de install-autostart.ps1).
+﻿# Executado pela Tarefa Agendada "FilamapAgentAutoStart".
 #
-# Como a tarefa roda sem janela visível, tudo que o Agent escreveria no
-# terminal (stdout + stderr) é redirecionado pra agent.log, sobrescrito a
-# cada novo início -- sem isso, perderíamos toda a visibilidade que hoje
-# vem do terminal aberto.
+# Inicia o Desktop Agent sem janela visível e grava stdout + stderr
+# diretamente em agent.log.
+#
+# IMPORTANTE:
+# O redirecionamento do processo nativo é feito pelo cmd.exe, e não pelo
+# operador *>> do Windows PowerShell. Isso evita que mensagens escritas
+# em stderr sejam convertidas em NativeCommandError.
+#
+# O arquivo agent.log é criado em UTF-8 para preservar corretamente
+# acentos, emojis e mensagens do Agent.
+
+$ErrorActionPreference = "Stop"
 
 Set-Location -Path $PSScriptRoot
 
@@ -17,18 +19,75 @@ $logFile = Join-Path $PSScriptRoot "agent.log"
 $exePath = Join-Path $PSScriptRoot "filamap-agent.exe"
 $distIndex = Join-Path $PSScriptRoot "dist\index.js"
 
-"=== Filamap Agent iniciado em $(Get-Date -Format o) ===" | Out-File -FilePath $logFile -Encoding utf8
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+
+$header = "=== Filamap Agent iniciado em $(Get-Date -Format o) ===`r`n"
+[System.IO.File]::WriteAllText($logFile, $header, $utf8)
+
+function Add-LogLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    [System.IO.File]::AppendAllText(
+        $logFile,
+        $Text + "`r`n",
+        $utf8
+    )
+}
+
+function Invoke-FilamapProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Executable,
+
+        [string]$Arguments = ""
+    )
+
+    # cmd.exe faz o redirecionamento nativo diretamente para o arquivo.
+    # Assim o PowerShell não interpreta stderr como NativeCommandError.
+    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+        $command = "`"$Executable`" >> `"$logFile`" 2>&1"
+    }
+    else {
+        $command = "`"$Executable`" $Arguments >> `"$logFile`" 2>&1"
+    }
+
+    & cmd.exe /d /c $command
+
+    return $LASTEXITCODE
+}
 
 if (Test-Path $exePath) {
-    "Executando via .exe empacotado: $exePath" | Out-File -FilePath $logFile -Append -Encoding utf8
-    & $exePath *>> $logFile
-} elseif (Test-Path $distIndex) {
-    "Executando via node: $distIndex" | Out-File -FilePath $logFile -Append -Encoding utf8
-    & node $distIndex *>> $logFile
-} else {
-    $msg = "ERRO: nem '$exePath' nem '$distIndex' foram encontrados. " +
-           "Rode 'npm run build' (gera dist\index.js) ou 'npm run package-exe' " +
-           "(gera filamap-agent.exe) dentro de desktop-agent antes de reinstalar o auto-start."
-    $msg | Out-File -FilePath $logFile -Append -Encoding utf8
-    exit 1
+
+    Add-LogLine "Executando via .exe empacotado: $exePath"
+
+    $exitCode = Invoke-FilamapProcess `
+        -Executable $exePath
+
+    Add-LogLine "Filamap Agent encerrado com código: $exitCode"
+
+    exit $exitCode
 }
+
+if (Test-Path $distIndex) {
+
+    $nodeCommand = Get-Command node.exe -ErrorAction Stop
+    $nodePath = $nodeCommand.Source
+
+    Add-LogLine "Executando via node: $distIndex"
+
+    $exitCode = Invoke-FilamapProcess `
+        -Executable $nodePath `
+        -Arguments "`"$distIndex`""
+
+    Add-LogLine "Filamap Agent encerrado com código: $exitCode"
+
+    exit $exitCode
+}
+
+Add-LogLine "ERRO: nem '$exePath' nem '$distIndex' foram encontrados."
+Add-LogLine "Rode 'npm run build' dentro de desktop-agent."
+
+exit 1

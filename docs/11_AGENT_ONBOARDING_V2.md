@@ -113,15 +113,24 @@ Dois cenários, dependendo de como os segredos foram fornecidos:
 são usadas diretamente, nenhum onboarding roda, nenhum arquivo é tocado.
 Verificado manualmente (ver seção 8).
 
-**B) Sem `.env` completo (cliente final, hoje)** — `config.json` já tem
-e-mail e serial, então a descoberta de serial não roda de novo (só a de
-IP, que sempre roda — impressora pode ter trocado de endereço). Mas como
-**não há cofre de segredos persistente implementado** (ver seção 9), o
-Access Code não sobrevive ao fim do processo: numa nova execução sem
-`.env`, o assistente pergunta o Access Code de novo. Se essa execução for
-via auto-start do Windows (sem terminal), o Agent não trava esperando
-input — registra um erro claro em `agent.log` e encerra (mesmo padrão já
-usado para outras faltas de configuração).
+**B) Sem `.env` completo, fora do Windows (macOS/Linux)** — `config.json`
+já tem e-mail e serial, então a descoberta de serial não roda de novo (só
+a de IP, que sempre roda — impressora pode ter trocado de endereço). Mas
+como **ainda não há cofre de segredos persistente implementado nessas
+plataformas** (ver seção 9), o Access Code não sobrevive ao fim do
+processo: numa nova execução sem `.env`, o assistente pergunta o Access
+Code de novo. Se essa execução for sem terminal (auto-start), o Agent não
+trava esperando input — registra um erro claro em `agent.log` e encerra
+(mesmo padrão já usado para outras faltas de configuração).
+
+**B-Windows) Sem `.env` completo, no Windows** — mesmo fluxo de descoberta
+de B, mas os segredos agora persistem via `WindowsDpapiSecretStore`
+(DPAPI, ver seção 10): numa nova execução, Access Code e sessão Supabase
+são lidos do cofre em vez de perguntados de novo. Implementação coberta
+por testes unitários com DPAPI simulado (`dpapiSecretStore.test.ts`); o
+caminho real via `powershell.exe`/DPAPI ainda não foi validado
+manualmente numa máquina Windows de verdade neste sandbox (sem acesso a
+Windows aqui) -- ver pendência na seção 9.
 
 **B'.1) Sem `.env`, mas com `SUPABASE_REFRESH_TOKEN`/`PRINTER_ACCESS_CODE`
 manualmente no ambiente** — cenário intermediário testado manualmente:
@@ -276,11 +285,18 @@ testes automatizados não cobrem o processo inteiro de ponta a ponta:**
 
 ## 9. Decisões que precisam do usuário / pendências
 
-1. **Cofre de segredos comercial (Windows) — bloqueado por decisão, não
-   implementado.** Ver análise completa na seção 10. Sem isso, o Access
-   Code precisa ser digitado a cada execução no cliente final (fora do
-   fluxo `.env`). Isso é o maior desvio entre o estado atual e o objetivo
-   "próximas inicializações são automáticas" do pedido original.
+1. **Cofre de segredos comercial — implementado no Windows via DPAPI,
+   ainda pendente em macOS/Linux.** Ver análise completa na seção 10 e
+   `src/config/dpapiSecretStore.ts`. No Windows, sem `.env`, o Access Code
+   e a sessão Supabase agora sobrevivem entre execuções
+   (`WindowsDpapiSecretStore`); fora do Windows ainda não há cofre e o
+   Access Code precisa ser digitado a cada execução (mesma limitação de
+   antes, só que agora restrita a macOS/Linux). **Pendência remanescente:**
+   o caminho real do DPAPI via `powershell.exe` foi validado só por testes
+   unitários com DPAPI simulado (sem `powershell.exe`/Windows disponível
+   neste sandbox) -- falta uma validação manual numa máquina Windows de
+   verdade (save → reiniciar processo → load → confirmar que o Access Code
+   não é perguntado de novo).
 2. **Validação de ponta a ponta do assistente interativo com um usuário
    real** — a lógica de decisão está testada exaustivamente (21 testes) e
    a primeira pergunta foi confirmada funcionando via pseudo-terminal, mas
@@ -302,49 +318,62 @@ testes automatizados não cobrem o processo inteiro de ponta a ponta:**
    porque restou algum problema — `git diff` confirma `src/discovery.ts`
    idêntico ao `origin/main`.
 
-## 10. Recomendação para armazenamento seguro de segredos no Windows
+## 10. Armazenamento seguro de segredos no Windows
 
-Três opções reais, nenhuma implementada nesta rodada (explicitamente
-pedido: não escolher isso sem decisão do usuário):
+**Status: implementado** (`src/config/dpapiSecretStore.ts`,
+`WindowsDpapiSecretStore`). Registro histórico das opções consideradas,
+mantido porque a decisão para macOS/Linux ainda está em aberto (mesma
+tabela vale como ponto de partida quando isso for priorizado):
 
 | Opção | Prós | Contras |
 | --- | --- | --- |
-| **Windows Credential Manager via DPAPI** | Nativo do Windows, sem instalar nada no cliente; `cmdkey`/APIs DPAPI acessíveis via um binário nativo pequeno ou via `child_process` chamando utilitários do SO | Precisa de um módulo nativo Node (ex. via N-API) ou de invocar ferramentas externas; nenhuma lib pura-JS madura acessa DPAPI diretamente; muda o pipeline do `pkg` (empacotamento de binário nativo por plataforma) |
+| **Windows Credential Manager via DPAPI** (✅ escolhida) | Nativo do Windows, sem instalar nada no cliente; DPAPI acessível via `child_process` chamando `powershell.exe` (`System.Security.Cryptography.ProtectedData`, já parte do runtime do Windows) | Só resolve Windows -- macOS/Linux continuam sem cofre |
 | **`keytar`** (ou sucessor mantido — `keytar` está sem manutenção ativa; alternativas: `@napi-rs/keyring`) | API cross-platform única (Windows Credential Manager, macOS Keychain, libsecret no Linux) | Dependência nativa compilada — `pkg` precisa embutir o `.node` certo por plataforma/arquitetura; ponto de falha a mais no build/instalador |
 | **Arquivo com ACL restrita via `icacls`** (interina, só filesystem) | Zero dependência nova, usa só `child_process` + utilitário já presente no Windows | **Não é um cofre de verdade** — sem criptografia em repouso; se o disco for copiado ou o BitLocker estiver desligado, o arquivo é legível. Só reduz o risco de outro usuário/processo do mesmo Windows ler o arquivo, não de alguém com acesso ao disco |
 
-**Recomendação:** `keytar`/`@napi-rs/keyring` se o roadmap aceitar a
-complexidade extra de build nativo por plataforma (mais robusto, já
-abstrai as 3 plataformas); DPAPI direto só se o produto for
-Windows-only para sempre. A opção "arquivo com ACL" pode servir como
-**interina, explicitamente rotulada como não-final** se for inaceitável
-lançar sem nenhuma persistência de Access Code — mas isso é uma escolha de
-produto (aceitar um risco residual conhecido vs. atrasar o lançamento até
-escolher e implementar um cofre de verdade), por isso não foi ativada por
-padrão nesta rodada.
+**Por quê DPAPI via `powershell.exe` e não `keytar`/N-API:** a
+implementação evita módulo nativo compilado (`.node`) de propósito --
+`child_process.spawnSync("powershell.exe", ...)` chamando
+`System.Security.Cryptography.ProtectedData` (`CurrentUser` scope) usa só
+o que já vem com qualquer Windows suportado. Isso significa **zero
+dependência nova no `package.json`** e **nenhuma mudança no pipeline do
+`pkg`** (`npm run package-exe` continua gerando um binário único igual
+antes). O segredo trafega só via stdin/stdout do processo filho (nunca
+como argumento de linha de comando, que apareceria na lista de processos
+do SO) e sempre em base64. Em disco
+(`%APPDATA%\Filamap\secrets.dat`) só fica o blob binário que sai do DPAPI
+-- nunca o JSON em texto puro; um arquivo ausente, corrompido, ou que o
+DPAPI se recuse a descriptografar (ex.: perfil de usuário diferente) é
+tratado como "sem segredo salvo" (`load()` não lança).
 
-Enquanto a decisão não for tomada, o Agent funciona (onboarding sempre
-completa, autenticação sempre funciona), só não cumpre 100% a promessa de
-"nunca mais perguntar o Access Code" fora do fluxo `.env`.
+**macOS/Linux:** `keytar`/`@napi-rs/keyring` continua sendo a recomendação
+se/quando o roadmap exigir persistência nessas plataformas (API única para
+as 3, mas com o custo de dependência nativa compilada por
+plataforma/arquitetura -- decisão de arquitetura ainda não tomada). Até lá,
+essas plataformas usam `UnavailableSecretStore` (mesmo comportamento de
+antes): o Agent funciona (onboarding sempre completa, autenticação sempre
+funciona), só não cumpre a promessa de "nunca mais perguntar o Access
+Code" fora do fluxo `.env`.
 
 ## 11. Passos para transformar o Agent em instalador comercial
 
 Ordem sugerida, do que mais desbloqueia o resto:
 
-1. **Decidir o cofre de segredos** (seção 10) — é o maior gap funcional
-   restante do onboarding em si.
-2. **Testar o onboarding com um usuário real**, numa máquina Windows, com
-   uma Bambu Lab de verdade na rede — para confirmar que a descoberta
-   automática do serial funciona na prática (este sandbox não tem acesso a
-   uma impressora real nem a hardware de rede local).
+1. ~~Decidir e implementar o cofre de segredos no Windows~~ — **feito**
+   (`WindowsDpapiSecretStore`, seção 10). Ainda falta decidir/implementar
+   o equivalente para macOS/Linux, se o roadmap exigir.
+2. **Validar o cofre DPAPI numa máquina Windows real** (save → reiniciar
+   processo → load, ver pendência na seção 9) e **testar o onboarding com
+   um usuário real**, numa máquina Windows, com uma Bambu Lab de verdade
+   na rede — para confirmar que a descoberta automática do serial funciona
+   na prática (este sandbox não tem acesso a uma impressora real, a
+   hardware de rede local, nem a um Windows de verdade).
 3. **Escolher ferramenta de empacotamento** (Inno Setup, NSIS ou
    electron-builder) e gerar um instalador de verdade (hoje `pkg` só gera
    um binário único).
 4. **Assinatura de código** — depende de certificado, decisão/custo
    externo ao time técnico.
 5. **Auto-update** — depende dos passos 3 e 4 primeiro.
-6. **Mover a implementação do cofre escolhido (passo 1)** para dentro de
-   `SecretStore` — a interface já existe, só falta a classe concreta.
 
 `install-autostart.ps1`/`run-agent.ps1`/`uninstall-autostart.ps1` (auto-start
 via Tarefa Agendada) já existiam antes desta rodada e não precisaram de

@@ -20,11 +20,13 @@ e reporta telemetria/consumo de filamento para o backend Filamap.
    "Segredos" abaixo).
 4. Da próxima vez que o Agent iniciar (manualmente ou via auto-start do
    Windows), o que já foi salvo não é perguntado de novo -- **contanto que
-   o `SecretStore` ativo persista segredos entre execuções**. Hoje isso só
-   é verdade em modo dev/CI (`.env` com `PRINTER_ACCESS_CODE` e/ou
-   `SUPABASE_REFRESH_TOKEN`); no cliente final, sem um cofre de segredos do
-   SO implementado, o Access Code precisa ser digitado de novo a cada
-   execução até essa decisão ser tomada (ver docs/11_AGENT_ONBOARDING_V2.md).
+   o `SecretStore` ativo persista segredos entre execuções**. Isso é
+   verdade em modo dev/CI (`.env` com `PRINTER_ACCESS_CODE` e/ou
+   `SUPABASE_REFRESH_TOKEN`) e no cliente final rodando Windows, via DPAPI
+   (`WindowsDpapiSecretStore`, ver "Segredos" abaixo). Fora do Windows e
+   sem `.env`, ainda não há cofre implementado -- o Access Code precisa
+   ser digitado de novo a cada execução (ver
+   docs/11_AGENT_ONBOARDING_V2.md).
 5. Se o Agent iniciar sem configuração completa **e** sem terminal
    interativo (`stdin` não é TTY -- é o caso do auto-start via Tarefa
    Agendada), ele não fica esperando input que nunca vai chegar: imprime um
@@ -65,16 +67,33 @@ abaixo).
 - Linux: `~/.config/filamap/config.json` (ou `$XDG_CONFIG_HOME/filamap/config.json`)
 
 **`SecretStore` (`src/config/secretStore.ts`)** é a abstração para os dois
-segredos que precisam sobreviver entre execuções. Hoje só existe uma
-implementação funcional, `EnvSecretStore` (lê `PRINTER_ACCESS_CODE` e
-`SUPABASE_REFRESH_TOKEN` do `.env`/ambiente -- modo dev/CI). Fora disso, o
-Agent usa `UnavailableSecretStore`: funciona (o onboarding continua
-perguntando o que falta), mas nada é lembrado de uma execução pra outra.
-Isso é deliberado, não um bug esquecido -- ver docs/11_AGENT_ONBOARDING_V2.md
-para a análise completa e as opções de cofre seguro para Windows
-(Credential Manager/DPAPI, `keytar`, etc.), que ainda dependem de uma
-decisão de arquitetura (adicionam dependência nativa, mudam o pipeline de
-empacotamento do `pkg`).
+segredos que precisam sobreviver entre execuções. `resolveSecretStore()`
+escolhe a implementação nesta ordem:
+
+1. **`EnvSecretStore`** -- se `PRINTER_ACCESS_CODE` e/ou
+   `SUPABASE_REFRESH_TOKEN` estiverem no `.env`/ambiente (modo dev/CI),
+   sempre tem prioridade, em qualquer SO.
+2. **`WindowsDpapiSecretStore`** (`src/config/dpapiSecretStore.ts`) -- no
+   Windows, sem segredos no ambiente. Cofre de verdade: usa DPAPI
+   (`CryptProtectData`/`CryptUnprotectData`, escopo do usuário atual do
+   Windows) via `powershell.exe` (`System.Security.Cryptography.ProtectedData`)
+   chamado como processo filho -- **sem dependência nativa nova e sem
+   mudar o pipeline do `pkg`** (ver comentário no topo do arquivo e
+   docs/11_AGENT_ONBOARDING_V2.md seção 10 para a análise completa das
+   alternativas consideradas). O segredo só trafega em memória/stdin-stdout,
+   nunca como argumento de linha de comando. Em disco fica só
+   `%APPDATA%\Filamap\secrets.dat`, contendo exclusivamente o blob
+   criptografado pelo DPAPI -- nenhum campo (nem os nomes
+   `supabaseRefreshToken`/`printerAccessCode`, nem os valores) aparece em
+   texto puro nesse arquivo. Um arquivo ausente, corrompido ou que o DPAPI
+   se recuse a descriptografar (ex.: outro usuário do Windows) é tratado
+   como "sem segredo salvo", não como erro fatal.
+3. **`UnavailableSecretStore`** -- macOS/Linux sem `.env`: funciona (o
+   onboarding continua perguntando o que falta), mas nada é lembrado de
+   uma execução pra outra. Isso é deliberado, não um bug esquecido -- ver
+   docs/11_AGENT_ONBOARDING_V2.md seção 10 para a análise das opções ainda
+   não implementadas fora do Windows (Keychain no macOS, libsecret no
+   Linux, ou uma lib cross-platform como `keytar`).
 
 `.env` continua funcionando (prioridade total sobre tudo o mais, igual
 antes) para desenvolvimento, CI ou contas de teste -- ver `.env.example`.
@@ -85,7 +104,9 @@ Não é o caminho esperado para o cliente final.
 Apague `config.json` (caminho acima) e rode o Agent de novo com um terminal
 visível -- o assistente roda outra vez. Se estiver usando `.env` com
 `PRINTER_ACCESS_CODE`/`SUPABASE_REFRESH_TOKEN`, edite/apague essas linhas
-também.
+também. No Windows, se os segredos estiverem persistidos via DPAPI, apague
+também `%APPDATA%\Filamap\secrets.dat` (ou deixe o assistente rodar de
+novo -- ele sobrescreve o arquivo ao salvar os novos segredos).
 
 ### CLI provisório
 
@@ -128,7 +149,8 @@ do projeto.
 - **Assinatura de código (code signing)** — sem isso, o Windows/SmartScreen
   mostra aviso de "editor desconhecido" ao abrir o `.exe`. Exige um
   certificado de assinatura que só o dono do produto pode providenciar.
-- **Cofre de segredos do SO** — ver seção "Segredos" acima e
+- **Cofre de segredos do SO** — implementado no Windows via DPAPI (ver
+  seção "Segredos" acima); ainda falta em macOS/Linux, ver
   docs/11_AGENT_ONBOARDING_V2.md.
 - **Auto-update** — não implementado. Depende de como distribuir novas
   versões e, de novo, de assinatura de código.

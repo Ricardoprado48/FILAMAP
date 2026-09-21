@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS public.ams_slots (
     UNIQUE(printer_id, slot_index)
 );
 
+-- Coluna necessária por 002_rls_hardening.sql (ALTER COLUMN ... SET
+-- DEFAULT auth.uid() e a policy "owner_all", ambas logo na sequência
+-- desta migration). Nenhuma migration deste repositório a criava até
+-- aqui -- fica adicionada já na criação da tabela para que uma
+-- instalação do zero não quebre em 002. Idempotente: sem efeito num
+-- banco onde 001 já foi aplicada (caso do ambiente remoto atual).
+ALTER TABLE public.ams_slots
+    ADD COLUMN IF NOT EXISTS user_id UUID
+    REFERENCES auth.users(id) ON DELETE CASCADE;
+
 -- 4. HISTÓRICO DE JOBS E DESCONTOS
 CREATE TABLE IF NOT EXISTS public.print_jobs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -227,7 +227,11 @@ export async function resolveAgentRuntimeConfig(
   }
 
   if (missing.includes("printerSerial")) {
-    printerSerial = await prompts.askPrinterSerial();
+    printerSerial = (await prompts.askPrinterSerial()).trim();
+
+    if (!printerSerial) {
+      throw new Error("Número de série da impressora é obrigatório.");
+    }
   }
 
   let printerAccessCode = env.printerAccessCode || secrets.printerAccessCode || "";

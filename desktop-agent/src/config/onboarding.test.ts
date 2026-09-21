@@ -208,6 +208,35 @@ test("resolveAgentRuntimeConfig: sem terminal interativo e config incompleta aci
   assert.ok(prompts.cannotPromptCalledWith?.includes("printerAccessCode"));
 });
 
+test("resolveAgentRuntimeConfig: rejeita serial vazio quando descoberta automática falha", async (t) => {
+  useTempConfigDir(t);
+
+  const secretStore = new FakeSecretStore({
+    supabaseRefreshToken: null,
+    printerAccessCode: null,
+  });
+
+  const prompts = new FakePrompts({
+    email: "user@test.com",
+    password: "senha",
+    serial: "   ",
+    accessCode: "12345678",
+  });
+
+  const discovery = fakeDiscovery({ ip: "", serial: "" });
+
+  await assert.rejects(
+    () =>
+      resolveAgentRuntimeConfig(secretStore, prompts, {
+        env: {} as NodeJS.ProcessEnv,
+        isTTY: true,
+        discovery,
+      }),
+    /número de série da impressora é obrigatório/i
+  );
+
+  assert.ok(prompts.calls.includes("askPrinterSerial"));
+});
 test("resolveAgentRuntimeConfig: descoberta automática preenche serial, só falta perguntar o Access Code", async (t) => {
   useTempConfigDir(t);
 

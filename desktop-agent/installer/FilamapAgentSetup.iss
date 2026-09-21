@@ -18,7 +18,7 @@ PrivilegesRequired=admin
 
 OutputDir=output
 OutputBaseFilename=FilamapAgentSetup
-
+SetupIconFile=filamap.ico
 Compression=lzma2
 SolidCompression=yes
 
@@ -36,6 +36,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 [Files]
+Source: "filamap.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\filamap-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\start-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
@@ -43,6 +44,14 @@ Source: "payload\install-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\uninstall-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 
+
+[InstallDelete]
+
+; Remove atalhos antigos antes de recriar os atalhos do Filamap.
+Type: files; Name: "{group}\Filamap Agent.lnk"
+Type: files; Name: "{group}\Filamap.lnk"
+Type: files; Name: "{autodesktop}\Filamap Agent.lnk"
+Type: files; Name: "{autodesktop}\Filamap.lnk"
 
 [Run]
 
@@ -52,12 +61,16 @@ Filename: "powershell.exe"; \
     WorkingDir: "{app}"; \
     Flags: runhidden waituntilterminated
 
-; Inicia o Agent imediatamente após instalar.
-Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -WindowStyle Hidden -Command ""Start-ScheduledTask -TaskName 'FilamapAgentAutoStart'"""; \
+; Inicia o Agent silenciosamente em segundo plano apos instalar.
+Filename: "{sys}\wscript.exe"; \
+    Parameters: """{app}\start-agent.vbs"""; \
     WorkingDir: "{app}"; \
     Flags: runhidden nowait
 
+; Na tela final, oferece abrir o Filamap Web.
+Filename: "https://filamap.pages.dev"; \
+    Description: "Abrir o Filamap"; \
+    Flags: shellexec postinstall nowait skipifsilent
 
 [UninstallRun]
 
@@ -78,22 +91,18 @@ Filename: "powershell.exe"; \
 ; install-autostart.ps1, então clicar aqui nunca cria um segundo
 ; processo do Agent: se já estiver rodando, MultipleInstances=IgnoreNew
 ; faz o Windows ignorar o pedido.
-Name: "{group}\Filamap Agent"; \
-    Filename: "{sys}\wscript.exe"; \
-    Parameters: """{app}\start-agent.vbs"""; \
-    WorkingDir: "{app}"; \
-    IconFilename: "{app}\filamap-agent.exe"; \
-    Comment: "Iniciar o Filamap Agent"
+Name: "{group}\Filamap"; \
+    Filename: "https://filamap.pages.dev"; \
+    IconFilename: "{app}\filamap.ico"; \
+    Comment: "Abrir o Filamap"
 
 Name: "{group}\Desinstalar Filamap Agent"; \
     Filename: "{uninstallexe}"
 
-Name: "{autodesktop}\Filamap Agent"; \
-    Filename: "{sys}\wscript.exe"; \
-    Parameters: """{app}\start-agent.vbs"""; \
-    WorkingDir: "{app}"; \
-    IconFilename: "{app}\filamap-agent.exe"; \
-    Comment: "Iniciar o Filamap Agent"
+Name: "{autodesktop}\Filamap"; \
+    Filename: "https://filamap.pages.dev"; \
+    IconFilename: "{app}\filamap.ico"; \
+    Comment: "Abrir o Filamap"
 
 
 [Code]

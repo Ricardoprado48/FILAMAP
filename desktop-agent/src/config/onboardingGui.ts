@@ -398,6 +398,175 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
     });
   });
 }
+function runWindowsPasswordGui(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const script = String.raw`
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Filamap"
+$form.Size = New-Object System.Drawing.Size(500, 300)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.BackColor = [System.Drawing.Color]::FromArgb(15,23,42)
+$form.ShowInTaskbar = $true
+$form.TopMost = $true
+
+$title = New-Object System.Windows.Forms.Label
+$title.Text = "Entre novamente no Filamap"
+$title.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold)
+$title.ForeColor = [System.Drawing.Color]::White
+$title.AutoSize = $true
+$title.Location = New-Object System.Drawing.Point(30,25)
+$form.Controls.Add($title)
+
+$info = New-Object System.Windows.Forms.Label
+$info.Text = "Sua sessão expirou. Informe sua senha para continuar."
+$info.Font = New-Object System.Drawing.Font("Segoe UI",10)
+$info.ForeColor = [System.Drawing.Color]::LightGray
+$info.AutoSize = $true
+$info.Location = New-Object System.Drawing.Point(33,70)
+$form.Controls.Add($info)
+
+$label = New-Object System.Windows.Forms.Label
+$label.Text = "Senha"
+$label.Font = New-Object System.Drawing.Font("Segoe UI",10)
+$label.ForeColor = [System.Drawing.Color]::White
+$label.AutoSize = $true
+$label.Location = New-Object System.Drawing.Point(35,115)
+$form.Controls.Add($label)
+
+$password = New-Object System.Windows.Forms.TextBox
+$password.Location = New-Object System.Drawing.Point(35,140)
+$password.Size = New-Object System.Drawing.Size(340,30)
+$password.Font = New-Object System.Drawing.Font("Segoe UI",11)
+$password.UseSystemPasswordChar = $true
+$form.Controls.Add($password)
+
+$showPassword = New-Object System.Windows.Forms.CheckBox
+$showPassword.Text = "Mostrar"
+$showPassword.ForeColor = [System.Drawing.Color]::White
+$showPassword.Location = New-Object System.Drawing.Point(385,142)
+$showPassword.AutoSize = $true
+$showPassword.Add_CheckedChanged({
+    $password.UseSystemPasswordChar = -not $showPassword.Checked
+})
+$form.Controls.Add($showPassword)
+
+$button = New-Object System.Windows.Forms.Button
+$button.Text = "CONTINUAR"
+$button.Location = New-Object System.Drawing.Point(35,195)
+$button.Size = New-Object System.Drawing.Size(410,42)
+$button.Font = New-Object System.Drawing.Font("Segoe UI",11,[System.Drawing.FontStyle]::Bold)
+$button.BackColor = [System.Drawing.Color]::FromArgb(5,150,105)
+$button.ForeColor = [System.Drawing.Color]::White
+$button.FlatStyle = "Flat"
+
+$button.Add_Click({
+    if ([string]::IsNullOrWhiteSpace($password.Text)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Informe sua senha.",
+            "Filamap"
+        )
+        $password.Focus()
+        return
+    }
+
+    $json = $password.Text | ConvertTo-Json -Compress
+    [Console]::Out.WriteLine("FILAMAP_PASSWORD:" + $json)
+
+    $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Close()
+})
+
+$form.Controls.Add($button)
+$form.AcceptButton = $button
+
+$form.Add_Shown({
+    $form.Activate()
+    $form.BringToFront()
+    $password.Focus()
+})
+
+$result = $form.ShowDialog()
+
+if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::Out.WriteLine("FILAMAP_CANCELLED")
+}
+`;
+
+    const ps = spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-STA",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+      ],
+      {
+        windowsHide: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    ps.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    ps.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    ps.on("error", reject);
+
+    ps.on("close", () => {
+      const marker = "FILAMAP_PASSWORD:";
+
+      const line = stdout
+        .split(/\r?\n/)
+        .find((item) => item.startsWith(marker));
+
+      if (!line) {
+        reject(
+          new Error(
+            stderr.trim() ||
+              "Login do Filamap foi cancelado."
+          )
+        );
+        return;
+      }
+
+      try {
+        const password = JSON.parse(
+          line.slice(marker.length)
+        ) as string;
+
+        if (!password) {
+          reject(new Error("Senha é obrigatória."));
+          return;
+        }
+
+        resolve(password);
+      } catch {
+        reject(
+          new Error(
+            "Não foi possível interpretar a senha informada."
+          )
+        );
+      }
+    });
+  });
+}
 async function ensureGuiResult(): Promise<SetupGuiResult> {
   if (cachedResult) {
     return cachedResult;
@@ -419,8 +588,11 @@ export function createGuiPrompts(): OnboardingPrompts {
     },
 
     async askPassword() {
-      const result = await ensureGuiResult();
-      return result.password;
+      if (cachedResult) {
+        return cachedResult.password;
+      }
+
+      return runWindowsPasswordGui();
     },
 
     async askPrinterSerial() {

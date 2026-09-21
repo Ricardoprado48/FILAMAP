@@ -113,33 +113,42 @@ function extractGramsFromName(taskName: string): number | null {
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
-  const auth = await bootstrapRuntimeConfig();
+  let auth = await bootstrapRuntimeConfig();
 
   let authData;
   let authError;
 
-  if (auth.type === "refresh_token") {
-    const result = await supabase.auth.refreshSession({ refresh_token: auth.refreshToken });
-    authData = result.data;
-    authError = result.error;
+  for (let authAttempt = 0; authAttempt < 2; authAttempt++) {
+    if (auth.type === "refresh_token") {
+      const result = await supabase.auth.refreshSession({ refresh_token: auth.refreshToken });
+      authData = result.data;
+      authError = result.error;
 
-    if (authError || !authData.session) {
-      // Token salvo expirou/foi revogado -- descarta pra não ficar
-      // tentando o mesmo token inválido pra sempre; próxima execução
-      // interativa pede login de novo (ver onboarding.ts).
-      console.warn("⚠️ Sessão salva expirou ou foi revogada. Descartando e encerrando.");
-      await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
+      if (authError || !authData.session) {
+        if (authAttempt === 0) {
+          console.warn("⚠️ Sessão salva expirou ou foi revogada. Abrindo o login novamente.");
+
+          // Remove somente o refresh token inválido e preserva o Access Code da Bambu.
+          await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
+
+          // O segundo bootstrap abre novamente o login na mesma execução.
+          auth = await bootstrapRuntimeConfig();
+          continue;
+        }
+      }
+    } else {
+      const result = await supabase.auth.signInWithPassword({
+        email: AGENT_EMAIL,
+        password: auth.password,
+      });
+      authData = result.data;
+      authError = result.error;
     }
-  } else {
-    const result = await supabase.auth.signInWithPassword({
-      email: AGENT_EMAIL,
-      password: auth.password,
-    });
-    authData = result.data;
-    authError = result.error;
+
+    break;
   }
 
-  if (authError || !authData.session) {
+  if (authError || !authData?.session) {
     console.error("❌ Falha no login do agente:", authError?.message || "sessão não iniciada");
     process.exit(1);
   }

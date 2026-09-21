@@ -9,3 +9,4 @@ desktop-agent/agent-state.json
 
 supabase/remote_database.types.ts
 supabase/remote_public_schema.sql
+supabase/.temp/

@@ -32,6 +32,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 
+
+[Languages]
+Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 [Files]
 Source: "payload\filamap-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
@@ -110,5 +113,6 @@ begin
     Log('Filamap Agent instalado com sucesso.');
   end;
 end;
+
 
 

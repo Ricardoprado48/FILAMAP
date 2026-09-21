@@ -1,4 +1,4 @@
-﻿#define MyAppName "Filamap Agent"
+#define MyAppName "Filamap Agent"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "Filamap"
 #define MyAppExeName "filamap-agent.exe"
@@ -42,13 +42,6 @@ Source: "payload\start-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\install-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\uninstall-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
-
-[Tasks]
-
-Name: "desktopicon"; \
-    Description: "Criar um atalho na Área de Trabalho"; \
-    GroupDescription: "Atalhos adicionais:"; \
-    Flags: unchecked
 
 
 [Run]
@@ -100,8 +93,7 @@ Name: "{autodesktop}\Filamap Agent"; \
     Parameters: """{app}\start-agent.vbs"""; \
     WorkingDir: "{app}"; \
     IconFilename: "{app}\filamap-agent.exe"; \
-    Comment: "Iniciar o Filamap Agent"; \
-    Tasks: desktopicon
+    Comment: "Iniciar o Filamap Agent"
 
 
 [Code]

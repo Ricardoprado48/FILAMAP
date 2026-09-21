@@ -123,6 +123,14 @@ test("readEnvOverrides: limpa aspas e barra final da URL, mesma normalização d
   assert.equal(env.supabaseAnonKey, "anon-key");
 });
 
+test("readEnvOverrides: nunca usa SUPABASE_SERVICE_KEY como anon key", () => {
+  const env = readEnvOverrides({
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_SERVICE_KEY: "service-role-key-that-must-be-ignored",
+  } as NodeJS.ProcessEnv);
+
+  assert.equal(env.supabaseAnonKey, "");
+});
 test("hasCompleteEnvConfig: true só com as 5 variáveis que o Agent sempre exigiu", () => {
   const complete = readEnvOverrides({
     SUPABASE_URL: "https://x.supabase.co",

@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import dotenv from "dotenv";
@@ -11,11 +11,7 @@ const SUPABASE_URL = (process.env.SUPABASE_URL || "")
   .replace(/['"]/g, "")
   .replace(/\/$/, "");
 
-const SUPABASE_ANON_KEY = (
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.SUPABASE_SERVICE_KEY ||
-  ""
-)
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || "")
   .trim()
   .replace(/['"]/g, "");
 

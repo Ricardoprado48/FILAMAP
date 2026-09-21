@@ -33,7 +33,7 @@ export function readEnvOverrides(env: NodeJS.ProcessEnv): EnvOverrides {
 
   return {
     supabaseUrl: clean(env.SUPABASE_URL).replace(/\/$/, ""),
-    supabaseAnonKey: clean(env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_KEY),
+    supabaseAnonKey: clean(env.SUPABASE_ANON_KEY),
     agentEmail: clean(env.AGENT_EMAIL),
     agentPassword: clean(env.AGENT_PASSWORD),
     printerIp: clean(env.PRINTER_IP),

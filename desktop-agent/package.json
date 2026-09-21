@@ -8,7 +8,7 @@
                     "build":  "tsc",
                     "start":  "tsc \u0026\u0026 node dist/index.js",
                     "package-exe":  "tsc \u0026\u0026 pkg dist/index.js --targets node18-win-x64 --output filamap-agent.exe",
-                    "test":  "tsc \u0026\u0026 node --test dist/consumption.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/onboarding.test.js",
+                    "test":  "tsc \u0026\u0026 node --test dist/consumption.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js",
                     "test:integration":  "tsc \u0026\u0026 node --test dist/finalize.integration.test.js"
                 },
     "dependencies":  {

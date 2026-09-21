@@ -79,12 +79,33 @@ test("resolveSecretStore: usa EnvSecretStore quando só SUPABASE_REFRESH_TOKEN e
   );
 });
 
-test("resolveSecretStore: cai para UnavailableSecretStore sem nenhum dos dois", () => {
+test("resolveSecretStore: cai para UnavailableSecretStore sem nenhum dos dois (Linux/macOS)", () => {
   withEnv(
     { PRINTER_ACCESS_CODE: undefined, SUPABASE_REFRESH_TOKEN: undefined },
     () => {
-      const store = resolveSecretStore();
+      const store = resolveSecretStore("linux");
       assert.equal(store.kind, "unavailable");
+    }
+  );
+});
+
+test("resolveSecretStore: usa WindowsDpapiSecretStore no Windows sem segredos no ambiente", () => {
+  withEnv(
+    { PRINTER_ACCESS_CODE: undefined, SUPABASE_REFRESH_TOKEN: undefined },
+    () => {
+      const store = resolveSecretStore("win32");
+      assert.equal(store.kind, "windows-dpapi");
+      assert.equal(store.persists, true);
+    }
+  );
+});
+
+test("resolveSecretStore: no Windows, .env ainda tem prioridade sobre o DPAPI", () => {
+  withEnv(
+    { PRINTER_ACCESS_CODE: "12345678", SUPABASE_REFRESH_TOKEN: undefined },
+    () => {
+      const store = resolveSecretStore("win32");
+      assert.equal(store.kind, "env");
     }
   );
 });

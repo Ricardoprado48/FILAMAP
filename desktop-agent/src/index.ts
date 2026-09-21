@@ -1,4 +1,4 @@
-﻿import dns from "node:dns";
+import dns from "node:dns";
 dns.setDefaultResultOrder("ipv4first");
 
 import mqtt from "mqtt";
@@ -150,13 +150,13 @@ async function startAgent() {
     PRINTER_ACCESS_CODE
   );
 
-  if (!PRINTER_IP) {
+  while (!PRINTER_IP) {
     PRINTER_IP = await discoverPrinterIp(PRINTER_SERIAL);
-  }
 
-  if (!PRINTER_IP) {
-    console.error("❌ Erro: Não foi possível localizar a impressora na rede local.");
-    process.exit(1);
+    if (!PRINTER_IP) {
+      console.warn("⚠️ Impressora ainda não encontrada. Nova tentativa em 15 segundos...");
+      await new Promise((resolve) => setTimeout(resolve, 15000));
+    }
   }
 
   try {

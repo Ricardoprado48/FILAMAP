@@ -10,6 +10,15 @@ import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 import { filterInventory, groupInventoryByMaterial } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 import {
+  needsWeighing,
+  formatBambuLocation,
+  sortSpoolsForSpoolScreen,
+  buildWeighUpdate,
+  suggestInitialWeightFromBambu,
+  findConflictingSpool,
+  buildNfcLinkUpdate,
+} from "./utils/spoolStatus";
+import {
   fetchPrinters,
   fetchActiveSlots,
   fetchInventory,
@@ -20,6 +29,7 @@ import {
   createCatalogItem,
   deleteCatalogItem,
 } from "./services/catalogService";
+import { updateSpoolWeight, linkSpoolNfc } from "./services/spoolService";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -47,6 +57,13 @@ export default function App() {
   const [weighingSpool, setWeighingSpool] = useState<Spool | null>(null);
   const [modalGross, setModalGross] = useState("");
   const [modalTare, setModalTare] = useState("218");
+  const [modalInitialWeight, setModalInitialWeight] = useState("");
+
+  // Vínculo de NFC a um carretel já existente (lê a tag física e associa,
+  // sem gravar nada nela -- diferente da aba "Gravar Tag", que grava uma
+  // URL nova no chip).
+  const [linkingSpoolId, setLinkingSpoolId] = useState<string | null>(null);
+  const linkScanTimeoutRef = useRef<number | null>(null);
 
 
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
@@ -247,6 +264,8 @@ export default function App() {
 
   async function handleScanSlot(slotIdx: number) {
     clearScanTimeout();
+    clearLinkScanTimeout();
+    setLinkingSpoolId(null);
     setNfcUid(null);
     setNfcErrorState(null);
     setScanningSlot(slotIdx);
@@ -283,6 +302,101 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nfcError]);
+
+  function clearLinkScanTimeout() {
+    if (linkScanTimeoutRef.current) {
+      window.clearTimeout(linkScanTimeoutRef.current);
+      linkScanTimeoutRef.current = null;
+    }
+  }
+
+  // "Vincular NFC": lê a tag e associa ao spool já existente escolhido pelo
+  // usuário. Nunca cria carretel novo -- diferente do fluxo de slot do AMS,
+  // que auto-cria um carretel placeholder para tag desconhecida.
+  async function handleStartLinkNfc(spoolId: string) {
+    clearScanTimeout();
+    clearLinkScanTimeout();
+    setScanningSlot(null);
+    setNfcUid(null);
+    setNfcErrorState(null);
+    setLinkingSpoolId(spoolId);
+    linkScanTimeoutRef.current = window.setTimeout(() => {
+      setLinkingSpoolId((curr) => (curr === spoolId ? null : curr));
+      setNfcErrorState("Tempo esgotado aguardando a tag. Aproxime o celular do carretel e tente novamente.");
+    }, 20000);
+    await startScanning();
+  }
+
+  function handleCancelLinkNfc() {
+    clearLinkScanTimeout();
+    setLinkingSpoolId(null);
+    setNfcUid(null);
+  }
+
+  // Assim que a tag física é lida enquanto um carretel aguarda vínculo,
+  // valida duplicidade e grava apenas spools.nfc_uid (regra: uma tag não
+  // pode ficar vinculada a dois carretéis; vincular não pode criar spool
+  // novo; troca de tag exige confirmação explícita; bambu_* nunca é tocado).
+  useEffect(() => {
+    if (linkingSpoolId !== null && nfcUid) {
+      clearLinkScanTimeout();
+      const spoolId = linkingSpoolId;
+      const uid = nfcUid;
+      setLinkingSpoolId(null);
+      setNfcUid(null);
+      void handleLinkNfc(spoolId, uid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcUid]);
+
+  useEffect(() => {
+    if (nfcError && linkingSpoolId !== null) {
+      clearLinkScanTimeout();
+      setLinkingSpoolId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nfcError]);
+
+  async function handleLinkNfc(spoolId: string, uid: string) {
+    const targetSpool = inventory.find((s) => s.id === spoolId);
+    if (!targetSpool) return;
+
+    const conflict = findConflictingSpool(inventory, uid, spoolId);
+    if (conflict) {
+      alert(
+        `Esta tag já está vinculada ao carretel "${conflict.color_name}" (${conflict.brand}). ` +
+          `Uma tag NFC não pode ficar vinculada a dois carretéis ao mesmo tempo.`
+      );
+      return;
+    }
+
+    if (targetSpool.nfc_uid && targetSpool.nfc_uid !== uid) {
+      const confirmed = window.confirm(
+        `O carretel "${targetSpool.color_name}" já tem a tag "${targetSpool.nfc_uid}" vinculada. ` +
+          `Deseja substituir pela tag recém-lida ("${uid}")?`
+      );
+      if (!confirmed) return;
+    }
+
+    const { data, error } = await linkSpoolNfc(spoolId, buildNfcLinkUpdate(uid));
+
+    if (error) {
+      if ((error as any).code === "23505") {
+        alert("Esta tag já está vinculada a outro carretel.");
+      } else {
+        alert("Erro ao vincular tag: " + error.message);
+      }
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert("Não foi possível vincular: o carretel não foi encontrado ou você não tem permissão para editá-lo.");
+      return;
+    }
+
+    setFeedbackMsg(`✅ Tag "${uid}" vinculada ao carretel "${targetSpool.color_name}"!`);
+    await loadData();
+  }
 
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
@@ -324,14 +438,43 @@ export default function App() {
     const savedTare = (spool.spool_tare_weight || 218).toString();
     setModalTare(savedTare);
     setModalGross((spool.current_weight + parseFloat(savedTare)).toString());
+    // Primeira pesagem real de um carretel vindo da Bambu: current_weight/
+    // initial_weight ainda são só o default da coluna, nunca uma medição.
+    // Sugere o netWeight nominal da Bambu como ponto de partida do peso
+    // inicial -- o usuário confirma ou corrige, nunca é aplicado sozinho.
+    if (needsWeighing(spool)) {
+      const suggested = suggestInitialWeightFromBambu(spool);
+      setModalInitialWeight((suggested ?? spool.initial_weight ?? 1000).toString());
+    } else {
+      setModalInitialWeight("");
+    }
   }
 
   async function handleSaveWeigh(e: React.FormEvent) {
     e.preventDefault();
     if (!weighingSpool) return;
-    const net = Math.max(0, (parseFloat(modalGross) || 0) - (parseFloat(modalTare) || 0));
-    await supabase.from("spools").update({ current_weight: net, spool_tare_weight: parseFloat(modalTare) || 218 }).eq("id", weighingSpool.id);
+
+    const payload = buildWeighUpdate({
+      grossWeight: modalGross,
+      tareWeight: modalTare,
+      initialWeight: needsWeighing(weighingSpool) ? modalInitialWeight : undefined,
+    });
+
+    const { data, error } = await updateSpoolWeight(weighingSpool.id, payload);
+
+    if (error) {
+      alert("Erro ao salvar pesagem: " + error.message);
+      return;
+    }
+    // RLS pode filtrar a linha do UPDATE (spool de outro usuário) sem
+    // retornar erro -- 0 linhas afetadas e o peso digitado nunca é salvo.
+    if (!data || data.length === 0) {
+      alert("Não foi possível salvar: o carretel não foi encontrado ou você não tem permissão para editá-lo.");
+      return;
+    }
+
     setWeighingSpool(null);
+    setModalInitialWeight("");
     await loadData();
   }
 
@@ -354,6 +497,7 @@ export default function App() {
       color_hex: editColorHex, spool_tare_weight: parseFloat(editTare) || 218,
       current_weight: parseFloat(editWeight) || 0,
       price_paid: parseFloat(editPrice) || 85.00,
+      weight_confirmed_at: new Date().toISOString(),
     }).eq("id", editingSpool.id).select();
 
     if (error) {
@@ -445,8 +589,12 @@ export default function App() {
     )
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
 
+  const sortedFilteredInventory = sortSpoolsForSpoolScreen(filteredInventory);
+  const spoolsInPrinter = sortedFilteredInventory.filter((s) => s.bambu_in_printer);
+  const otherSpools = sortedFilteredInventory.filter((s) => !s.bambu_in_printer);
+
   const groupedByMaterial =
-    groupInventoryByMaterial(filteredInventory);
+    groupInventoryByMaterial(otherSpools);
 
   const pendingWeighingLogs =
     getPendingWeighingLogs(printLogs);
@@ -458,6 +606,63 @@ export default function App() {
     getActivePrinter(printers);
   const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const printerOnline = isPrinterOnline(activePrinter);
+
+  function renderSpoolCard(spool: Spool) {
+    const location = formatBambuLocation(spool);
+    const spoolNeedsWeighing = needsWeighing(spool);
+    const isLinkingThisSpool = linkingSpoolId === spool.id && isReading;
+
+    return (
+      <div key={spool.id} style={{ background: "#1e293b", border: `1px solid ${spoolNeedsWeighing ? "#d97706" : "#334155"}`, borderRadius: 8, padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b", flexShrink: 0 }} />
+          <div>
+            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
+            <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+              <span>{spool.brand} • {spool.material}</span>
+              {getNfcStatus(spool) === "written" ? (
+                <span title={`Tag física gravada em ${new Date(spool.nfc_written_at!).toLocaleString()} — ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>✅ Tag gravada</span>
+              ) : getNfcStatus(spool) === "pending" ? (
+                <span title={`Possui nfc_uid ("${spool.nfc_uid}") mas nenhuma escrita física confirmada ainda`} style={{ background: "rgba(251, 191, 36, 0.15)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⏳ Aguardando gravação</span>
+              ) : (
+                <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
+              )}
+              {spool.bambu_spool_id && (
+                <span title="Sincronizado da conta Bambu (Cloud Spool Sync)" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #0284c7", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🌐 Bambu</span>
+              )}
+              {spoolNeedsWeighing && (
+                <span title="Peso ainda não foi conferido na balança pelo Filamap" style={{ background: "rgba(217, 119, 6, 0.18)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Precisa pesagem</span>
+              )}
+            </div>
+            {location && (
+              <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 2 }}>📍 {location}</div>
+            )}
+            {isLinkingThisSpool && (
+              <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                📡 Aproxime a tag...
+                <button type="button" onClick={handleCancelLinkNfc} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "1px 6px", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>Cancelar</button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <strong style={{ fontSize: 14, color: "#38bdf8" }}>{spool.current_weight}g</strong>
+          <button onClick={() => openWeighModal(spool)} title="Pesar / atualizar peso real" style={{ background: spoolNeedsWeighing ? "#d97706" : "#334155", color: "#fff", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>⚖️</button>
+          <button
+            onClick={() => handleStartLinkNfc(spool.id)}
+            disabled={isLinkingThisSpool}
+            title={spool.nfc_uid ? "Trocar a tag NFC vinculada (lê uma nova tag e substitui, mediante confirmação)" : "Vincular NFC: aproxime uma tag já gravada para associá-la a este carretel"}
+            style={{ background: spool.nfc_uid ? "#0f172a" : "rgba(56, 189, 248, 0.2)", color: "#38bdf8", border: "1px solid #38bdf8", padding: "4px 8px", borderRadius: 4, cursor: isLinkingThisSpool ? "not-allowed" : "pointer", fontSize: 11 }}
+          >
+            📶
+          </button>
+          <button onClick={() => selectWriterSpool(spool)} title="Gravar tag NFC nova neste carretel" style={{ background: spool.nfc_uid ? "#0f172a" : "rgba(56, 189, 248, 0.2)", color: "#38bdf8", border: "1px solid #38bdf8", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🏷️</button>
+          <button onClick={() => openEditModal(spool)} style={{ background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✏️</button>
+          <button onClick={() => handleDeleteSpool(spool)} style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🗑️</button>
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
@@ -656,7 +861,7 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div>
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
-              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Separado por material e em ordem alfabética</p>
+              <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Na impressora primeiro, demais separados por material</p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar cor, marca..." style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }} />
@@ -669,6 +874,23 @@ export default function App() {
               </select>
             </div>
           </div>
+
+          {nfcError && linkingSpoolId === null && (
+            <div style={{ marginBottom: 16, padding: 8, background: "rgba(239, 68, 68, 0.1)", border: "1px solid #dc2626", borderRadius: 6, color: "#f87171", fontSize: 12 }}>
+              {nfcError}
+            </div>
+          )}
+
+          {spoolsInPrinter.length > 0 && (
+            <div style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #38bdf8", overflow: "hidden", marginBottom: 16 }}>
+              <div style={{ padding: "10px 14px", background: "rgba(2, 132, 199, 0.15)", borderBottom: "1px solid #334155" }}>
+                <strong style={{ color: "#38bdf8" }}>📍 Na Impressora Agora ({spoolsInPrinter.length})</strong>
+              </div>
+              <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                {spoolsInPrinter.map((spool) => renderSpoolCard(spool))}
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {Object.keys(groupedByMaterial).map((mat) => {
@@ -685,33 +907,7 @@ export default function App() {
                     </div>
                   </div>
                   <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                    {spools.map((spool) => (
-                      <div key={spool.id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b" }} />
-                          <div>
-                            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
-                            <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-                              <span>{spool.brand}</span>
-                              {getNfcStatus(spool) === "written" ? (
-                                <span title={`Tag física gravada em ${new Date(spool.nfc_written_at!).toLocaleString()} — ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>✅ Tag gravada</span>
-                              ) : getNfcStatus(spool) === "pending" ? (
-                                <span title={`Possui nfc_uid ("${spool.nfc_uid}") mas nenhuma escrita física confirmada ainda`} style={{ background: "rgba(251, 191, 36, 0.15)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⏳ Aguardando gravação</span>
-                              ) : (
-                                <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <strong style={{ fontSize: 14, color: "#38bdf8" }}>{spool.current_weight}g</strong>
-                          <button onClick={() => openWeighModal(spool)} style={{ background: "#334155", color: "#fff", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>⚖️</button>
-                          <button onClick={() => selectWriterSpool(spool)} title="Gravar tag NFC deste carretel" style={{ background: spool.nfc_uid ? "#0f172a" : "rgba(56, 189, 248, 0.2)", color: "#38bdf8", border: "1px solid #38bdf8", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🏷️</button>
-                          <button onClick={() => openEditModal(spool)} style={{ background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✏️</button>
-                          <button onClick={() => handleDeleteSpool(spool)} style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🗑️</button>
-                        </div>
-                      </div>
-                    ))}
+                    {spools.map((spool) => renderSpoolCard(spool))}
                   </div>
                 </div>
               );
@@ -1086,9 +1282,20 @@ export default function App() {
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
           <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
             <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {weighingSpool.color_name}</h3>
+            {needsWeighing(weighingSpool) && (
+              <p style={{ margin: "0 0 10px", color: "#fbbf24", fontSize: 12 }}>
+                Este carretel veio da Bambu e ainda não foi pesado no Filamap -- o peso {weighingSpool.current_weight}g é só um valor padrão.
+              </p>
+            )}
             <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <input type="number" value={modalGross} onChange={(e) => setModalGross(e.target.value)} placeholder="Peso na balança (g)" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
               <input type="number" value={modalTare} onChange={(e) => setModalTare(e.target.value)} placeholder="Tara (g)" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+              {needsWeighing(weighingSpool) && (
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Peso inicial (rolo cheio, g) -- confirme ou corrija a sugestão</label>
+                  <input type="number" value={modalInitialWeight} onChange={(e) => setModalInitialWeight(e.target.value)} placeholder="Peso inicial (g)" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" onClick={() => setWeighingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
                 <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>

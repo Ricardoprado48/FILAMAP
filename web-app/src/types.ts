@@ -30,6 +30,22 @@ export interface Spool {
   spool_tare_weight?: number;
   price_paid?: number;
   nfc_written_at?: string | null;
+  // Somente leitura na Web -- preenchidos exclusivamente pelo Cloud Spool
+  // Sync (desktop-agent/bambuCloudSpoolSync.ts). Nunca escrever nestes
+  // campos a partir da Web.
+  bambu_spool_id?: string | null;
+  bambu_in_printer?: boolean | null;
+  bambu_dev_id?: string | null;
+  bambu_device_name?: string | null;
+  bambu_ams_sn?: string | null;
+  bambu_ams_id?: string | null;
+  bambu_slot_id?: string | null;
+  bambu_synced_at?: string | null;
+  filament_profile_id?: string | null;
+  // Controlado pela Web: quando o usuário confirmou o peso real deste
+  // carretel pela última vez (pesagem ou edição manual). NULL = ainda no
+  // valor padrão/placeholder, nunca conferido.
+  weight_confirmed_at?: string | null;
 }
 
 export interface CatalogItem {

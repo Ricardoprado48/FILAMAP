@@ -98,8 +98,9 @@ function extractRecordsArray(parsed: unknown): unknown[] {
   if (parsed && typeof parsed === "object") {
     // A bridge repassa o corpo bruto da Bambu -- não documentado publicamente
     // se é array direto ou envelope {list:[...]}. Aceita as chaves plausíveis
-    // em vez de assumir uma forma específica.
-    for (const key of ["list", "spools", "items", "data", "result", "filament_spools", "filamentSpools"]) {
+    // em vez de assumir uma forma específica. "hits" é a forma real
+    // confirmada por homologação contra bambu_network_get_filament_spools.
+    for (const key of ["hits", "list", "spools", "items", "data", "result", "filament_spools", "filamentSpools"]) {
       const value = (parsed as Record<string, unknown>)[key];
       if (Array.isArray(value)) return value;
     }

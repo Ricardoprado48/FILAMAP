@@ -99,8 +99,10 @@ function sharedFilamentRecord(overrides: Record<string, unknown>) {
 }
 
 function bridgeStdout(records: unknown[]): string {
+  // "hits" é o envelope real confirmado por homologação contra a bridge de
+  // verdade (bambu_network_get_filament_spools), não uma suposição.
   return `BAMBU_LOGIN=OK\nGET_FILAMENT_SPOOLS_RET=0\n\n${JSON_SECTION_MARKER}\n${JSON.stringify({
-    list: records,
+    hits: records,
   })}\n`;
 }
 

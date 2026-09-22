@@ -16,6 +16,7 @@ import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboa
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
+import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 
 dotenv.config();
@@ -203,6 +204,42 @@ async function startAgent() {
   setInterval(() => {
     void syncFilamentProfiles();
   }, 60000);
+
+  // Cloud Spool Sync: liga os spools físicos da conta Bambu (bridge C++)
+  // aos carretéis do Filamap. Roda em paralelo ao resto do Agent -- bridge
+  // indisponível/crash/timeout só loga e segue, nunca mata o Agent (a
+  // bridge já teve histórico de crash na saída, corrigido no commit
+  // 5bf1220, e o Agent não pode depender dela pra continuar funcionando).
+  let bambuCloudSyncInProgress = false;
+
+  async function syncBambuCloud() {
+    if (bambuCloudSyncInProgress) return;
+
+    bambuCloudSyncInProgress = true;
+
+    try {
+      const result = await syncBambuCloudSpools(supabase, authenticatedUserId);
+
+      console.log(
+        `🧵 Cloud Spool Sync: ${result.spoolsInserted} novo(s), ${result.spoolsUpdated} atualizado(s), ` +
+          `${result.profilesUpserted} perfil(is), ${result.skippedRecords} registro(s) ignorado(s) de ${result.totalRecords}.`
+      );
+    } catch (error: any) {
+      console.warn(
+        "⚠️ Falha ao sincronizar spools da conta Bambu:",
+        error?.message || error
+      );
+    } finally {
+      bambuCloudSyncInProgress = false;
+    }
+  }
+
+  await syncBambuCloud();
+
+  setInterval(() => {
+    void syncBambuCloud();
+  }, 300000);
+
   while (!PRINTER_IP) {
     PRINTER_IP = await discoverPrinterIp(PRINTER_SERIAL);
 

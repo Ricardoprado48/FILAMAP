@@ -15,6 +15,7 @@ import type { JobConsumptionItem } from "./consumption";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
+import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 
 dotenv.config();
@@ -115,7 +116,14 @@ async function startAgent() {
 
   let auth = await bootstrapRuntimeConfig();
 
-  let authData;
+  let authData:
+    | {
+        session: {
+          refresh_token: string;
+          user: { id: string };
+        } | null;
+      }
+    | undefined;
   let authError;
 
   for (let authAttempt = 0; authAttempt < 2; authAttempt++) {
@@ -129,7 +137,7 @@ async function startAgent() {
           console.warn("⚠️ Sessão salva expirou ou foi revogada. Abrindo o login novamente.");
 
           // Remove somente o refresh token inválido e preserva o Access Code da Bambu.
-          await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
+  await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
 
           // O segundo bootstrap abre novamente o login na mesma execução.
           auth = await bootstrapRuntimeConfig();
@@ -148,17 +156,53 @@ async function startAgent() {
     break;
   }
 
-  if (authError || !authData?.session) {
+  const authenticatedSession = authData?.session;
+  if (authError || !authenticatedSession) {
     console.error("❌ Falha no login do agente:", authError?.message || "sessão não iniciada");
     process.exit(1);
   }
 
+  const authenticatedUserId = authenticatedSession.user.id;
+
   await persistSessionSecrets(
     activeSecretStore,
-    authData.session.refresh_token ?? null,
+    authenticatedSession.refresh_token ?? null,
     PRINTER_ACCESS_CODE
   );
 
+  // Sincroniza os presets pessoais do Bambu Studio mesmo quando
+  // a impressora estiver desligada. filament_id é a identidade estável.
+  let filamentSyncInProgress = false;
+
+  async function syncFilamentProfiles() {
+    if (filamentSyncInProgress) return;
+
+    filamentSyncInProgress = true;
+
+    try {
+      const count = await syncBambuStudioFilamentProfiles(
+        supabase,
+        authenticatedUserId
+      );
+
+      console.log(
+        `🧵 Perfis de filamento sincronizados do Bambu Studio: ${count}`
+      );
+    } catch (error: any) {
+      console.warn(
+        "⚠️ Falha ao sincronizar perfis do Bambu Studio:",
+        error?.message || error
+      );
+    } finally {
+      filamentSyncInProgress = false;
+    }
+  }
+
+  await syncFilamentProfiles();
+
+  setInterval(() => {
+    void syncFilamentProfiles();
+  }, 60000);
   while (!PRINTER_IP) {
     PRINTER_IP = await discoverPrinterIp(PRINTER_SERIAL);
 

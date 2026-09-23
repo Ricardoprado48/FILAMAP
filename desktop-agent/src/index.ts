@@ -8,10 +8,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { computeConsumptionPerSlot, buildJobConsumptionItems } from "./consumption";
+import { computeConsumptionPerSlot, buildJobConsumptionItems, detectPhysicalIdentityMismatches } from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
-import type { JobConsumptionItem } from "./consumption";
+import type { JobConsumptionItem, SpoolPhysicalInfo } from "./consumption";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
@@ -526,7 +526,7 @@ async function startAgent() {
           await supabase.from("printers").update(telemetryData).eq("id", printer.id);
         }
 
-        if (currentState === "FINISH" && lastGcodeState !== "FINISH") {
+        if (currentState === "FINISH" && lastGcodeState !== "FINISH" && currentJob) {
           console.log("🎉 Impressão CONCLUÍDA!");
           await finalizeJob(printer.id, print, 100, "COMPLETED");
           currentJob = null;
@@ -572,12 +572,38 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
       durationMinutes
     );
 
+    // Join com spools: além do spool_id vinculado por NFC (fonte da
+    // verdade da associação slot -> spool físico), traz o snapshot mais
+    // recente da localização reportada pela própria Bambu Cloud
+    // (bambu_dev_id/bambu_slot_id/bambu_in_printer, ver bambuCloudSpoolSync.ts)
+    // e weight_confirmed_at, usados abaixo só para cross-check/log -- nunca
+    // para decidir o spool_id enviado à RPC.
     const { data: slotRows } = await supabase
       .from("ams_slots")
-      .select("slot_index, spool_id")
+      .select("slot_index, spool_id, spool:spools(weight_confirmed_at, bambu_spool_id, bambu_dev_id, bambu_in_printer, bambu_slot_id)")
       .eq("printer_id", printerId)
       .in("slot_index", Array.from(perSlot.keys()));
-    const spoolBySlot = new Map<number, string | null>((slotRows || []).map((r: any) => [r.slot_index, r.spool_id]));
+
+    const spoolBySlot = new Map<number, string | null>();
+    const weightConfirmedBySlot = new Map<number, boolean>();
+    const physicalInfoBySlot = new Map<number, SpoolPhysicalInfo | null>();
+
+    for (const r of (slotRows || []) as any[]) {
+      spoolBySlot.set(r.slot_index, r.spool_id);
+      const spool = Array.isArray(r.spool) ? r.spool[0] : r.spool;
+      weightConfirmedBySlot.set(r.slot_index, Boolean(spool?.weight_confirmed_at));
+      physicalInfoBySlot.set(
+        r.slot_index,
+        spool
+          ? {
+              bambuSpoolId: spool.bambu_spool_id ?? null,
+              bambuDevId: spool.bambu_dev_id ?? null,
+              bambuInPrinter: spool.bambu_in_printer ?? null,
+              bambuSlotId: spool.bambu_slot_id ?? null,
+            }
+          : null
+      );
+    }
 
     const items = buildJobConsumptionItems(
       perSlot,
@@ -590,11 +616,24 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
         console.warn(
           `⚠️ Slot ${item.slot_index} usado no job mas sem spool_id em ams_slots -- log órfão, sem desconto (${item.grams}g não debitados de ninguém).`
         );
+      } else if (item.grams > 0 && !weightConfirmedBySlot.get(item.slot_index)) {
+        console.warn(
+          `⚖️ Slot ${item.slot_index}: consumo de ${item.grams}g será registrado, mas o carretel ainda não tem peso confirmado -- current_weight NÃO será descontado até a pesagem no Estoque.`
+        );
       }
     }
+
+    const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, PRINTER_SERIAL);
+    for (const mismatch of mismatches) {
+      console.warn(
+        `🔀 Slot ${mismatch.slotIndex}: possível troca de carretel não atualizada via NFC -- ${mismatch.reason}.`
+      );
+    }
+
     // Chamada única e atômica: idempotência, checagem de dono, desconto de
-    // cada spool e inserção de todas as linhas de log -- tudo ou nada.
-    // Substitui o UPDATE direto + insert separado que existia antes.
+    // cada spool (só quando o spool já tem peso confirmado -- ver migration
+    // 20260923120000_finalize_print_job_weight_gate.sql) e inserção de
+    // todas as linhas de log -- tudo ou nada.
     const { data: logRows, error } = await supabase.rpc("finalize_print_job", {
       p_job_id: jobId,
       p_printer_id: printerId,
@@ -606,7 +645,10 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
 
     if (error) throw error;
 
-    const totalDeducted = items.reduce((acc, it) => acc + (it.spool_id ? it.grams : 0), 0);
+    const totalDeducted = items.reduce(
+      (acc, it) => acc + (it.spool_id && weightConfirmedBySlot.get(it.slot_index) ? it.grams : 0),
+      0
+    );
     console.log(`📝 Job ${jobId} finalizado (${finishStatus}) -- ${logRows?.length ?? items.length} linha(s) de log, ${totalDeducted}g debitados no total.`);
   } catch (e: any) {
     console.error("❌ Falha ao finalizar trabalho:", e.message);

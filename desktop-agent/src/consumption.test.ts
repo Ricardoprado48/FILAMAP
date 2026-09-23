@@ -1,8 +1,14 @@
 ﻿import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeConsumptionPerSlot, computeFinalGrams, buildJobConsumptionItems } from "./consumption";
+import {
+  computeConsumptionPerSlot,
+  computeFinalGrams,
+  buildJobConsumptionItems,
+  detectPhysicalIdentityMismatches,
+} from "./consumption";
 import type { FilamentSliceInfo } from "./ftpsParser";
+import type { JobConsumptionItem, SpoolPhysicalInfo } from "./consumption";
 
 function slice(
   trayId: number,
@@ -310,5 +316,123 @@ test("build items: multicolor preserva um item por slot", () => {
   assert.equal(items.length, 2);
   assert.equal(items[0].slot_index, 0);
   assert.equal(items[1].slot_index, 2);
+});
+
+function item(
+  slotIndex: number,
+  spoolId: string | null,
+  grams = 10
+): JobConsumptionItem {
+  return {
+    spool_id: spoolId,
+    slot_index: slotIndex,
+    grams,
+    consumption_quality: "exact",
+    orphan_slot: !spoolId,
+  };
+}
+
+function physical(overrides: Partial<SpoolPhysicalInfo> = {}): SpoolPhysicalInfo {
+  return {
+    bambuSpoolId: "15582983",
+    bambuDevId: "01P00A000000000",
+    bambuInPrinter: true,
+    bambuSlotId: "0",
+    ...overrides,
+  };
+}
+
+test("cross-check: sem bambu_spool_id (spool nunca sincronizado da nuvem) não gera divergência", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map([[0, physical({ bambuSpoolId: null })]]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("cross-check: slot sem nenhum dado físico (nunca sincronizado) não gera divergência", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map<number, SpoolPhysicalInfo | null>([[0, null]]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("cross-check: dev_id/slot_id ausentes na Bambu Cloud não geram divergência (inconclusivo != divergente)", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map([
+    [0, physical({ bambuDevId: null, bambuSlotId: null })],
+  ]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("cross-check: localização Bambu concorda com o vínculo NFC não gera divergência", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map([
+    [0, physical({ bambuDevId: "01P00A000000000", bambuSlotId: "0", bambuInPrinter: true })],
+  ]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("cross-check: spool trocado/movido -- Bambu Cloud reporta bambu_in_printer=false", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map([[0, physical({ bambuInPrinter: false })]]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.equal(mismatches.length, 1);
+  assert.equal(mismatches[0].slotIndex, 0);
+  assert.equal(mismatches[0].spoolId, "spool-a");
+  assert.match(mismatches[0].reason, /em impressora/);
+});
+
+test("cross-check: spool trocado/movido -- Bambu Cloud reporta outro dev_id (outra impressora)", () => {
+  const items = [item(0, "spool-a")];
+  const physicalInfoBySlot = new Map([[0, physical({ bambuDevId: "01P00A999999999" })]]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.equal(mismatches.length, 1);
+  assert.match(mismatches[0].reason, /outra impressora/);
+});
+
+test("cross-check: spool trocado/movido -- Bambu Cloud reporta outro slot", () => {
+  const items = [item(1, "spool-a")];
+  const physicalInfoBySlot = new Map([[1, physical({ bambuSlotId: "3" })]]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.equal(mismatches.length, 1);
+  assert.match(mismatches[0].reason, /slot 3/);
+});
+
+test("cross-check: slot órfão (sem spool_id) nunca gera divergência", () => {
+  const items = [item(2, null, 0)];
+  const physicalInfoBySlot = new Map<number, SpoolPhysicalInfo | null>();
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("cross-check: multicolor só reporta divergência no slot afetado", () => {
+  const items = [item(0, "spool-a"), item(2, "spool-c")];
+  const physicalInfoBySlot = new Map([
+    [0, physical({ bambuSlotId: "0" })],
+    [2, physical({ bambuSpoolId: "999", bambuSlotId: "9" })],
+  ]);
+
+  const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, "01P00A000000000");
+
+  assert.equal(mismatches.length, 1);
+  assert.equal(mismatches[0].slotIndex, 2);
 });
 

@@ -2,6 +2,98 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 23/09/2026 — Consumo automático end-to-end usando spools físicos da Bambu
+
+Escopo: fechar a lacuna entre o Cloud Spool Sync (`bambu_spool_id`,
+`bambu_dev_id`, `bambu_ams_id`, `bambu_slot_id`, `bambu_in_printer`, todos
+de `20260922140000_add_bambu_cloud_spool_sync.sql`) e o desconto real de
+`current_weight` por job. Web App, bridge C++ e `bambuCloudSpoolSync.ts`
+não foram alterados.
+
+### Lacuna encontrada
+
+`public.finalize_print_job` descontava `current_weight` de **qualquer**
+`spool_id` resolvido, mesmo quando o spool era recém-sincronizado da Bambu
+Cloud e `current_weight` ainda era só o default da coluna (1000g) — nunca
+uma pesagem real (`weight_confirmed_at` existe desde
+`20260922150000_add_spools_weight_confirmed_at.sql` e já era lido pelo
+frontend, mas a RPC nunca chegou a checá-lo). Confirmado contra dados reais
+de produção: os 12 spools sincronizados da Bambu Cloud no banco atual têm
+`weight_confirmed_at = NULL`.
+
+### Alterado
+
+- `supabase/migrations/20260923120000_finalize_print_job_weight_gate.sql`
+  (nova, aplicada no banco remoto via `supabase db push`) —
+  `finalize_print_job` só desconta `current_weight` quando
+  `spools.weight_confirmed_at IS NOT NULL`. Sem isso, a linha de
+  `print_logs` continua sendo gravada normalmente (consumo/qualidade
+  preservados) e `needs_weighing` passa a cobrir dois motivos
+  independentes: `consumption_quality = 'unknown'` (como antes) OU spool
+  identificado mas sem peso confirmado (novo). Nenhuma coluna nova em
+  `print_logs`; reaproveita `needs_weighing`, já lido por
+  `getPendingWeighingLogs` no Web App.
+- `desktop-agent/src/consumption.ts` — nova
+  `detectPhysicalIdentityMismatches()`: compara o vínculo slot -> spool por
+  NFC (`ams_slots.spool_id`, fonte da verdade já existente, associação por
+  identidade física via toque de tag — nunca por material/cor/nome) contra
+  o snapshot mais recente da própria Bambu Cloud
+  (`bambu_dev_id`/`bambu_slot_id`/`bambu_in_printer`). Só relata
+  divergência quando há dado suficiente da nuvem para afirmar algo
+  (inconclusivo ≠ divergente); nunca troca o `spool_id` sozinha — o vínculo
+  por NFC continua sendo o sinal mais forte, e o sync da nuvem roda a cada
+  5 minutos (pode estar desatualizado). `bambu_dev_id` é comparado contra
+  `printers.serial`: confirmado contra dados reais de produção que os dois
+  valores são idênticos (`03919D570307088` nos dois lados) para spools
+  atualmente na impressora.
+- `desktop-agent/src/index.ts::finalizeJob` — passa a buscar
+  `weight_confirmed_at` e os campos `bambu_*` junto com `ams_slots` (join
+  em `spools`, mesma query, sem custo extra), loga um aviso quando um slot
+  vai gerar consumo mas o spool ainda não tem peso confirmado (mesmo
+  padrão do aviso já existente para `orphan_slot`), chama
+  `detectPhysicalIdentityMismatches()` e loga cada divergência encontrada.
+  `totalDeducted` do log final passou a refletir só o que a RPC realmente
+  desconta (antes contava todo `spool_id` presente, mesmo sem peso
+  confirmado).
+
+### Limitações documentadas (não implementadas nesta fase, de propósito)
+
+- **Troca de spool no mesmo slot sem reler a tag NFC**: não há como
+  detectar com certeza — o cross-check acima só *sinaliza* (log) quando a
+  Bambu Cloud contradiz o vínculo NFC, nunca decide sozinho. Sem alertas
+  novos (fora de escopo) e sem redesenho de arquitetura para isso.
+- **Múltiplas unidades de AMS por impressora**: fora de escopo — o schema
+  atual (`ams_slots.slot_index` 0-3, sem coluna de AMS) já assume uma
+  única AMS por impressora desde `001_initial_schema.sql`; não alterado.
+- **Catch-up retroativo**: quando um spool passa a ter peso confirmado
+  depois de já ter jobs registrados com `needs_weighing = true` por falta
+  de pesagem, o consumo já logado não é aplicado retroativamente a
+  `current_weight`. Não pedido no escopo desta fase.
+
+### Testes
+
+- `desktop-agent/src/consumption.test.ts` — 10 testes novos para
+  `detectPhysicalIdentityMismatches` (sem dado suficiente não gera
+  divergência; concordância não gera divergência; `bambu_in_printer=false`,
+  `dev_id` diferente e `slot_id` diferente cada um gera divergência;
+  slot órfão nunca gera divergência; multicolor isola a divergência ao
+  slot certo). 28/28 testes de `consumption.test.ts` passando, 88/88 no
+  total (`npm test`).
+- `desktop-agent/src/finalize.integration.test.ts` — 4 testes novos contra
+  o banco remoto real (`npm run test:integration`): spool sem peso
+  confirmado registra consumo sem descontar; idempotência do mesmo caso;
+  multicolor com um spool confirmado e outro não (desconta só o
+  confirmado); `nfc_uid`/colunas `bambu_*` preservadas após finalizar.
+  10/10 testes de integração passando contra o projeto Supabase real
+  (`gqtlszffgvxsqcmefhyd`).
+- Homologação real adicional (scripts descartáveis, não commitados):
+  leitura read-only do banco de produção confirmou `bambu_dev_id ==
+  printers.serial` em spools reais na impressora, e uma rechamada de
+  `finalize_print_job` contra um `job_id` real já processado (com payload
+  deliberadamente diferente, incluindo gramas absurdas) confirmou que a
+  guarda de idempotência bloqueia qualquer novo processamento — nenhuma
+  linha nova, nenhum peso alterado.
+
 ## 21/09/2026 — Onboarding comercial do Desktop Agent (v2)
 
 Branch `claude/agent-onboarding-v2`, criada a partir de `origin/main`

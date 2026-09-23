@@ -126,6 +126,90 @@ export function computeFinalGrams(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Cross-check de identidade física: ams_slots.spool_id (vínculo por toque de
+// NFC, feito pelo usuário na Web -- ver handleAssignSlot em web-app/src/App.tsx)
+// já É uma associação por identidade física, não por material/cor/nome. O
+// que falta é comparar esse vínculo contra o que a própria Bambu Cloud
+// reporta como localização atual do spool (bambu_dev_id/bambu_slot_id/
+// bambu_in_printer, sincronizados por bambuCloudSpoolSync.ts) para detectar
+// o caso em que o carretel físico foi trocado no slot sem o usuário reler a
+// tag NFC -- sem isso, ams_slots ficaria "preso" no carretel antigo
+// indefinidamente.
+//
+// Deliberadamente NÃO troca o spool_id sozinho quando encontra divergência:
+// o vínculo por NFC continua sendo o sinal mais forte (o usuário tocou a tag
+// no momento em que carregou o carretel), e o snapshot da Bambu Cloud só é
+// atualizado a cada sync (ver setInterval de 300000ms em index.ts) -- pode
+// estar desatualizado por até 5 minutos. Só reporta a divergência para
+// quem chama decidir (hoje, um log de auditoria) -- ver regra 6 do escopo
+// desta fase ("não invente comportamento silencioso").
+export interface SpoolPhysicalInfo {
+  bambuSpoolId: string | null;
+  bambuDevId: string | null;
+  bambuInPrinter: boolean | null;
+  bambuSlotId: string | null;
+}
+
+export interface PhysicalIdentityMismatch {
+  slotIndex: number;
+  spoolId: string;
+  reason: string;
+}
+
+/**
+ * Só relata divergência quando há dado suficiente da Bambu Cloud para
+ * afirmar algo (bambuSpoolId, bambuDevId e bambuSlotId presentes). Spool
+ * nunca sincronizado da nuvem (bambuSpoolId null) ou ainda sem localização
+ * conhecida não gera nenhum aviso -- inconclusivo não é o mesmo que
+ * divergente.
+ */
+export function detectPhysicalIdentityMismatches(
+  items: JobConsumptionItem[],
+  physicalInfoBySlot: Map<number, SpoolPhysicalInfo | null>,
+  printerSerial: string
+): PhysicalIdentityMismatch[] {
+  const mismatches: PhysicalIdentityMismatch[] = [];
+
+  for (const item of items) {
+    if (!item.spool_id) continue;
+
+    const info = physicalInfoBySlot.get(item.slot_index);
+    if (!info || !info.bambuSpoolId) continue;
+
+    if (info.bambuInPrinter === false) {
+      mismatches.push({
+        slotIndex: item.slot_index,
+        spoolId: item.spool_id,
+        reason:
+          "carretel vinculado por NFC a este slot não está mais reportado como 'em impressora' pela Bambu Cloud",
+      });
+      continue;
+    }
+
+    if (!info.bambuDevId || !info.bambuSlotId) continue;
+
+    if (info.bambuDevId !== printerSerial) {
+      mismatches.push({
+        slotIndex: item.slot_index,
+        spoolId: item.spool_id,
+        reason: `Bambu Cloud reporta este carretel em outra impressora (dev_id ${info.bambuDevId})`,
+      });
+      continue;
+    }
+
+    if (Number(info.bambuSlotId) !== item.slot_index) {
+      mismatches.push({
+        slotIndex: item.slot_index,
+        spoolId: item.spool_id,
+        reason: `Bambu Cloud reporta este carretel no slot ${info.bambuSlotId}, não no slot ${item.slot_index}`,
+      });
+    }
+  }
+
+  return mismatches;
+}
+
 export function buildJobConsumptionItems(
   perSlot: Map<number, SlotConsumption>,
   spoolBySlot: Map<number, string | null>,

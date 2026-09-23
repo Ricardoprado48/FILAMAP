@@ -2,6 +2,155 @@
 
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
+## 23/09/2026 (2) — Resolução automática do spool físico via localização Bambu Cloud
+
+Escopo: até aqui, `finalizeJob()` resolvia slot → spool físico só por
+`ams_slots.spool_id` (vínculo por toque de NFC); a Bambu Cloud só entrava
+como cross-check de divergência, nunca como fonte de resolução. Isso exigia
+o usuário tocar a tag NFC de novo toda vez que trocava um spool no AMS,
+mesmo quando a Bambu Cloud já sabia exatamente qual spool estava em qual
+slot. Bridge C++, `bambuCloudSpoolSync.ts` e Web não foram alterados.
+
+### Fonte de verdade escolhida
+
+Por slot, em ordem de prioridade:
+1. **Bambu Cloud** -- spool do usuário com `bambu_in_printer = true`,
+   `bambu_dev_id` igual ao serial da impressora do job e `bambu_slot_id`
+   igual ao slot. Só resolve por aqui quando há **exatamente 1** candidato;
+   0 ou mais de 1 (ambíguo) nunca é tratado como resposta.
+2. **`ams_slots.spool_id`** (vínculo NFC) -- usado sempre que a Bambu Cloud
+   não resolver: spool nunca sincronizado da nuvem (cadastro manual),
+   sincronizado mas não mais reportado no AMS, ou caso ambíguo.
+3. Nenhuma das duas -- `orphan_slot`, sem débito incorreto (comportamento
+   já existente, preservado).
+
+`bambu_ams_id` (unidade física do AMS) deliberadamente não entra no
+filtro: a arquitetura atual só suporta 1 unidade AMS por impressora
+(`ams_slots.slot_index BETWEEN 0 AND 3`, MQTT só lê `ams.ams[0]` em
+`index.ts`) e o job não carrega hoje qual unidade AMS foi usada. Confirmado
+também nos dados reais de produção que `bambu_ams_id` vem `null` em vários
+spools que já têm `bambu_slot_id` preenchido -- filtrar por ele seria
+inseguro. Uma eventual segunda unidade AMS cairia no caso ">1 candidatos"
+e voltaria com segurança para o vínculo NFC, em vez de resolver errado.
+
+### `ams_slots`: papel final
+
+Passa a ser tratado como **projeção/cache da localização física**, não só
+do vínculo NFC. Depois que a RPC `finalize_print_job` confirma o consumo
+com sucesso, se a Prioridade 1 resolveu um spool diferente do que estava
+gravado (ou não havia nada gravado), `finalizeJob()` corrige
+`ams_slots.spool_id` com o mesmo `upsert` idempotente já usado pelo fluxo
+de NFC na Web (`handleAssignSlot`). Escrita condicional e idempotente --
+reprocessar o mesmo job depois do vínculo já corrigido não gera nenhuma
+escrita nova (`computeAmsSlotSelfHeals`).
+
+### NFC: papel final
+
+Continua sendo a única forma de identificar um spool fora da impressora
+(inventário, pesagem, operações manuais) e o único caminho para spools sem
+`bambu_spool_id`. Dentro do AMS, deixa de ser pré-requisito para consumo
+automático quando a Bambu Cloud já identifica o spool com segurança --
+colocar o carretel físico no slot já basta.
+
+### Conflito (Bambu Cloud × NFC)
+
+Nunca consome dos dois. Prevalece a Bambu Cloud somente quando ela resolve
+sem ambiguidade (regra acima); a divergência é logada
+(`console.warn`, sem alerta/notificação nova) e `ams_slots` é corrigido
+depois da RPC ter sucesso. Confirmado em dados reais de produção: os slots
+0 e 3 da impressora `03919D570307088` tinham vínculo NFC apontando para um
+spool diferente do que a Bambu Cloud reporta fisicamente ali agora --
+exatamente o cenário que este mecanismo resolve.
+
+### Sem Cloud (spool nunca sincronizado ou sem candidato unívoco)
+
+Cai para `ams_slots.spool_id`; se também não houver, `orphan_slot` (sem
+alterar nenhum saldo), como já era o comportamento antes desta fase.
+
+### Troca de spool durante a impressão (limitação documentada)
+
+O Agent não guarda hoje um snapshot da identidade Bambu por slot capturado
+no início do job -- só o que a Bambu Cloud reporta no momento do
+`finalizeJob()` (sync a cada 300000ms). Se o usuário trocar um spool
+fisicamente durante uma impressão em andamento, entre dois syncs, a
+resolução no fim do job pode não capturar a troca com precisão. Não foi
+inventada nenhuma lógica de snapshot por job/slot para cobrir esse caso --
+documentado como limitação real, coberta apenas pelo cross-check de
+divergência já existente (`detectPhysicalIdentityMismatches`), que continua
+ativo para os slots resolvidos por fallback (`ams_slots`).
+
+### Peso
+
+Regra preservada sem alteração: `current_weight` só é descontado quando
+`weight_confirmed_at IS NOT NULL`, independentemente de qual prioridade
+resolveu o spool_id. Confirmado nos testes de integração cobrindo spool
+resolvido via Bambu Cloud com e sem peso confirmado.
+
+### Testes
+
+- **Unitários** (`npm test`, sem banco): +23 novos em `consumption.test.ts`
+  cobrindo `resolvePhysicalSpoolForSlot`/`resolvePhysicalSpoolsForJob`
+  (Bambu Cloud sem NFC, concordância, conflito, fallback, ambiguidade,
+  nenhuma fonte, multicolor 3 slots), `groupBambuCandidatesBySlot`
+  (agrupamento, isolamento por impressora, `in_printer=false`, slot
+  inválido/ausente, ambiguidade) e `computeAmsSlotSelfHeals` (heal novo,
+  heal por conflito, no-op quando já correto, no-op para fallback/none,
+  idempotência de ponta a ponta). 106/106 no total.
+- **Integração** (`npm run test:integration`, banco real): novo arquivo
+  `resolution.integration.test.ts` com 3 testes que replicam as queries
+  reais de `finalizeJob()` -- conflito Bambu×NFC com self-heal e
+  reprocessamento idempotente do mesmo job; spool sem NFC nunca tocado
+  populando `ams_slots` pela primeira vez; isolamento por impressora com
+  duas impressoras reais. 13/13 no total (10 pré-existentes + 3 novos).
+
+### Homologação real
+
+Inspeção somente leitura (sem RPC, sem `upsert`, nenhum spool movido,
+nenhuma impressão interrompida) contra o projeto Supabase de produção
+(`gqtlszffgvxsqcmefhyd`), impressora real `03919D570307088`:
+- 4 spools Bambu Cloud reportados `in_printer=true` nos slots 0-3, cada um
+  com exatamente 1 candidato -- incluindo `bambu_spool_id 15582983` (slot
+  2) e `15589421` (slot 1), citados no escopo desta fase.
+- Slots 1 e 2 não têm nenhum vínculo NFC hoje (`ams_slots.spool_id = null`)
+  -- confirma o caso real "resolve só pela Bambu Cloud, sem NFC".
+- Slots 0 e 3 têm vínculo NFC apontando para spools diferentes dos que a
+  Bambu Cloud reporta fisicamente ali -- confirma o caso real de conflito
+  em produção, não só hipotético.
+- Todos os 4 spools ainda têm `weight_confirmed_at = NULL` -- a regra de
+  peso da fase anterior continua se aplicando sem alteração.
+
+### Arquivos alterados
+
+- `desktop-agent/src/consumption.ts` -- `resolvePhysicalSpoolForSlot`,
+  `resolvePhysicalSpoolsForJob`, `groupBambuCandidatesBySlot`,
+  `computeAmsSlotSelfHeals` (novo); `SlotResolution`,
+  `SlotResolutionSource`, `BambuSyncedSpoolRow`, `AmsSlotSelfHeal` (tipos
+  novos).
+- `desktop-agent/src/index.ts` -- `finalizeJob()` passa a rodar a segunda
+  query (candidatos Bambu Cloud), a resolução por prioridade, o log de
+  conflito e o self-heal de `ams_slots` após a RPC.
+- `desktop-agent/src/consumption.test.ts` -- testes novos (acima).
+- `desktop-agent/src/resolution.integration.test.ts` -- novo.
+- `desktop-agent/package.json` -- `test:integration` passa a incluir o
+  novo arquivo.
+
+### Migrations
+
+Nenhuma. Reaproveita 100% do schema existente (`ams_slots.spool_id`,
+`spools.bambu_*`, `spools.weight_confirmed_at`).
+
+### Limitações restantes
+
+- Troca de spool **durante** um job em andamento, entre dois syncs da
+  Bambu Cloud, pode não ser capturada com precisão (ver seção acima) --
+  limitação real, não coberta por invenção de snapshot.
+- Multi-AMS (mais de 1 unidade física por impressora) permanece fora de
+  escopo -- arquitetura de `ams_slots` e captura MQTT já assumiam isso
+  antes desta fase; ambiguidade cai com segurança para o vínculo NFC em
+  vez de quebrar.
+- Spool externo (fora de qualquer AMS, ex.: bobina lateral) não tem
+  tratamento dedicado -- mesma lacuna pré-existente, não inventada agora.
+
 ## 23/09/2026 — Consumo automático end-to-end usando spools físicos da Bambu
 
 Escopo: fechar a lacuna entre o Cloud Spool Sync (`bambu_spool_id`,

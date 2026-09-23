@@ -8,10 +8,17 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { computeConsumptionPerSlot, buildJobConsumptionItems, detectPhysicalIdentityMismatches } from "./consumption";
+import {
+  computeConsumptionPerSlot,
+  buildJobConsumptionItems,
+  detectPhysicalIdentityMismatches,
+  resolvePhysicalSpoolsForJob,
+  groupBambuCandidatesBySlot,
+  computeAmsSlotSelfHeals,
+} from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
-import type { JobConsumptionItem, SpoolPhysicalInfo } from "./consumption";
+import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow } from "./consumption";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
@@ -572,26 +579,25 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
       durationMinutes
     );
 
-    // Join com spools: além do spool_id vinculado por NFC (fonte da
-    // verdade da associação slot -> spool físico), traz o snapshot mais
-    // recente da localização reportada pela própria Bambu Cloud
-    // (bambu_dev_id/bambu_slot_id/bambu_in_printer, ver bambuCloudSpoolSync.ts)
-    // e weight_confirmed_at, usados abaixo só para cross-check/log -- nunca
-    // para decidir o spool_id enviado à RPC.
+    const usedSlotIndexes = Array.from(perSlot.keys());
+
+    // Prioridade 2 (fallback): vínculo por toque de NFC. Join com spools só
+    // para cross-check/log do que já está vinculado a cada slot -- weight_confirmed_at
+    // e os campos bambu_* aqui são sobre o spool HOJE preso em ams_slots, não
+    // necessariamente o que será usado (ver resolvePhysicalSpoolsForJob).
     const { data: slotRows } = await supabase
       .from("ams_slots")
       .select("slot_index, spool_id, spool:spools(weight_confirmed_at, bambu_spool_id, bambu_dev_id, bambu_in_printer, bambu_slot_id)")
       .eq("printer_id", printerId)
-      .in("slot_index", Array.from(perSlot.keys()));
+      .in("slot_index", usedSlotIndexes);
 
-    const spoolBySlot = new Map<number, string | null>();
-    const weightConfirmedBySlot = new Map<number, boolean>();
+    const amsSlotBySlot = new Map<number, string | null>();
     const physicalInfoBySlot = new Map<number, SpoolPhysicalInfo | null>();
+    const spoolInfoById = new Map<string, { weightConfirmed: boolean }>();
 
     for (const r of (slotRows || []) as any[]) {
-      spoolBySlot.set(r.slot_index, r.spool_id);
+      amsSlotBySlot.set(r.slot_index, r.spool_id);
       const spool = Array.isArray(r.spool) ? r.spool[0] : r.spool;
-      weightConfirmedBySlot.set(r.slot_index, Boolean(spool?.weight_confirmed_at));
       physicalInfoBySlot.set(
         r.slot_index,
         spool
@@ -603,6 +609,52 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
             }
           : null
       );
+      if (r.spool_id && spool) {
+        spoolInfoById.set(r.spool_id, { weightConfirmed: Boolean(spool.weight_confirmed_at) });
+      }
+    }
+
+    // Prioridade 1: spools do usuário que a própria Bambu Cloud reporta
+    // fisicamente nesta impressora/slot agora (ver bambuCloudSpoolSync.ts).
+    // Não depende de NFC ter sido tocado -- é a fonte preferencial (regra 2
+    // do escopo desta fase). RLS já isola por user_id; o filtro por
+    // bambu_dev_id aqui isola por impressora, repetido em JS dentro de
+    // groupBambuCandidatesBySlot como segunda camada.
+    const { data: bambuCandidateRows } = await supabase
+      .from("spools")
+      .select("id, bambu_dev_id, bambu_slot_id, bambu_in_printer, weight_confirmed_at")
+      .eq("bambu_dev_id", PRINTER_SERIAL)
+      .eq("bambu_in_printer", true)
+      .in("bambu_slot_id", usedSlotIndexes.map(String));
+
+    const bambuRows: BambuSyncedSpoolRow[] = ((bambuCandidateRows || []) as any[]).map((r) => {
+      spoolInfoById.set(r.id, { weightConfirmed: Boolean(r.weight_confirmed_at) });
+      return {
+        id: r.id,
+        bambuDevId: r.bambu_dev_id ?? null,
+        bambuSlotId: r.bambu_slot_id ?? null,
+        bambuInPrinter: r.bambu_in_printer ?? null,
+      };
+    });
+
+    const bambuCandidatesBySlot = groupBambuCandidatesBySlot(bambuRows, PRINTER_SERIAL);
+
+    const resolutions = resolvePhysicalSpoolsForJob(usedSlotIndexes, amsSlotBySlot, bambuCandidatesBySlot);
+
+    const spoolBySlot = new Map<number, string | null>();
+    const weightConfirmedBySlot = new Map<number, boolean>();
+    for (const [slotIndex, resolution] of resolutions) {
+      spoolBySlot.set(slotIndex, resolution.spoolId);
+      weightConfirmedBySlot.set(
+        slotIndex,
+        resolution.spoolId ? Boolean(spoolInfoById.get(resolution.spoolId)?.weightConfirmed) : false
+      );
+
+      if (resolution.conflict) {
+        console.warn(
+          `🔀 Slot ${slotIndex}: Bambu Cloud identifica o carretel ${resolution.spoolId} fisicamente aqui, mas o vínculo NFC anterior apontava para ${resolution.amsSlotSpoolId} -- usando a identidade da Bambu Cloud (evidência inequívoca de localização) e corrigindo ams_slots.`
+        );
+      }
     }
 
     const items = buildJobConsumptionItems(
@@ -614,7 +666,7 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
     for (const item of items) {
       if (item.orphan_slot) {
         console.warn(
-          `⚠️ Slot ${item.slot_index} usado no job mas sem spool_id em ams_slots -- log órfão, sem desconto (${item.grams}g não debitados de ninguém).`
+          `⚠️ Slot ${item.slot_index} usado no job mas sem spool identificado (nem Bambu Cloud nem ams_slots) -- log órfão, sem desconto (${item.grams}g não debitados de ninguém).`
         );
       } else if (item.grams > 0 && !weightConfirmedBySlot.get(item.slot_index)) {
         console.warn(
@@ -623,7 +675,13 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
       }
     }
 
-    const mismatches = detectPhysicalIdentityMismatches(items, physicalInfoBySlot, PRINTER_SERIAL);
+    // Cross-check só faz sentido para os slots resolvidos por fallback
+    // (ams_slots): para os resolvidos direto pela Bambu Cloud, o próprio
+    // spool_id do item já É a localização mais recente -- comparar contra
+    // physicalInfoBySlot (que descreve o spool ANTERIOR vinculado por NFC)
+    // produziria uma divergência sobre o spool errado.
+    const fallbackItems = items.filter((it) => resolutions.get(it.slot_index)?.source === "ams_slots");
+    const mismatches = detectPhysicalIdentityMismatches(fallbackItems, physicalInfoBySlot, PRINTER_SERIAL);
     for (const mismatch of mismatches) {
       console.warn(
         `🔀 Slot ${mismatch.slotIndex}: possível troca de carretel não atualizada via NFC -- ${mismatch.reason}.`
@@ -644,6 +702,29 @@ async function finalizeJob(printerId: string, printData: any, percentExecuted: n
     });
 
     if (error) throw error;
+
+    // ams_slots como projeção da localização física: só corrige depois que
+    // o consumo já foi gravado com sucesso, e só quando a Bambu Cloud deu
+    // evidência inequívoca de um spool diferente do que estava vinculado
+    // (ver computeAmsSlotSelfHeals). Mesmo upsert idempotente já usado pelo
+    // fluxo de NFC na Web (handleAssignSlot).
+    const heals = computeAmsSlotSelfHeals(resolutions);
+    for (const heal of heals) {
+      const { error: healError } = await supabase.from("ams_slots").upsert(
+        {
+          printer_id: printerId,
+          slot_index: heal.slotIndex,
+          spool_id: heal.spoolId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "printer_id,slot_index" }
+      );
+      if (healError) {
+        console.error(`❌ Falha ao atualizar ams_slots para o slot ${heal.slotIndex}:`, healError.message);
+      } else {
+        console.log(`🔧 Slot ${heal.slotIndex}: ams_slots atualizado automaticamente para o carretel ${heal.spoolId} identificado pela Bambu Cloud.`);
+      }
+    }
 
     const totalDeducted = items.reduce(
       (acc, it) => acc + (it.spool_id && weightConfirmedBySlot.get(it.slot_index) ? it.grams : 0),

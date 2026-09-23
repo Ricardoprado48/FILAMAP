@@ -6,9 +6,13 @@ import {
   computeFinalGrams,
   buildJobConsumptionItems,
   detectPhysicalIdentityMismatches,
+  resolvePhysicalSpoolForSlot,
+  resolvePhysicalSpoolsForJob,
+  groupBambuCandidatesBySlot,
+  computeAmsSlotSelfHeals,
 } from "./consumption";
 import type { FilamentSliceInfo } from "./ftpsParser";
-import type { JobConsumptionItem, SpoolPhysicalInfo } from "./consumption";
+import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow, SlotResolution } from "./consumption";
 
 function slice(
   trayId: number,
@@ -434,5 +438,230 @@ test("cross-check: multicolor só reporta divergência no slot afetado", () => {
 
   assert.equal(mismatches.length, 1);
   assert.equal(mismatches[0].slotIndex, 2);
+});
+
+// ---------------------------------------------------------------------------
+// resolvePhysicalSpoolForSlot / resolvePhysicalSpoolsForJob
+// ---------------------------------------------------------------------------
+
+test("resolução: job resolve spool apenas pela Bambu Cloud, sem NFC (ams_slots vazio)", () => {
+  const result = resolvePhysicalSpoolForSlot(0, ["spool-bambu"], null);
+
+  assert.deepEqual(result, {
+    slotIndex: 0,
+    spoolId: "spool-bambu",
+    source: "bambu_cloud",
+    amsSlotSpoolId: null,
+    conflict: false,
+  });
+});
+
+test("resolução: Bambu Cloud e ams_slots apontam para o mesmo spool -- sem conflito", () => {
+  const result = resolvePhysicalSpoolForSlot(0, ["spool-x"], "spool-x");
+
+  assert.equal(result.spoolId, "spool-x");
+  assert.equal(result.source, "bambu_cloud");
+  assert.equal(result.conflict, false);
+});
+
+test("resolução: Bambu Cloud aponta spool A e ams_slots aponta spool B -- prevalece a Bambu Cloud e reporta conflito", () => {
+  const result = resolvePhysicalSpoolForSlot(0, ["spool-a"], "spool-b");
+
+  assert.equal(result.spoolId, "spool-a");
+  assert.equal(result.source, "bambu_cloud");
+  assert.equal(result.amsSlotSpoolId, "spool-b");
+  assert.equal(result.conflict, true);
+});
+
+test("resolução: Bambu Cloud sem candidato -- fallback para ams_slots", () => {
+  const result = resolvePhysicalSpoolForSlot(0, [], "spool-b");
+
+  assert.equal(result.spoolId, "spool-b");
+  assert.equal(result.source, "ams_slots");
+  assert.equal(result.conflict, false);
+});
+
+test("resolução: Bambu Cloud ambígua (mais de 1 candidato) -- fallback para ams_slots, nunca escolhe um dos dois às cegas", () => {
+  const result = resolvePhysicalSpoolForSlot(0, ["spool-a", "spool-b"], "spool-c");
+
+  assert.equal(result.spoolId, "spool-c");
+  assert.equal(result.source, "ams_slots");
+});
+
+test("resolução: nenhuma fonte disponível -- unknown, sem spool_id (orphan, sem débito incorreto)", () => {
+  const result = resolvePhysicalSpoolForSlot(3, [], null);
+
+  assert.deepEqual(result, {
+    slotIndex: 3,
+    spoolId: null,
+    source: "none",
+    amsSlotSpoolId: null,
+    conflict: false,
+  });
+});
+
+test("resolução: multicolor com 3 slots resolve cada um de forma independente", () => {
+  const amsSlotBySlot = new Map<number, string | null>([
+    [0, "old-a"],
+    [1, null],
+    [2, "spool-c"],
+  ]);
+  const bambuCandidatesBySlot = new Map<number, string[]>([
+    [0, ["new-a"]], // conflito, prevalece Bambu Cloud
+    [1, ["spool-b"]], // sem NFC, só Bambu Cloud
+    [2, []], // sem candidato Bambu, fallback ams_slots
+  ]);
+
+  const resolutions = resolvePhysicalSpoolsForJob([0, 1, 2], amsSlotBySlot, bambuCandidatesBySlot);
+
+  assert.equal(resolutions.get(0)?.spoolId, "new-a");
+  assert.equal(resolutions.get(0)?.conflict, true);
+
+  assert.equal(resolutions.get(1)?.spoolId, "spool-b");
+  assert.equal(resolutions.get(1)?.source, "bambu_cloud");
+
+  assert.equal(resolutions.get(2)?.spoolId, "spool-c");
+  assert.equal(resolutions.get(2)?.source, "ams_slots");
+});
+
+// ---------------------------------------------------------------------------
+// groupBambuCandidatesBySlot
+// ---------------------------------------------------------------------------
+
+function bambuRow(overrides: Partial<BambuSyncedSpoolRow> = {}): BambuSyncedSpoolRow {
+  return {
+    id: "spool-1",
+    bambuDevId: "01P00A000000000",
+    bambuSlotId: "0",
+    bambuInPrinter: true,
+    ...overrides,
+  };
+}
+
+test("agrupamento: agrupa candidatos por slot_index numérico", () => {
+  const rows = [
+    bambuRow({ id: "spool-1", bambuSlotId: "0" }),
+    bambuRow({ id: "spool-2", bambuSlotId: "2" }),
+  ];
+
+  const result = groupBambuCandidatesBySlot(rows, "01P00A000000000");
+
+  assert.deepEqual(result.get(0), ["spool-1"]);
+  assert.deepEqual(result.get(2), ["spool-2"]);
+});
+
+test("agrupamento: isolamento por impressora -- ignora linhas de outro dev_id mesmo se vierem na lista", () => {
+  const rows = [
+    bambuRow({ id: "spool-mine", bambuDevId: "01P00A000000000", bambuSlotId: "0" }),
+    bambuRow({ id: "spool-other-printer", bambuDevId: "OUTRA-IMPRESSORA", bambuSlotId: "0" }),
+  ];
+
+  const result = groupBambuCandidatesBySlot(rows, "01P00A000000000");
+
+  assert.deepEqual(result.get(0), ["spool-mine"]);
+});
+
+test("agrupamento: ignora linhas com bambu_in_printer=false", () => {
+  const rows = [bambuRow({ bambuInPrinter: false })];
+
+  const result = groupBambuCandidatesBySlot(rows, "01P00A000000000");
+
+  assert.equal(result.size, 0);
+});
+
+test("agrupamento: ignora linhas sem bambu_slot_id ou com valor não numérico", () => {
+  const rows = [
+    bambuRow({ id: "sem-slot", bambuSlotId: null }),
+    bambuRow({ id: "slot-invalido", bambuSlotId: "external" }),
+  ];
+
+  const result = groupBambuCandidatesBySlot(rows, "01P00A000000000");
+
+  assert.equal(result.size, 0);
+});
+
+test("agrupamento: dois spools no mesmo slot geram lista com 2 candidatos (ambíguo)", () => {
+  const rows = [
+    bambuRow({ id: "spool-1", bambuSlotId: "0" }),
+    bambuRow({ id: "spool-2", bambuSlotId: "0" }),
+  ];
+
+  const result = groupBambuCandidatesBySlot(rows, "01P00A000000000");
+
+  assert.deepEqual(result.get(0), ["spool-1", "spool-2"]);
+});
+
+// ---------------------------------------------------------------------------
+// computeAmsSlotSelfHeals
+// ---------------------------------------------------------------------------
+
+function resolution(overrides: Partial<SlotResolution> = {}): SlotResolution {
+  return {
+    slotIndex: 0,
+    spoolId: "spool-a",
+    source: "bambu_cloud",
+    amsSlotSpoolId: null,
+    conflict: false,
+    ...overrides,
+  };
+}
+
+test("self-heal: corrige ams_slots quando Bambu Cloud resolveu um spool novo (sem vínculo anterior)", () => {
+  const resolutions = new Map([[0, resolution({ spoolId: "spool-a", amsSlotSpoolId: null })]]);
+
+  const heals = computeAmsSlotSelfHeals(resolutions);
+
+  assert.deepEqual(heals, [{ slotIndex: 0, spoolId: "spool-a" }]);
+});
+
+test("self-heal: corrige ams_slots em caso de conflito (Bambu Cloud diverge do vínculo NFC)", () => {
+  const resolutions = new Map([
+    [0, resolution({ spoolId: "spool-a", amsSlotSpoolId: "spool-b", conflict: true })],
+  ]);
+
+  const heals = computeAmsSlotSelfHeals(resolutions);
+
+  assert.deepEqual(heals, [{ slotIndex: 0, spoolId: "spool-a" }]);
+});
+
+test("self-heal: nada a fazer quando ams_slots já bate com a Bambu Cloud (idempotência)", () => {
+  const resolutions = new Map([
+    [0, resolution({ spoolId: "spool-a", amsSlotSpoolId: "spool-a", conflict: false })],
+  ]);
+
+  const heals = computeAmsSlotSelfHeals(resolutions);
+
+  assert.deepEqual(heals, []);
+});
+
+test("self-heal: nunca mexe em ams_slots quando a resolução caiu por fallback (source ams_slots)", () => {
+  const resolutions = new Map([
+    [0, resolution({ source: "ams_slots", spoolId: "spool-b", amsSlotSpoolId: "spool-b" })],
+  ]);
+
+  const heals = computeAmsSlotSelfHeals(resolutions);
+
+  assert.deepEqual(heals, []);
+});
+
+test("self-heal: nunca mexe em ams_slots quando a resolução ficou 'none'", () => {
+  const resolutions = new Map([[0, resolution({ source: "none", spoolId: null, amsSlotSpoolId: null })]]);
+
+  const heals = computeAmsSlotSelfHeals(resolutions);
+
+  assert.deepEqual(heals, []);
+});
+
+test("self-heal: reprocessar o mesmo job após o heal não gera novo heal (idempotência de ponta a ponta)", () => {
+  // Primeira rodada: ams_slots ainda não tinha nada.
+  const firstRun = new Map([[0, resolution({ spoolId: "spool-a", amsSlotSpoolId: null })]]);
+  const firstHeals = computeAmsSlotSelfHeals(firstRun);
+  assert.equal(firstHeals.length, 1);
+
+  // Segunda rodada: ams_slots já foi corrigido pela primeira -- mesmo
+  // snapshot da Bambu Cloud, mesmo resultado de resolução, sem heal novo.
+  const secondRun = new Map([[0, resolution({ spoolId: "spool-a", amsSlotSpoolId: "spool-a" })]]);
+  const secondHeals = computeAmsSlotSelfHeals(secondRun);
+  assert.equal(secondHeals.length, 0);
 });
 

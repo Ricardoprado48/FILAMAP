@@ -9,7 +9,7 @@
         "start": "tsc && node dist/index.js",
         "package-exe": "tsc && pkg dist/index.js --targets node22-win-x64 --output filamap-agent.exe && copy /Y filamap-agent.exe installer\\payload\\filamap-agent.exe",
         "test": "tsc && node --test dist/consumption.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js dist/filamentProfileSync.test.js dist/bambuCloudSpoolSync.test.js",
-        "test:integration": "tsc && node --test dist/finalize.integration.test.js"
+        "test:integration": "tsc && node --test dist/finalize.integration.test.js dist/resolution.integration.test.js"
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.39.0",

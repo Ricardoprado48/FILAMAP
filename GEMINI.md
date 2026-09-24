@@ -6,7 +6,7 @@ Este arquivo é a porta de entrada obrigatória para qualquer nova conversa ou a
 
 **A ordem de precedência para decidir o que é verdade sobre o projeto é:**
 
-1. `FILAMAP_USER_JOURNEY_ARQUITETURA.md` — **fonte oficial de estado e
+1. `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md` — **fonte oficial de estado e
    visão do projeto**, por decisão explícita do responsável pelo produto.
    Contém, na Seção 62, o estado real de implementação mais atual
    conhecido, incluindo achados de auditorias técnicas.
@@ -15,7 +15,7 @@ Este arquivo é a porta de entrada obrigatória para qualquer nova conversa ou a
 4. `docs/07_CURRENT_STATE.md` e demais documentação técnica em `docs/`;
 5. histórico de conversa apenas como contexto auxiliar.
 
-Se `FILAMAP_USER_JOURNEY_ARQUITETURA.md` e o código divergirem, **não
+Se `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md` e o código divergirem, **não
 escolha silenciosamente um dos dois**. Informe a divergência e sinalize
 para que a Seção 62 daquele documento seja atualizada — ela é o registro
 que deve refletir a realidade mais recente confirmada.
@@ -23,14 +23,26 @@ que deve refletir a realidade mais recente confirmada.
 A documentação em `docs/00`–`09` continua útil como detalhamento técnico
 (schema, features, regras de negócio, backlog), mas qualquer conflito
 sobre **estado atual do projeto** é resolvido a favor de
-`FILAMAP_USER_JOURNEY_ARQUITETURA.md`.
+`FILAMAP_USER_JOURNEY_ARQUITETURA (2).md`.
+
+## 1.1 Snapshot vigente — 24/09/2026
+
+- branch oficial: `main`;
+- baseline confirmado: `3ce850a`;
+- Agent: build PASS, 106/106 unitários PASS, 13/13 integração PASS;
+- Web: 33/33 testes PASS e build produção PASS;
+- migrations local/remoto alinhadas até `20260923120000`;
+- o Agent instalado usado na última homologação física é anterior a
+  `3ce850a` e não valida a resolução física nova;
+- não tratar a prioridade Bambu Cloud × NFC como homologada até teste de
+  hardware com a release atual e Golden Test.
 
 ## 2. Leitura obrigatória antes de alterar código
 
 Antes de qualquer implementação:
 
 1. Leia este `GEMINI.md`.
-2. Leia `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, especialmente a Seção 62
+2. Leia `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md`, especialmente a Seção 62
    (estado real) e as seções de regras/princípios de produto.
 3. Leia `docs/00_PROJECT_CONTEXT.md` e `docs/07_CURRENT_STATE.md` como
    apoio técnico complementar.
@@ -56,12 +68,12 @@ Antes de qualquer implementação:
 Faça uma análise curta contendo:
 
 - o que encontrou no estado atual (cruzando código real com a Seção 62 de
-  `FILAMAP_USER_JOURNEY_ARQUITETURA.md`);
+  `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md`);
 - quais arquivos serão alterados;
 - qual comportamento será preservado;
 - quais riscos ou dependências existem.
 
-Se houver uma divergência importante entre `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, migrations e código, sinalize antes de seguir — não decida sozinho qual está certo.
+Se houver uma divergência importante entre `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md`, migrations e código, sinalize antes de seguir — não decida sozinho qual está certo.
 
 ## 5. Depois de implementar
 
@@ -75,7 +87,7 @@ Informe objetivamente:
 
 Atualize a documentação **somente quando a alteração mudar o estado real do produto**:
 
-- `FILAMAP_USER_JOURNEY_ARQUITETURA.md` (Seção 62) — estado funcional atual, fonte oficial;
+- `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md` (Seção 62) — estado funcional atual, fonte oficial;
 - `docs/08_BACKLOG.md` — pendências/prioridades técnicas;
 - `docs/09_CHANGELOG.md` — histórico técnico;
 - `docs/06_DECISIONS.md` — decisões arquiteturais ou de produto duradouras;
@@ -124,7 +136,7 @@ Em especial, validar antes de considerar concluído:
 
 ## 10. Documentação principal
 
-- `FILAMAP_USER_JOURNEY_ARQUITETURA.md` — **fonte oficial de estado e visão do produto** (ver Seção 62).
+- `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md` — **fonte oficial de estado e visão do produto** (ver Seção 62).
 - `docs/00_PROJECT_CONTEXT.md` — visão rápida e objetivo do produto.
 - `docs/01_ARCHITECTURE.md` — arquitetura implementada e alvo.
 - `docs/02_DATABASE.md` — schema conhecido, RLS e lacunas de migrations.
@@ -138,6 +150,6 @@ Em especial, validar antes de considerar concluído:
 
 ## 11. Regra para encerrar uma sessão de IA
 
-Antes de encerrar um bloco significativo de trabalho, garanta que a Seção 62 de `FILAMAP_USER_JOURNEY_ARQUITETURA.md`, `docs/08_BACKLOG.md` e `docs/09_CHANGELOG.md` continuam verdadeiros. Se uma decisão permanente mudou, registre em `docs/06_DECISIONS.md`.
+Antes de encerrar um bloco significativo de trabalho, garanta que a Seção 62 de `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md`, `docs/08_BACKLOG.md` e `docs/09_CHANGELOG.md` continuam verdadeiros. Se uma decisão permanente mudou, registre em `docs/06_DECISIONS.md`.
 
-O objetivo é permitir que uma conversa nova continue o projeto sem depender da memória da conversa anterior — usando `FILAMAP_USER_JOURNEY_ARQUITETURA.md` como ponto de partida.
+O objetivo é permitir que uma conversa nova continue o projeto sem depender da memória da conversa anterior — usando `FILAMAP_USER_JOURNEY_ARQUITETURA (2).md` como ponto de partida.

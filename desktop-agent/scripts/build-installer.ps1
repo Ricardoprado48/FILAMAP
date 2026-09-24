@@ -21,28 +21,89 @@ foreach ($File in $RequiredPayload) {
     }
 }
 
-$Candidates = @(
-    (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
-    "C:\Program Files\Inno Setup 7\ISCC.exe",
-    "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
-    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-    "C:\Program Files\Inno Setup 6\ISCC.exe"
-) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+$Candidates = New-Object System.Collections.Generic.List[string]
 
-if (-not $Candidates) {
-    throw @"
-Inno Setup nao encontrado.
+$CommandPath = Get-Command ISCC.exe -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 
-Instale a versao atual recomendada com:
-
-winget install --id JRSoftware.InnoSetup.7 -e -s winget --accept-source-agreements --accept-package-agreements
-
-Depois rode novamente:
-npm run build-installer
-"@
+if ($CommandPath) {
+    $Candidates.Add($CommandPath)
 }
 
-$ISCC = $Candidates[0]
+$KnownPaths = @(
+    "C:\Program Files\Inno Setup 7\ISCC.exe",
+    "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe",
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 7\ISCC.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+)
+
+foreach ($Path in $KnownPaths) {
+    if ($Path -and (Test-Path $Path)) {
+        $Candidates.Add($Path)
+    }
+}
+
+$RegistryRoots = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+
+foreach ($RegistryRoot in $RegistryRoots) {
+    try {
+        Get-ItemProperty $RegistryRoot -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like "Inno Setup*" } |
+            ForEach-Object {
+                if ($_.InstallLocation) {
+                    $RegistryCandidate = Join-Path $_.InstallLocation "ISCC.exe"
+                    if (Test-Path $RegistryCandidate) {
+                        $Candidates.Add($RegistryCandidate)
+                    }
+                }
+            }
+    }
+    catch {
+        # Registro opcional; continuar com os outros metodos.
+    }
+}
+
+$ISCC = $Candidates |
+    Where-Object { $_ -and (Test-Path $_) } |
+    Select-Object -Unique -First 1
+
+if (-not $ISCC) {
+    $SearchRoots = @(
+        $env:LOCALAPPDATA,
+        $env:ProgramFiles,
+        ${env:ProgramFiles(x86)}
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    foreach ($SearchRoot in $SearchRoots) {
+        $Found = Get-ChildItem -Path $SearchRoot -Filter ISCC.exe -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "Inno Setup" } |
+            Select-Object -ExpandProperty FullName -First 1
+
+        if ($Found) {
+            $ISCC = $Found
+            break
+        }
+    }
+}
+
+if (-not $ISCC) {
+    throw @"
+Inno Setup parece estar instalado, mas ISCC.exe nao foi localizado.
+
+Execute:
+where.exe /R "%LOCALAPPDATA%" ISCC.exe
+where.exe /R "C:\Program Files" ISCC.exe
+where.exe /R "C:\Program Files (x86)" ISCC.exe
+
+e informe o caminho encontrado.
+"@
+}
 
 Write-Host "ISCC=$ISCC"
 Write-Host "ISS=$IssFile"

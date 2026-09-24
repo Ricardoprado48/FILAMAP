@@ -38,6 +38,7 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 [Files]
 Source: "filamap.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\filamap-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "payload\bambu-bridge\filamap-bambu-bridge.exe"; DestDir: "{app}\bambu-bridge"; Flags: ignoreversion
 Source: "payload\run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\start-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\install-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion

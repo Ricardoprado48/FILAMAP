@@ -7,7 +7,7 @@
     "scripts": {
         "build": "tsc",
         "start": "tsc && node dist/index.js",
-        "package-exe": "tsc && pkg dist/index.js --targets node22-win-x64 --output filamap-agent.exe && copy /Y filamap-agent.exe installer\\payload\\filamap-agent.exe",
+        "package-exe": "tsc && pkg dist/index.js --targets node22-win-x64 --output filamap-agent.exe && copy /Y filamap-agent.exe installer\\\\payload\\\\filamap-agent.exe && if not exist bambu-bridge\\\\filamap-bambu-bridge.exe (echo ERROR: bambu-bridge\\\\filamap-bambu-bridge.exe nao encontrado. & exit /b 1) && if not exist installer\\\\payload\\\\bambu-bridge mkdir installer\\\\payload\\\\bambu-bridge && copy /Y bambu-bridge\\\\filamap-bambu-bridge.exe installer\\\\payload\\\\bambu-bridge\\\\filamap-bambu-bridge.exe",
         "test": "tsc && node --test dist/consumption.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js dist/filamentProfileSync.test.js dist/bambuCloudSpoolSync.test.js",
         "test:integration": "tsc && node --test dist/finalize.integration.test.js dist/resolution.integration.test.js"
     },

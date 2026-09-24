@@ -1,7 +1,7 @@
 # FILAMAP
 ## Jornada do Utilizador e Funcionamento Técnico
 
-**Versão:** 1.4  
+**Versão:** 1.5  
 **Tipo de documento:** Product Journey + Technical Architecture — **fonte oficial de estado do projeto** (ver Seção 62)  
 **Produto:** Filamap  
 **Categoria:** SaaS / IoT / Automação para impressão 3D  
@@ -10,6 +10,16 @@
 ---
 
 ## Log de atualizações
+
+**v1.5** — 24/09/2026 — Gate Zero e baseline atualizados. `main@3ce850a`
+passou em build e testes: Agent 106/106 unitários + 13/13 integração; Web
+33/33 + build produção; migrations local/remoto alinhadas até
+`20260923120000`. O código atual inclui onboarding gráfico Windows, DPAPI
+CurrentUser, instalador/auto-start, Cloud Spool Sync, weight gate e resolução
+automática de spool físico. O MVP ainda não está homologado E2E porque a
+última impressão real observada usou um Agent instalado anterior a
+`3ce850a`, e a prioridade Bambu Cloud × NFC ainda precisa ser comprovada
+em hardware com a build atual.
 
 **v1.4** — Correções trazidas por trabalho técnico real em 20/09/2026
 (não auditoria, implementação): consumo multicolor, finalização
@@ -1858,7 +1868,17 @@ Retirar bobina
 
 ---
 
-# 62. Estado Real de Implementação (v1.4 — fonte oficial de estado)
+# 62. Estado Real de Implementação (v1.5 — fonte oficial de estado)
+
+> **📌 Snapshot vigente — 24/09/2026 / main@3ce850a.** Build e testes
+> atuais passaram: Agent 106/106 unitários + 13/13 integração; Web 33/33 +
+> build; migrations local/remoto alinhadas até `20260923120000`. O código
+> contém onboarding gráfico Windows, DPAPI, instalador/auto-start, Cloud
+> Spool Sync, weight gate e resolução automática de spool físico. O MVP
+> permanece **não homologado E2E** porque o Agent usado na última impressão
+> real era antigo e a identidade física Bambu Cloud × NFC ainda precisa ser
+> provada com a build atual.
+
 
 > **📌 Aviso v1.3 (19/09/2026) — este documento é a fonte oficial do
 > projeto, por decisão explícita de Ricardo.** A estrutura `docs/00`–`09` +

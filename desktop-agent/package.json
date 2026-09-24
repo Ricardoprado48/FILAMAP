@@ -9,7 +9,8 @@
         "start": "tsc && node dist/index.js",
         "package-exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\\\package-exe.ps1",
         "test": "tsc && node --test dist/consumption.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js dist/filamentProfileSync.test.js dist/bambuCloudSpoolSync.test.js",
-        "test:integration": "tsc && node --test dist/finalize.integration.test.js dist/resolution.integration.test.js"
+        "test:integration": "tsc && node --test dist/finalize.integration.test.js dist/resolution.integration.test.js",
+        "build-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\\\build-installer.ps1"
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.39.0",

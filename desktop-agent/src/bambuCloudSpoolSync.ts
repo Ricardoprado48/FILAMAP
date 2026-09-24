@@ -19,10 +19,27 @@ export interface RunBridgeOptions {
   timeoutMs?: number;
 }
 
+export function buildBridgeExecutablePath(
+  envPath: string | undefined,
+  isPackaged: boolean,
+  execPath: string,
+  moduleDir: string
+): string {
+  if (envPath) return envPath;
+
+  const baseDir = isPackaged
+    ? path.dirname(execPath)
+    : path.join(moduleDir, "..");
+
+  return path.join(baseDir, "bambu-bridge", "filamap-bambu-bridge.exe");
+}
+
 export function resolveBridgeExecutablePath(): string {
-  return (
-    process.env.FILAMAP_BAMBU_BRIDGE_PATH ||
-    path.join(__dirname, "..", "bambu-bridge", "filamap-bambu-bridge.exe")
+  return buildBridgeExecutablePath(
+    process.env.FILAMAP_BAMBU_BRIDGE_PATH,
+    Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg),
+    process.execPath,
+    __dirname
   );
 }
 

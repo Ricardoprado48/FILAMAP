@@ -1,5 +1,28 @@
 ﻿# 09 — Changelog Técnico
 
+## 24/09/2026 — Gate Zero, baseline e reconciliação documental
+
+Baseline confirmado em Windows para `main@3ce850a`:
+
+- Git local e remoto alinhados;
+- Desktop Agent build PASS;
+- 106/106 testes unitários PASS;
+- 13/13 testes de integração PASS;
+- Web App 33/33 testes PASS;
+- Web App build de produção PASS;
+- `supabase migration list --linked` confirmou migrations local/remoto
+  alinhadas até `20260923120000`.
+
+Também foi confirmado que o Agent atualmente instalado é anterior a
+`3ce850a`; portanto a homologação real anterior não valida a lógica nova de
+resolução física. A próxima etapa é gerar uma release atual, instalar com
+controle de hash e repetir a homologação operacional antes do Golden Test.
+
+A documentação foi reconciliada para refletir onboarding gráfico Windows,
+DPAPI CurrentUser, instalador/auto-start, testes automatizados, Cloud Spool
+Sync, weight gate e resolução automática de spool físico.
+
+
 Este changelog registra apenas alterações que podem ser confirmadas pelos arquivos presentes no repositório auditado. Datas anteriores nem sempre estão disponíveis no pacote, então os itens históricos são agrupados por evidência/migration.
 
 ## 23/09/2026 (2) — Resolução automática do spool físico via localização Bambu Cloud

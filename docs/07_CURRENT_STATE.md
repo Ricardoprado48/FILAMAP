@@ -229,39 +229,62 @@ física (ex.: veio de importação em lote), ou sem tag nenhuma. Ver
 
 ### Onboarding
 
-O Agent depende de configuração por `.env`. Não existe onboarding comercial guiado no código auditado.
+**Atualizado em 24/09/2026:** o Agent já possui onboarding comercial sem
+dependência obrigatória de `.env` em produção. No Windows, o fluxo usa
+interface gráfica para os dados que ainda faltam, tenta descoberta automática
+da impressora e persiste configuração não secreta em
+`%APPDATA%\\Filamap\\config.json`.
+
+Segredos não são gravados em texto claro: o Windows usa
+`WindowsDpapiSecretStore` com DPAPI `CurrentUser` em
+`%APPDATA%\\Filamap\\secrets.dat`. A senha do Filamap não é persistida;
+o que pode ser persistido é o refresh token da sessão Supabase e o Access Code
+da impressora. O caminho por `.env` permanece disponível para desenvolvimento
+e CI.
 
 ### Offline
 
-Há persistência do job ativo, mas não foi encontrado buffer persistente de eventos/ações pendentes para sincronizar depois.
+Há persistência do job ativo, mas ainda não existe uma fila offline completa
+para todas as ações pendentes. Essa limitação permanece fora do Golden Test
+atual e deve ser reavaliada somente se o piloto demonstrar necessidade.
 
 ### Testes
 
-Não foram encontrados testes automatizados no pacote auditado.
+Baseline confirmado em Windows em 24/09/2026, `main@3ce850a`:
+
+- Desktop Agent: **106/106 testes unitários PASS**;
+- Desktop Agent: **13/13 testes de integração PASS**;
+- Web App: **33/33 testes PASS**.
+
+Os testes cobrem, entre outros pontos, consumo, multicolor, idempotência,
+weight gate, onboarding/DPAPI, Cloud Spool Sync e resolução de spool físico.
 
 ## Build auditado
 
-Validação executada nesta auditoria:
+Baseline confirmado em Windows em 24/09/2026:
 
-- `web-app`: o TypeScript (`tsc`) compilou sem erros. O passo Vite não pôde ser concluído neste ambiente Linux porque o `node_modules` vindo do ZIP é de Windows e não contém o binário opcional `@rollup/rollup-linux-x64-gnu`. Isso é uma limitação do ambiente de auditoria, não evidência de erro no código.
-- `desktop-agent`: TypeScript (`tsc`) compilou sem erros.
-
-Para validar o build completo no Windows do projeto, executar `npm install`/`npm ci` no ambiente correto e depois `npm run build` em cada pacote.
+- `desktop-agent`: `npm run build` — **PASS**;
+- `web-app`: `npm run build` — **PASS**;
+- `supabase migration list --linked` — histórico local/remoto **alinhado**
+  até `20260923120000`.
 
 ## Próximo objetivo recomendado do projeto
 
-Antes de acrescentar novas funcionalidades de negócio, estabilizar o núcleo de inventário automático:
+Não adicionar novas funcionalidades de negócio antes de homologar o núcleo
+automático em hardware real com a build correspondente a `3ce850a`.
 
-1. tornar o schema 100% reproduzível por migrations (ainda pendente —
-   ver "Divergência 6" acima e P0.1 no backlog: pelo menos 5 pontos de
-   falha confirmados por execução real em 20/09/2026);
-2. validar arquivo FTPS/slice info com casos reais (ainda pendente — sem
-   hardware nesta sessão);
-3. ~~corrigir consumo multicolor~~ — feito em 20/09/2026;
-4. ~~implementar finalização atômica/idempotente~~ — feito em 20/09/2026;
-5. ~~decidir política explícita de consumo quando não houver dado autoritativo~~ — feito em 20/09/2026 (cascata de 4 níveis);
-6. fechar leitura NFC/deep link (ainda pendente — só o `?tag=` no carregamento);
-7. somente então evoluir onboarding e experiência comercial.
+Ordem atual:
+
+1. gerar e validar o executável/payload do Agent em `3ce850a`;
+2. instalar essa build de forma controlada e confirmar por hash;
+3. validar estabilidade de MQTT/telemetria e comportamento de FTPS;
+4. confirmar que não há phantom jobs/finalizações falsas;
+5. comparar posição física real × Bambu Cloud × `ams_slots`/NFC;
+6. somente depois executar o Golden Test E2E:
+   peso confirmado → impressão real → spool físico correto → consumo correto
+   → saldo correto → nenhuma baixa duplicada;
+7. repetir com caso multicolor;
+8. só após essa homologação avançar para piloto/comercial.
 
 <!-- AUTO:LEVEL_1_2_STATUS_20260920:START -->
 

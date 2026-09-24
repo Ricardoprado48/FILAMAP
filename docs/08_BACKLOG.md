@@ -1,3 +1,21 @@
+# BACKLOG VIGENTE — 24/09/2026 — main@3ce850a
+
+Prioridade atual: **homologar o núcleo automático antes de novas features**.
+
+- [ ] gerar release do Agent correspondente a `3ce850a`;
+- [ ] validar hashes build/payload/instalado;
+- [ ] testar MQTT/telemetria e FTPS com a build atual;
+- [ ] confirmar ausência de phantom jobs;
+- [ ] homologar identidade física Bambu Cloud × `ams_slots`/NFC;
+- [ ] executar Golden Test E2E de uma cor;
+- [ ] executar Golden Test multicolor;
+- [ ] somente depois iniciar piloto controlado.
+
+> Itens históricos abaixo são preservados para rastreabilidade. Quando houver
+> conflito de status, esta seção de 24/09/2026 prevalece.
+
+---
+
 ﻿# 08 — Backlog Priorizado
 
 Este backlog foi criado a partir do código auditado em 18/09/2026. Prioridade indica risco técnico/operacional, não esforço.
@@ -151,35 +169,21 @@ Eliminar necessidade do usuário editar `.env`.
 
 ### P2.2 — Armazenamento seguro do Access Code
 
-Usar mecanismo seguro do SO/credencial local em vez de arquivo texto como solução final.
-
-- [ ] **ainda não implementado, decisão documentada em 21/09/2026** — a
-  abstração `SecretStore` (`src/config/secretStore.ts`) já separa
-  segredos de config não secreta e está pronta para receber uma
-  implementação real (Credential Manager/DPAPI, `keytar`, ou
-  equivalente), mas essa implementação não foi escrita: exige escolher
-  uma dependência que muda o pipeline de empacotamento do `pkg`, decisão
-  que não deveria ser tomada sem o usuário. Enquanto isso, o Access Code
-  não sobrevive entre execuções fora do fluxo `.env` — 3 opções
-  comparadas em `docs/11_AGENT_ONBOARDING_V2.md`, seção 10.
+- [x] **implementado no Windows** — `WindowsDpapiSecretStore` usa DPAPI
+  `CurrentUser` via `powershell.exe`, sem dependência nativa adicional.
+  `%APPDATA%\\Filamap\\secrets.dat` contém somente o blob protegido.
+  A senha do Filamap não é persistida; refresh token Supabase e Access Code
+  Bambu podem ser persistidos. O fluxo `.env` continua reservado a dev/CI.
 
 ### P2.3 — Instalador/auto-start/auto-update
 
-Empacotamento robusto para Windows e, se desejado, outros sistemas.
-
-- [x] **auto-start via Tarefa Agendada** — adicionado em 20/09/2026:
-  `desktop-agent/install-autostart.ps1` + `run-agent.ps1` +
-  `uninstall-autostart.ps1`. Só o mecanismo de "iniciar sozinho no
-  logon"; o resto de P2.3 (instalador de fato, auto-update) continua em
-  aberto. Ver `docs/09_CHANGELOG.md`. Confirmado em 21/09/2026 que o
-  onboarding comercial (P2.1) funciona com esse mecanismo sem nenhuma
-  mudança adicional (checagem de `stdin.isTTY` evita travar quando a
-  Tarefa Agendada inicia o Agent sem terminal).
-- [ ] instalador gráfico (wizard `.exe`/MSI) — não implementado; decisão
-  de ferramenta (Inno Setup/NSIS/electron-builder) pendente do usuário.
-- [ ] assinatura de código — bloqueado por certificado externo, decisão
-  do dono do produto.
-- [ ] auto-update — não implementado, depende dos dois itens acima.
+- [x] auto-start do Agent no Windows;
+- [x] empacotamento do Agent para Node 22;
+- [x] instalador gráfico Windows implementado com Inno Setup;
+- [ ] **release atual ainda precisa ser regenerada a partir de `3ce850a` e
+      homologada por hash antes de substituir o Agent instalado**;
+- [ ] assinatura de código — depende de certificado externo;
+- [ ] auto-update — pós-MVP, não necessário para o Golden Test atual.
 
 ### P2.4 — Offline queue
 
@@ -226,20 +230,17 @@ Os itens abaixo NÃO devem mais ser tratados como backlog:
 
 #### Testes automatizados
 
-Status: pendente.
+Status: **implementado para o núcleo atual**.
 
-Objetivo:
+Baseline de 24/09/2026 em `main@3ce850a`:
 
-Criar proteção contra regressões nas áreas críticas do Filamap.
+- Agent: 106/106 unitários PASS;
+- Agent: 13/13 integração PASS;
+- Web: 33/33 PASS;
+- builds Agent e Web PASS.
 
-Prioridades iniciais:
-
-1. cálculo de consumo;
-2. `finalizeJob`;
-3. jobs multicolor;
-4. idempotência;
-5. reconexão/redescoberta;
-6. regras de estoque.
+Novas áreas críticas devem continuar recebendo testes antes de serem
+consideradas concluídas.
 
 #### Refatoração do Web App
 
@@ -257,19 +258,12 @@ A refatoração deve ocorrer por partes e com comportamento preservado.
 
 #### Segurança do Access Code da impressora
 
-Status: aceitável para uso próprio, pendente antes de distribuição pública.
+Status: **implementado no Windows com DPAPI CurrentUser**.
 
-Situação atual:
-
-O Access Code é configurado localmente por variável de ambiente.
-
-Antes de distribuir o Desktop Agent para terceiros, revisar:
-
-- armazenamento seguro;
-- onboarding;
-- proteção das credenciais;
-- logs;
-- empacotamento do Agent.
+O Access Code pode ser persistido protegido em
+`%APPDATA%\\Filamap\\secrets.dat`. A senha do Filamap não é salva.
+Antes de distribuição pública ainda permanecem como temas separados:
+assinatura de código, revisão de logs e política de atualização.
 
 ### Regra para futuras tarefas
 

@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   JSON_SECTION_MARKER,
+  buildBridgeExecutablePath,
   extractJsonSection,
   processBridgeOutput,
   parseBambuCloudSpoolRecord,
@@ -105,6 +107,45 @@ function bridgeStdout(records: unknown[]): string {
     hits: records,
   })}\n`;
 }
+
+// ---------------------------------------------------------------------------
+// Caminho da bridge em dev vs executável empacotado
+// ---------------------------------------------------------------------------
+
+test("bridge path: ambiente explícito tem prioridade", () => {
+  assert.equal(
+    buildBridgeExecutablePath(
+      "C:\\custom\\bridge.exe",
+      true,
+      "C:\\Program Files\\Filamap Agent\\filamap-agent.exe",
+      "C:\\snapshot\\desktop-agent\\dist"
+    ),
+    "C:\\custom\\bridge.exe"
+  );
+});
+
+test("bridge path: dev usa a pasta bambu-bridge do projeto", () => {
+  const moduleDir = path.join(path.sep, "workspace", "desktop-agent", "dist");
+
+  assert.equal(
+    buildBridgeExecutablePath(undefined, false, "", moduleDir),
+    path.join(path.sep, "workspace", "desktop-agent", "bambu-bridge", "filamap-bambu-bridge.exe")
+  );
+});
+
+test("bridge path: pkg usa a pasta real ao lado do executável", () => {
+  const execPath = path.join(path.sep, "deploy", "Filamap Agent", "filamap-agent.exe");
+
+  assert.equal(
+    buildBridgeExecutablePath(
+      undefined,
+      true,
+      execPath,
+      path.join(path.sep, "snapshot", "desktop-agent", "dist")
+    ),
+    path.join(path.dirname(execPath), "bambu-bridge", "filamap-bambu-bridge.exe")
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Parser do stdout da bridge

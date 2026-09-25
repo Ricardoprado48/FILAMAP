@@ -1,4 +1,7 @@
-﻿import * as fs from "node:fs";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+import { randomUUID } from "node:crypto";
 import * as ftp from "basic-ftp";
 import AdmZip from "adm-zip";
 import { XMLParser } from "fast-xml-parser";
@@ -9,147 +12,242 @@ export interface FilamentSliceInfo {
   supportGrams: number;
   flushGrams: number;
   totalGrams: number;
-  color: string; // Adicionado para armazenar a cor do filamento
-  weightDiscount: number; // Adicionado para armazenar o desconto de peso por cor
+  color: string;
+  weightDiscount: number;
 }
 
+export interface FtpClientLike {
+  access(options: ftp.AccessOptions): Promise<unknown>;
+  downloadTo(destination: string, fromRemotePath: string): Promise<unknown>;
+  close(): void;
+  ftp: { verbose: boolean; timeout?: number };
+}
+
+/**
+ * Normaliza caminhos de arquivo remoto para o servidor FTPS da Bambu Lab.
+ * No servidor FTPS da impressora, a raiz "/" já é o próprio cartão SD.
+ * Caminhos vindos do MQTT como "/sdcard/cache/..." ou "arquivo.3mf" são
+ * ajustados para múltiplos candidatos prováveis (/cache/..., /model/..., etc.).
+ */
+export function normalizeRemoteFtpPath(remotePath: string): string[] {
+  let cleaned = remotePath.trim();
+  if (!cleaned) {
+    return ["/cache/current.gcode.3mf"];
+  }
+
+  // Remove prefixo /sdcard/ ou sdcard/ pois a raiz do FTPS da Bambu já é o sdcard
+  cleaned = cleaned.replace(/^[\/\\]?sdcard[\/\\]?/i, "");
+
+  // Garante barra inicial
+  if (!cleaned.startsWith("/")) {
+    cleaned = "/" + cleaned;
+  }
+
+  const candidates: string[] = [cleaned];
+
+  // Se o caminho não especifica /cache/ ou /model/, tenta essas pastas padrão do fatiador
+  if (!cleaned.startsWith("/cache/") && !cleaned.startsWith("/model/")) {
+    candidates.push(`/cache${cleaned}`);
+    candidates.push(`/model${cleaned}`);
+  }
+
+  // Remove duplicatas preservando a ordem
+  return Array.from(new Set(candidates));
+}
+
+/**
+ * Analisa o XML de Metadata/slice_info.config e opcionalmente Metadata/plate_1.json
+ * para extrair o consumo granular de filamento por slot.
+ */
+export function parseSliceInfoXml(
+  sliceInfoXmlContent: string,
+  plateJsonContent?: string
+): FilamentSliceInfo[] {
+  const filaments: FilamentSliceInfo[] = [];
+
+  // Tenta extrair mapeamento de filament_ids de plate_1.json se disponível
+  let plateFilamentIds: number[] | null = null;
+  if (plateJsonContent) {
+    try {
+      const plateJson = JSON.parse(plateJsonContent);
+      if (Array.isArray(plateJson.filament_ids)) {
+        plateFilamentIds = plateJson.filament_ids.map(Number);
+      }
+    } catch {}
+  }
+
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+  const jsonObj = parser.parse(sliceInfoXmlContent);
+
+  const plateList = jsonObj?.config?.plate;
+  const headerFilaments = jsonObj?.config?.filament || jsonObj?.config?.header?.filament;
+
+  const extractFilamentData = (node: any) => {
+    if (!node) return;
+    const nodes = Array.isArray(node) ? node : [node];
+    for (const f of nodes) {
+      let trayId: number;
+
+      if (f.tray_id !== undefined) {
+        trayId = parseInt(String(f.tray_id), 10);
+      } else if (f.tray_idx !== undefined) {
+        trayId = parseInt(String(f.tray_idx), 10);
+      } else if (f.id !== undefined) {
+        const parsed = parseInt(String(f.id), 10);
+        // No Bambu Studio / slicer XML, filament id é 1-based (id="1" -> slot 0, id="8" -> slot 7)
+        if (plateFilamentIds && parsed > 0 && parsed <= plateFilamentIds.length) {
+          trayId = plateFilamentIds[parsed - 1];
+        } else {
+          trayId = parsed > 0 ? parsed - 1 : 0;
+        }
+      } else {
+        continue;
+      }
+
+      if (isNaN(trayId) || trayId < 0) continue;
+
+      const color = f.color ?? f.color_name ?? "unknown";
+      const modelGrams = parseFloat(f.model_g ?? f.model_grams ?? "0");
+      const supportGrams = parseFloat(f.support_g ?? f.support_grams ?? "0");
+      const flushGrams = parseFloat(f.flush_g ?? f.flush_grams ?? "0");
+      const usedGrams = parseFloat(f.used_g ?? f.total_g ?? f.total_grams ?? "0");
+
+      const totalGrams = usedGrams > 0 ? usedGrams : (modelGrams + supportGrams + flushGrams);
+      const effectiveModelGrams = modelGrams > 0 ? modelGrams : Math.max(0, totalGrams - supportGrams - flushGrams);
+      const weightDiscount = parseFloat(f.weight_discount ?? "0") || 0;
+
+      const existingIdx = filaments.findIndex((item) => item.trayId === trayId);
+      const infoObj: FilamentSliceInfo = {
+        trayId,
+        modelGrams: Math.round(effectiveModelGrams * 100) / 100,
+        supportGrams: Math.round(supportGrams * 100) / 100,
+        flushGrams: Math.round(flushGrams * 100) / 100,
+        totalGrams: Math.round(totalGrams * 100) / 100,
+        color,
+        weightDiscount,
+      };
+
+      if (existingIdx >= 0) {
+        filaments[existingIdx] = infoObj;
+      } else {
+        filaments.push(infoObj);
+      }
+    }
+  };
+
+  if (plateList) {
+    const plates = Array.isArray(plateList) ? plateList : [plateList];
+    for (const p of plates) {
+      if (p.filament) {
+        extractFilamentData(p.filament);
+      }
+    }
+  }
+
+  if (headerFilaments) {
+    extractFilamentData(headerFilaments);
+  }
+
+  return filaments;
+}
+
+/**
+ * Conecta via FTPS com TLS Implícito à impressora Bambu Lab, faz o download do arquivo .3mf
+ * do trabalho e extrai os metadados de consumo por filamento/slot de Metadata/slice_info.config.
+ */
 export async function fetchAndParseSliceInfo(
   host: string,
   accessCode: string,
-  remoteFilePath: string // Ex: "/sdcard/cache/current.gcode.3mf" ou similar descoberto no teste
+  remoteFilePath: string,
+  injectedClient?: FtpClientLike
 ): Promise<FilamentSliceInfo[]> {
-  const client = new ftp.Client();
+  const client: FtpClientLike = injectedClient ?? new ftp.Client();
   client.ftp.verbose = false;
+  client.ftp.timeout = 10000; // 10 segundos timeout
+
+  const tempFilePath = path.join(os.tmpdir(), `filamap_${randomUUID()}.3mf`);
 
   try {
-    // Conexão FTPS na porta 990 com TLS implícito (padrão Bambu Lab)
+    // Conexão FTPS na porta 990 com TLS implícito (obrigatório para Bambu Lab)
+    // O basic-ftp requer secure: "implicit" para TLS implícito na porta 990.
+    // Usar secure: true dispara FTPS explícito com AUTH TLS sobre texto claro, gerando Timeout.
     await client.access({
       host: host,
       port: 990,
       user: "bblp",
       password: accessCode,
-      secure: true,
-      secureOptions: { rejectUnauthorized: false }
+      secure: "implicit",
+      secureOptions: { rejectUnauthorized: false },
     });
 
-    console.log("📂 Conectado ao FTPS da impressora. Baixando metadados do trabalho...");
+    console.log("📂 Conectado ao FTPS da impressora (TLS Implícito). Baixando metadados...");
 
-    // Baixa o arquivo para um buffer na memória
-    const chunks: Buffer[] = [];
-    const writable = new WritableStream({
-      write(chunk) {
-        chunks.push(Buffer.from(chunk));
+    const candidates = normalizeRemoteFtpPath(remoteFilePath);
+    let downloaded = false;
+    let lastError: Error | null = null;
+
+    for (const candidate of candidates) {
+      try {
+        await client.downloadTo(tempFilePath, candidate);
+        downloaded = true;
+        console.log(`📦 Arquivo .3mf baixado com sucesso de: ${candidate}`);
+        break;
+      } catch (err: any) {
+        lastError = err;
       }
-    });
+    }
 
-    // Como o basic-ftp suporta download para stream ou arquivo local, vamos baixar para o disco temporariamente
-    const tempFilePath = "./temp_job.3mf";
-    await client.downloadTo(tempFilePath, remoteFilePath);
-    client.close();
+    if (!downloaded) {
+      console.warn(
+        `⚠️ Nenhum caminho candidato do .3mf foi encontrado na impressora: ${candidates.join(", ")}. Último erro: ${lastError?.message}`
+      );
+      return [];
+    }
 
-    console.log("📦 Arquivo .3mf baixado com sucesso. Extraindo slice_info.config...");
-
-    // Abre o ZIP (o .3mf é um arquivo zipado)
+    // Abre o ZIP (o .3mf é um pacote ZIP)
     const zip = new AdmZip(tempFilePath);
     const zipEntries = zip.getEntries();
 
     let sliceInfoXmlContent = "";
+    let plateJsonContent = "";
+
     for (const entry of zipEntries) {
       if (entry.entryName.includes("Metadata/slice_info.config")) {
         sliceInfoXmlContent = entry.getData().toString("utf8");
-        break;
+      } else if (entry.entryName.includes("plate_1.json") || entry.entryName.endsWith(".json")) {
+        if (!plateJsonContent) {
+          plateJsonContent = entry.getData().toString("utf8");
+        }
       }
     }
 
-    // Limpa o arquivo temporário do disco
-    try { fs.unlinkSync(tempFilePath); } catch (e) {}
-
     if (!sliceInfoXmlContent) {
-      console.warn("⚠️ Arquivo slice_info.config não encontrado no .3mf.");
+      console.warn("⚠️ Arquivo Metadata/slice_info.config não encontrado no .3mf.");
       return [];
     }
 
-    // Faz o parse do XML
-    const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
-    const jsonObj = parser.parse(sliceInfoXmlContent);
-
-    const filaments: FilamentSliceInfo[] = [];
-
-    // Estrutura típica do slice_info.config da Bambu Lab
-    // Vamos mapear os nós de filamento e extrair modelo, suporte e purga
-    const plateList = jsonObj?.config?.plate;
-    const headerFilaments = jsonObj?.config?.filament || jsonObj?.config?.header?.filament;
-
-    // Dependendo da versão do fatiador, os dados de peso vêm mapeados por id de filamento
-    // Exemplo estrutural seguro:
-    console.log("🔍 XML do slice_info parseado com sucesso.");
-
-    // No XML do Bambu Lab, a estrutura pode conter:
-    // <plate>
-    //   <filament id="1" model_g="10.5" support_g="0.5" flush_g="2.1" total_g="13.1" color="FFFFFF" weight_discount="5" />
-    // </plate>
-    // Ou as propriedades podem estar no header, ou mapeadas direto no plate.
-    // Vamos varrer ambos os nós (plate e filament) de forma resiliente.
-    const extractFilamentData = (node: any) => {
-      if (!node) return;
-      const nodes = Array.isArray(node) ? node : [node];
-      for (const f of nodes) {
-        // Tenta obter o tray_id / id
-        const idStr = f.id ?? f.tray_id ?? f.tray_idx;
-        if (idStr === undefined) continue;
-
-        const trayId = parseInt(idStr);
-        const color = f.color ?? f.color_name ?? "unknown";
-        const modelGrams = parseFloat(f.model_g ?? f.model_grams ?? "0");
-        const supportGrams = parseFloat(f.support_g ?? f.support_grams ?? "0");
-        const flushGrams = parseFloat(f.flush_g ?? f.flush_grams ?? "0");
-        const totalGrams = parseFloat(f.total_g ?? f.total_grams ?? "0") || (modelGrams + supportGrams + flushGrams);
-        const weightDiscount = parseFloat(f.weight_discount ?? "0");
-
-        // Evita duplicatas se o mesmo trayId aparecer múltiplas vezes
-        const existingIdx = filaments.findIndex(item => item.trayId === trayId);
-        const infoObj = {
-          trayId,
-          modelGrams,
-          supportGrams,
-          flushGrams,
-          totalGrams,
-          color,
-          weightDiscount
-        };
-
-        if (existingIdx >= 0) {
-          filaments[existingIdx] = infoObj;
-        } else {
-          filaments.push(infoObj);
-        }
-      }
-    };
-
-    // Extrai do plate
-    if (plateList) {
-      const plates = Array.isArray(plateList) ? plateList : [plateList];
-      for (const p of plates) {
-        if (p.filament) {
-          extractFilamentData(p.filament);
-        }
-      }
-    }
-
-    // Fallback ou complemento do headerFilaments
-    if (headerFilaments) {
-      extractFilamentData(headerFilaments);
-    }
+    const filaments = parseSliceInfoXml(sliceInfoXmlContent, plateJsonContent);
 
     console.log(`📊 Filamentos lidos do slice_info.config (${filaments.length} encontrados):`);
     for (const f of filaments) {
-      console.log(`  - Tray ${f.trayId} (${f.color}): total=${f.totalGrams}g (Model=${f.modelGrams}g, Support=${f.supportGrams}g, Flush=${f.flushGrams}g) Discount=${f.weightDiscount}g`);
+      console.log(
+        `  - Tray ${f.trayId} (${f.color}): total=${f.totalGrams}g (Model=${f.modelGrams}g, Support=${f.supportGrams}g, Flush=${f.flushGrams}g) Discount=${f.weightDiscount}g`
+      );
     }
 
     return filaments;
   } catch (err: any) {
-    client.close();
     console.error("❌ Erro ao baixar ou parsear o .3mf via FTPS:", err.message);
     return [];
+  } finally {
+    try {
+      client.close();
+    } catch {}
+
+    try {
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+    } catch {}
   }
 }

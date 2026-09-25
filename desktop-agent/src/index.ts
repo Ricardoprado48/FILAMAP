@@ -21,6 +21,7 @@ import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
 import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow } from "./consumption";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
+import { authenticateAgentSession } from "./config/sessionManager";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
@@ -100,61 +101,26 @@ function saveJobState(state: ActiveJobState | null) {
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
-  let auth = await bootstrapRuntimeConfig();
+  const auth = await bootstrapRuntimeConfig();
 
-  let authData:
-    | {
-        session: {
-          refresh_token: string;
-          user: { id: string };
-        } | null;
-      }
-    | undefined;
-  let authError;
-
-  for (let authAttempt = 0; authAttempt < 2; authAttempt++) {
-    if (auth.type === "refresh_token") {
-      const result = await supabase.auth.refreshSession({ refresh_token: auth.refreshToken });
-      authData = result.data;
-      authError = result.error;
-
-      if (authError || !authData.session) {
-        if (authAttempt === 0) {
-          console.warn("⚠️ Sessão salva expirou ou foi revogada. Abrindo o login novamente.");
-
-          // Remove somente o refresh token inválido e preserva o Access Code da Bambu.
-  await persistSessionSecrets(activeSecretStore, null, PRINTER_ACCESS_CODE);
-
-          // O segundo bootstrap abre novamente o login na mesma execução.
-          auth = await bootstrapRuntimeConfig();
-          continue;
-        }
-      }
-    } else {
-      const result = await supabase.auth.signInWithPassword({
-        email: AGENT_EMAIL,
-        password: auth.password,
-      });
-      authData = result.data;
-      authError = result.error;
-    }
-
-    break;
-  }
-
-  const authenticatedSession = authData?.session;
-  if (authError || !authenticatedSession) {
-    console.error("❌ Falha no login do agente:", authError?.message || "sessão não iniciada");
+  let authResult;
+  try {
+    authResult = await authenticateAgentSession({
+      supabase,
+      auth,
+      agentEmail: AGENT_EMAIL,
+      printerAccessCode: PRINTER_ACCESS_CODE,
+      secretStore: activeSecretStore,
+      promptLogin: async () => {
+        return bootstrapRuntimeConfig();
+      },
+    });
+  } catch (error: any) {
+    console.error("❌ Falha na autenticação do agente:", error?.message || error);
     process.exit(1);
   }
 
-  const authenticatedUserId = authenticatedSession.user.id;
-
-  await persistSessionSecrets(
-    activeSecretStore,
-    authenticatedSession.refresh_token ?? null,
-    PRINTER_ACCESS_CODE
-  );
+  const authenticatedUserId = authResult.userId;
 
   // Sincroniza os presets pessoais do Bambu Studio mesmo quando
   // a impressora estiver desligada. filament_id é a identidade estável.

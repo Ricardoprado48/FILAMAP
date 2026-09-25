@@ -1870,14 +1870,13 @@ Retirar bobina
 
 # 62. Estado Real de Implementação (v1.5 — fonte oficial de estado)
 
-> **📌 Snapshot vigente — 24/09/2026 / main@3ce850a.** Build e testes
-> atuais passaram: Agent 106/106 unitários + 13/13 integração; Web 33/33 +
-> build; migrations local/remoto alinhadas até `20260923120000`. O código
-> contém onboarding gráfico Windows, DPAPI, instalador/auto-start, Cloud
-> Spool Sync, weight gate e resolução automática de spool físico. O MVP
-> permanece **não homologado E2E** porque o Agent usado na última impressão
-> real era antigo e a identidade física Bambu Cloud × NFC ainda precisa ser
-> provada com a build atual.
+> **📌 Snapshot vigente — 25/09/2026 / Fase E Concluída.** Build e testes
+> atuais passaram: Agent 143/143 unitários + 13/13 integração; Web 33/33 +
+> build; migrations local/remoto alinhadas até `20260923120000`. Concluídas as
+> três subfases da Fase E: E1 (máquina de estados MQTT e eliminação de phantom
+> jobs), E2 (autenticação resiliente no boot sem perda de sessão) e E3 (FTPS com
+> TLS Implícito e extração precisa de slice_info.config). O MVP está pronto para
+> a release da Fase F (Golden Test E2E com hardware real).
 
 
 > **📌 Aviso v1.3 (19/09/2026) — este documento é a fonte oficial do
@@ -1901,9 +1900,13 @@ Retirar bobina
 > - ~~**Consumo multicolor está incompleto**~~ **Corrigido em
 >   20/09/2026:** o Agent rastreia todos os slots usados durante o job
 >   (não só o inicial) e gera uma linha de log/desconto por slot.
-> - **`slice_info.config`/FTPS ainda não têm validação com arquivo real**
->   documentada de forma confiável. **Ainda em aberto** — sem hardware
->   físico disponível nas sessões até agora.
+> - ~~**`slice_info.config`/FTPS ainda não têm validação com arquivo real**
+>   documentada de forma confiável.~~ **Resolvido em 25/09/2026 na Fase E (E3):**
+>   A causa raiz do `Timeout (control socket)` foi comprovada em hardware real:
+>   a porta 990 da Bambu Lab exige TLS Implícito (`secure: "implicit"` no
+>   `basic-ftp`). Foi comprovado também que a raiz FTPS é o próprio SD card (`/`),
+>   caminhos com `/sdcard/` foram normalizados, e a extração de `used_g` e mapeamento
+>   de slots 1-based para 0-based foram validados em arquivos reais da impressora.
 > - **A lacuna de migrations é maior do que a coluna `ams_slots.user_id`** —
 >   tabelas inteiras (`print_logs`, `catalog_items`, `filament_presets`)
 >   existem no banco real mas não em nenhuma migration versionada. **Ainda

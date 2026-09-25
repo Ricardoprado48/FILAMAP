@@ -1,4 +1,29 @@
-﻿# 09 — Changelog Técnico
+# 09 — Changelog Técnico
+
+## 25/09/2026 — Fase E: Estabilidade Operacional do Núcleo (E1, E2, E3)
+
+Fechamento completo da Fase E com 143/143 testes unitários e 13/13 testes de integração passando.
+
+### E1 — Phantom Job / Máquina de Estados MQTT (`9bc9785`)
+- Implementada classe pura `JobStateMachine` (`desktop-agent/src/jobStateMachine.ts`) para processamento de telemetria MQTT da Bambu Lab tolerante a deltas parciais.
+- Preservação estrita de `jobId`, `subtaskName`, `gcodeFile`, slots usados e progresso máximo entre deltas que omitem campos.
+- Descarte automático de jobs espúrios com 0% em estado `IDLE` sem geração de débito ou print_logs.
+- Finalização única garantida (`FINISH`, `STOP`, `FAILED`, `REPLACED`).
+- Cobertura com 13 testes unitários cobrindo todos os cenários de deltas, reinicialização e limpeza.
+
+### E2 — Autenticação Automática no Boot (`744300f`)
+- Implementado `desktop-agent/src/config/sessionManager.ts` com recuperação resiliente de sessão.
+- Diferenciação estrita de erros transitórios de rede/DNS (retentados com backoff exponencial sem apagar o segredo local) versus revogação comprovada (`invalid_grant`/400/401).
+- Preservação perpétua do `PRINTER_ACCESS_CODE` e do `refresh_token` durante blips de conectividade no logon do Windows.
+- O usuário não precisa mais digitar senha em boots rotineiros.
+- Cobertura com 10 testes unitários simulando falhas de rede, DNS e revogação.
+
+### E3 — FTPS / .3MF / slice_info.config (`e1ef6d5`)
+- Identificada e comprovada em hardware real a causa raiz do `Timeout (control socket)`: o servidor FTPS da Bambu Lab na porta 990 requer TLS Implícito. O uso de `secure: true` no `basic-ftp` disparava FTPS Explícito (texto claro + AUTH TLS). Corrigido para `secure: "implicit"`.
+- Comprovado em hardware real que a raiz do FTP da impressora é o próprio SD card (`/`), e requisições iniciando por `/sdcard/` falham com erro 550. Implementada normalização de caminhos (`normalizeRemoteFtpPath`) com fallback inteligente entre `/`, `/cache/` e `/model/`.
+- Comprovado em arquivos reais (.3mf do Bambu Studio) que o peso de filamento reside na propriedade `used_g` (não apenas `model_g`/`total_g`) e que os IDs de filamento no slicer XML são 1-based (`id="1"` -> slot `0`), reconciliando com `plate_1.json`.
+- Isolamento e segurança de arquivos temporários: uso de `os.tmpdir()` com UUID aleatório e remoção garantida em bloco `finally`.
+- Cobertura com 11 testes unitários novos em `desktop-agent/src/ftpsParser.test.ts`.
 
 ## 24/09/2026 — Gate Zero, baseline e reconciliação documental
 

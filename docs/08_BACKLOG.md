@@ -1,18 +1,19 @@
-# BACKLOG VIGENTE — 24/09/2026 — main@3ce850a
+# BACKLOG VIGENTE — 25/09/2026 — FASE E CONCLUÍDA
 
-Prioridade atual: **homologar o núcleo automático antes de novas features**.
+Status do núcleo operacional após a Fase E (E1, E2, E3):
+- [x] **E1 — Phantom Job / MQTT**: máquina de estados pura implementada, tolerante a deltas parciais, descarte de jobs órfãos a 0%, preservação de jobId e finalização única (`9bc9785`).
+- [x] **E2 — Autenticação no Boot**: persistência robusta do refresh token, retentativa com backoff para erros transitórios de rede/DNS, token só é revogado com prova explícita (`invalid_grant`), preservação do Access Code (`744300f`).
+- [x] **E3 — FTPS / .3MF / slice_info.config**: conexão FTPS com TLS Implícito comprovada na porta 990, caminhos remotos normalizados sem `/sdcard/`, extração precisa de `used_g` e mapeamento de IDs de filamento para slots (`e1ef6d5`).
 
-- [ ] gerar release do Agent correspondente a `3ce850a`;
-- [ ] validar hashes build/payload/instalado;
-- [ ] testar MQTT/telemetria e FTPS com a build atual;
-- [ ] confirmar ausência de phantom jobs;
-- [ ] homologar identidade física Bambu Cloud × `ams_slots`/NFC;
-- [ ] executar Golden Test E2E de uma cor;
-- [ ] executar Golden Test multicolor;
-- [ ] somente depois iniciar piloto controlado.
+Próximos passos operacionais (Fase F - Golden Test e Homologação Física):
+- [ ] gerar release instalável do Agent atualizada com as correções da Fase E;
+- [ ] instalar com controle de hash na máquina operacional;
+- [ ] executar Golden Test E2E de uma cor com pesagem antes e depois;
+- [ ] executar Golden Test E2E multicolor;
+- [ ] homologar em hardware real a resolução de spool físico Bambu Cloud × NFC.
 
 > Itens históricos abaixo são preservados para rastreabilidade. Quando houver
-> conflito de status, esta seção de 24/09/2026 prevalece.
+> conflito de status, esta seção de 25/09/2026 prevalece.
 
 ---
 

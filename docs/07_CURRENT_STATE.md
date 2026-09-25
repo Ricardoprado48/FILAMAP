@@ -1,4 +1,4 @@
-﻿# 07 — Estado Atual do Projeto
+# 07 — Estado Atual do Projeto
 
 **Snapshot auditado:** 18/09/2026  
 **Base:** conteúdo do ZIP `desktop-agent.zip` fornecido para auditoria.
@@ -51,10 +51,10 @@ O Filamap já possui Web App, Desktop Agent, integração Supabase, MQTT, tentat
 
 ## Implementado, mas precisa de validação antes de confiar em produção
 
-- descoberta automática da impressora;
-- caminho FTPS do job atual;
-- parser real de `slice_info.config` em diferentes jobs;
-- correspondência entre IDs do slicer e slots AMS;
+- descoberta automática da impressora (validada em rede local);
+- ~~caminho FTPS do job atual~~ (Validado e corrigido em 25/09/2026 na Fase E: caminhos normalizados sem `/sdcard/`, raiz FTPS é o próprio cartão SD);
+- ~~parser real de `slice_info.config` em diferentes jobs~~ (Validado e corrigido em 25/09/2026 na Fase E: extração de `used_g` testada e aprovada com amostras reais da Bambu A1);
+- ~~correspondência entre IDs do slicer e slots AMS~~ (Validado em 25/09/2026 na Fase E: slicer XML usa `id` 1-based que mapeia para slots 0-based `id - 1`, reconciliado com `plate_1.json`);
 - cálculo/baixa em jobs interrompidos;
 - telemetria adicional do schema remoto;
 - empacotamento/execução do Agent em máquinas novas;

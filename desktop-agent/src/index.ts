@@ -8,6 +8,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
+import { JobStateMachine, ActiveJobState } from "./jobStateMachine";
 import {
   computeConsumptionPerSlot,
   buildJobConsumptionItems,
@@ -75,19 +76,6 @@ async function bootstrapRuntimeConfig() {
   return resolved.auth;
 }
 
-interface ActiveJobState {
-  jobId: string; // chave de idempotência (não há task_id/job_id confirmado no payload MQTT real -- ver relatório, investigação (a))
-  subtaskName: string;
-  maxProgressPercent: number;
-  lastProgressPercent: number;
-  activeSlot: number; // último slot ativo reportado (mantido por compat/log)
-  usedSlots: number[]; // TODOS os slots vistos como ativos durante RUNNING, não só o inicial
-  startTime: number;
-  totalCostTime: number; // Segundos estimados pelo fatiador
-  filamentGrams: number;  // Gramas calculadas pelo fatiador (se informadas)
-  filamentSliceInfo?: FilamentSliceInfo[]; // Adicionado para armazenar informações do slice_info.config
-}
-
 const STATE_FILE = path.join(process.cwd(), "agent-state.json");
 
 function loadJobState(): ActiveJobState | null {
@@ -107,16 +95,6 @@ function saveJobState(state: ActiveJobState | null) {
       fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
     }
   } catch (e) {}
-}
-
-let currentJob: ActiveJobState | null = loadJobState();
-
-function extractGramsFromName(taskName: string): number | null {
-  const match = taskName.match(/_(\d+(?:\.\d+)?)g/i) || taskName.match(/(\d+(?:\.\d+)?)g\b/i);
-  if (match && match[1]) {
-    return parseFloat(match[1]);
-  }
-  return null;
 }
 
 async function startAgent() {
@@ -315,8 +293,11 @@ async function startAgent() {
       client.publish(`device/${PRINTER_SERIAL}/request`, payload);
     }
 
+    const jobStateMachine = new JobStateMachine({
+      initialJob: loadJobState(),
+      initialGcodeState: "IDLE",
+    });
     let lastGcodeState = "IDLE";
-    let activeSlotIndex = 0;
     let lastSyncTime = 0;
 
     let rediscoveryInProgress = false;
@@ -425,89 +406,53 @@ async function startAgent() {
         const print = raw.print;
         if (!print) return;
 
-        if (print.ams?.ams?.[0]?.tray_tar !== undefined) {
-          activeSlotIndex = Number(print.ams.ams[0].tray_tar) || 0;
-        }
+        const actions = jobStateMachine.processPrintPayload(print);
 
-        const currentState = print.gcode_state || lastGcodeState;
-        const progress = Number(print.mc_percent) || 0;
-        const taskName = print.subtask_name || "";
-        const totalCostTime = Number(print.mc_total_cost_time) || Number(print.calc_remaining_time) || 0;
+        for (const action of actions) {
+          if (action.type === "create_job") {
+            saveJobState(action.job);
+            console.log(`🧵 Novo trabalho de impressão detectado: "${action.job.subtaskName}" (JobId: ${action.job.jobId})`);
+            if (action.job.filamentGrams > 0) {
+              console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${action.job.filamentGrams}g`);
+            }
 
-        // No Bambu Lab MQTT, o arquivo .gcode ou .3mf sendo impresso é enviado em print.gcode_file
-        const gcodeFile = print.gcode_file || "";
-
-        if (currentState === "RUNNING") {
-          if (!currentJob || currentJob.subtaskName !== taskName) {
-            // Tenta extrair gramas do nome do arquivo do fatiador (se o usuário nomear ex: "suporte_azeite_45g.gcode")
-            const extractedGrams = extractGramsFromName(taskName);
-
-            let filamentSliceInfo: FilamentSliceInfo[] = [];
+            // Busca metadados via FTPS exatamente 1 vez por job
             try {
-              // Identifica dinamicamente o caminho do arquivo remoto .3mf na impressora.
-              // Se gcodeFile estiver presente e terminar em .3mf ou .gcode, usamos ele.
-              // Do contrário, fazemos o fallback inteligente utilizando o taskName.
-              let remoteFilePath = gcodeFile;
-              if (!remoteFilePath) {
-                remoteFilePath = `/sdcard/${taskName}.gcode.3mf`;
-              } else if (!remoteFilePath.toLowerCase().endsWith(".3mf")) {
-                // Se o arquivo reportado for .gcode, frequentemente existe o correspondente .3mf na mesma pasta ou similar.
-                // Mas geralmente nas impressoras modernas a pasta cache guarda o .3mf temporário do job atual
-                remoteFilePath = remoteFilePath.replace(/\.gcode$/i, ".3mf").replace(/\.gcode\.3mf$/i, ".3mf");
-                if (!remoteFilePath.toLowerCase().endsWith(".3mf")) {
-                  remoteFilePath += ".3mf";
-                }
-              }
-
-              console.log(`📡 Solicitando arquivo de fatiador via FTPS no caminho: ${remoteFilePath}`);
-              filamentSliceInfo = await fetchAndParseSliceInfo(PRINTER_IP, PRINTER_ACCESS_CODE, remoteFilePath);
-              if (filamentSliceInfo.length > 0) {
+              console.log(`📡 Solicitando arquivo de fatiador via FTPS no caminho: ${action.remoteFilePath}`);
+              const sliceInfo = await fetchAndParseSliceInfo(PRINTER_IP, PRINTER_ACCESS_CODE, action.remoteFilePath);
+              if (sliceInfo.length > 0) {
                 console.log("ℹ️ Informações de slice_info.config carregadas com sucesso!");
+                jobStateMachine.attachSliceInfo(sliceInfo);
+                saveJobState(jobStateMachine.getCurrentJob());
               }
             } catch (e: any) {
               console.error("❌ Erro ao carregar slice_info.config:", e.message);
             }
-            
-            currentJob = {
-              jobId: randomUUID(),
-              subtaskName: taskName || "Impressão A1",
-              maxProgressPercent: progress,
-              lastProgressPercent: progress,
-              activeSlot: activeSlotIndex,
-              usedSlots: [activeSlotIndex],
-              startTime: Date.now(),
-              totalCostTime: totalCostTime,
-              filamentGrams: extractedGrams || 0,
-              filamentSliceInfo: filamentSliceInfo,
-            };
-            saveJobState(currentJob);
-            if (extractedGrams) {
-              console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${extractedGrams}g`);
+          } else if (action.type === "update_job") {
+            saveJobState(action.job);
+            if (action.reason === "slot_added") {
+              console.log(
+                `🎨 Troca de slot detectada durante o job -- slot ${action.job.activeSlot} adicionado (usados até agora: ${action.job.usedSlots.join(", ")})`
+              );
             }
-          } else {
-            currentJob.lastProgressPercent = progress;
-            let stateChanged = false;
-            if (progress > currentJob.maxProgressPercent) {
-              currentJob.maxProgressPercent = progress;
-              stateChanged = true;
+          } else if (action.type === "finalize_job") {
+            if (action.finishStatus === "COMPLETED") {
+              console.log("🎉 Impressão CONCLUÍDA!");
+            } else {
+              console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%!`);
             }
-            // Rastreia troca de slot ativo pela AMS durante o job -- é o
-            // que permite descontar TODOS os carretéis usados num job
-            // multicolor, não só o slot capturado no início.
-            if (activeSlotIndex !== currentJob.activeSlot) {
-              currentJob.activeSlot = activeSlotIndex;
-              stateChanged = true;
-            }
-            if (!currentJob.usedSlots.includes(activeSlotIndex)) {
-              currentJob.usedSlots.push(activeSlotIndex);
-              console.log(`🎨 Troca de slot detectada durante o job -- slot ${activeSlotIndex} adicionado (usados até agora: ${currentJob.usedSlots.join(", ")})`);
-              stateChanged = true;
-            }
-            if (stateChanged) {
-              saveJobState(currentJob);
-            }
+            await finalizeJob(printer.id, print, action.percentExecuted, action.finishStatus, action.job);
+            saveJobState(null);
+          } else if (action.type === "discard_job") {
+            console.log("🧹 Descartando estado de job órfão/fantasma (impressora em IDLE com progresso 0%).");
+            saveJobState(null);
           }
         }
+
+        const currentJob = jobStateMachine.getCurrentJob();
+        const currentState = jobStateMachine.getLastGcodeState();
+        const activeSlotIndex = jobStateMachine.getActiveSlotIndex();
+        const progress = Number(print.mc_percent) || 0;
 
         const now = Date.now();
         if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
@@ -526,27 +471,11 @@ async function startAgent() {
           if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
           if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
 
-          if (currentJob?.filamentSliceInfo) {
+          if (currentJob?.filamentSliceInfo && currentJob.filamentSliceInfo.length > 0) {
             telemetryData.filament_slice_info = currentJob.filamentSliceInfo;
           }
 
           await supabase.from("printers").update(telemetryData).eq("id", printer.id);
-        }
-
-        if (currentState === "FINISH" && lastGcodeState !== "FINISH" && currentJob) {
-          console.log("🎉 Impressão CONCLUÍDA!");
-          await finalizeJob(printer.id, print, 100, "COMPLETED");
-          currentJob = null;
-          saveJobState(null);
-        }
-
-        if ((currentState === "FAILED" || currentState === "PAUSE_STOP" || currentState === "STOP") &&
-            (lastGcodeState === "RUNNING" || lastGcodeState === "PAUSE")) {
-          const finalPercent = currentJob ? currentJob.maxProgressPercent : progress;
-          console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${finalPercent}%!`);
-          await finalizeJob(printer.id, print, finalPercent, currentState);
-          currentJob = null;
-          saveJobState(null);
         }
 
         lastGcodeState = currentState;
@@ -561,21 +490,27 @@ async function startAgent() {
 
 
 
-async function finalizeJob(printerId: string, printData: any, percentExecuted: number, finishStatus: string) {
+async function finalizeJob(
+  printerId: string,
+  printData: any,
+  percentExecuted: number,
+  finishStatus: string,
+  jobToFinalize: ActiveJobState | null
+) {
   try {
-    const jobId = currentJob?.jobId || randomUUID();
-    const subtaskName = printData.subtask_name || (currentJob ? currentJob.subtaskName : "Trabalho 3D");
+    const jobId = jobToFinalize?.jobId || randomUUID();
+    const subtaskName = printData.subtask_name || (jobToFinalize ? jobToFinalize.subtaskName : "Trabalho 3D");
     const durationMinutes = Math.round((printData.mc_cost_time || 0) / 60);
     // Job que começou e terminou inteiro com o Agent desligado nunca tem
     // currentJob capturado -- cai no slot 0 como já acontecia antes desta
     // mudança (limitação conhecida, não nova: sem captura, não há como
     // saber que outros slots foram usados nem pegar slice_info.config).
-    const usedSlots = currentJob?.usedSlots?.length ? currentJob.usedSlots : [currentJob?.activeSlot ?? 0];
+    const usedSlots = jobToFinalize?.usedSlots?.length ? jobToFinalize.usedSlots : [jobToFinalize?.activeSlot ?? 0];
 
     const perSlot = computeConsumptionPerSlot(
       usedSlots,
-      currentJob?.filamentSliceInfo,
-      currentJob?.filamentGrams || 0,
+      jobToFinalize?.filamentSliceInfo,
+      jobToFinalize?.filamentGrams || 0,
       durationMinutes
     );
 

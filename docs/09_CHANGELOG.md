@@ -1,5 +1,28 @@
 # 09 — Changelog Técnico
 
+## 26/09/2026 — Fase F0: Resoluções Operacionais e Empacotamento de Release
+
+Investigação e resolução dos problemas de telemetria stale e exibição de carretéis identificados no início da Fase F0.
+
+### F0.A — Auth / RLS / Telemetria Stale (`8f2226f`, `02a1b03`)
+- **Causa raiz:** No Desktop Agent, `promptLogin()` chamava `bootstrapRuntimeConfig()`, que recriava a instância global `supabase` como cliente anônimo. O login subsequente autenticava apenas uma variável local, deixando o agente com um cliente anônimo que falhava queries de `printers` e `user_filament_profiles` sob RLS (`owner_all`). Sem registrar o printer, MQTT e heartbeat não iniciavam, mantendo telemetria antiga (`gcode_state: RUNNING`) no Supabase.
+- **Correção Agent:** Preservação do cliente Supabase instanciado e invocação explícita de `supabase.auth.setSession(...)` no `sessionManager.ts`, além de passar `user_id` autenticado na inserção de impressora.
+- **Correção Web App:** No componente `LivePrintCard`, a exibição de impressão ao vivo agora utiliza `isPrinterLivePrinting(printer)` (`isPrinterOnline(printer) && (gcode_state === 'RUNNING' || gcode_state === 'PAUSE')`). Quando a impressora está offline, a telemetria antiga não é exibida como ativa. 10 testes unitários adicionados (`web-app/src/utils/printer.test.ts`).
+
+### F0.B — Resolução de Cores HEX e Nomes de Carretel (`c556ba1`)
+- **Causa raiz:** O Bambu Cloud Spool Sync gravava `spool.color` (ex.: `#161616`) no campo `color_name` e deixava `color_hex` nulo. Na interface Web, o card renderizava `spool.color_name` como título do carretel, exibindo códigos HEX como `#161616`, `#F72323`.
+- **Correção Agent:** Implementada normalização estrita de códigos HEX para `color_hex` (`#RRGGBB`) e resolução de nomes legíveis para `color_name` a partir do perfil (`filamentName` / `profileDisplayName`), com rotina de auto-cura para registros existentes. Testes adicionados em `bambuCloudSpoolSync.test.ts`.
+- **Correção Web App:** Utilitários `getSpoolDisplayName`, `getSpoolSwatchColor` e `isHexColor` adicionados em `web-app/src/utils/inventory.ts`, com 15 testes unitários. Interface Web atualizada para aplicar nomes legíveis em cards, AMS slots, logs de impressão e modais.
+- **Backfill Supabase:** Script de backfill executado contra o Supabase de produção corrigindo todos os 14 carretéis da Bambu Cloud, substituindo nomes HEX por nomes legíveis e preenchendo `color_hex`.
+
+### F0.C — Empacotamento Determinístico e Release (`cd0a4b7`)
+- **Causa raiz do deadlock:** O `@yao-pkg/pkg` no Windows trava em IPC pipes (`fetched-v22.23.2-win-x64`) ao fabricar cache V8 bytecode para mais de 2.000 módulos JS via stdin (`fabricator.js`).
+- **Correção:** Ajustadas flags do comando `pkg` para `--public --public-packages "*" --no-bytecode` em `desktop-agent/scripts/package-exe.ps1`, reduzindo o tempo de empacotamento de horas (com travamento) para ~15 segundos.
+- **Artefatos gerados:**
+  - Agent Executable: `desktop-agent/installer/payload/filamap-agent.exe` (SHA256: `C6ECAAC0E21F7202ADD98AD0553A3F7E90330519998BE0E1AB1B3F679FA1A05D`)
+  - Bambu Bridge: `desktop-agent/installer/payload/bambu-bridge/filamap-bambu-bridge.exe` (SHA256: `116B144218D7726F45E72F55B22DF81BFCE72A6F99E30149A713097862DEE9B3`)
+  - Instalador Inno Setup: `desktop-agent/installer/output/FilamapAgentSetup.exe` (SHA256: `23EC10CF65C8D6E8B920F0278CE53D16BB7B5B8700BBC79A4B8295DB218E4028`)
+
 ## 25/09/2026 — Fase E: Estabilidade Operacional do Núcleo (E1, E2, E3)
 
 Fechamento completo da Fase E com 143/143 testes unitários e 13/13 testes de integração passando.

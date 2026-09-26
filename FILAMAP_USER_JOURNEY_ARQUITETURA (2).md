@@ -1,7 +1,7 @@
 # FILAMAP
 ## Jornada do Utilizador e Funcionamento Técnico
 
-**Versão:** 1.5  
+**Versão:** 1.6  
 **Tipo de documento:** Product Journey + Technical Architecture — **fonte oficial de estado do projeto** (ver Seção 62)  
 **Produto:** Filamap  
 **Categoria:** SaaS / IoT / Automação para impressão 3D  
@@ -10,6 +10,26 @@
 ---
 
 ## Log de atualizações
+
+**v1.6** — 26/09/2026 — Conclusão Técnica e Correções Operacionais da Fase F0.
+Identificadas e resolvidas duas anomalias operacionais críticas pós-instalação:
+1. Problema A (Auth/RLS/Telemetria Stale): `bootstrapRuntimeConfig()` recriava
+   a instância global `supabase` como anônima após login, falhando RLS nas queries
+   de impressora/MQTT. Corrigido preservando o cliente autenticado e sincronizando
+   a sessão. Na Web, o card de Impressão ao Vivo agora valida se a impressora
+   está online (`isPrinterLivePrinting`), evitando telemetria fantasma.
+2. Problema B (Nomes HEX de carretéis): `bambuCloudSpoolSync` gravava código HEX
+   em `color_name` e deixava `color_hex` nulo. Corrigida a separação estrita,
+   auto-cura no sync e backfill dos 14 spools remotos no Supabase com nomes
+   legíveis (`PLA`, `PETG VERDE`, etc.). Na Web, implementados fallbacks
+   robustos de exibição (`getSpoolDisplayName`, `getSpoolSwatchColor`).
+3. Empacotamento determinístico: corrigido travamento do `@yao-pkg/pkg` no Windows
+   com flags `--public --public-packages "*" --no-bytecode`.
+4. Testes: Agent 148/148 unitários + 13/13 integração PASS; Web 58/58 unitários +
+   build produção PASS.
+5. Artefatos gerados: Agent SHA256 `C6ECAAC0E21F7202ADD98AD0553A3F7E90330519998BE0E1AB1B3F679FA1A05D`,
+   Instalador Inno Setup SHA256 `23EC10CF65C8D6E8B920F0278CE53D16BB7B5B8700BBC79A4B8295DB218E4028`.
+   Pausa mandatória antes da instalação para elevação manual de privilégios (UAC).
 
 **v1.5** — 24/09/2026 — Gate Zero e baseline atualizados. `main@3ce850a`
 passou em build e testes: Agent 106/106 unitários + 13/13 integração; Web
@@ -1868,15 +1888,36 @@ Retirar bobina
 
 ---
 
-# 62. Estado Real de Implementação (v1.5 — fonte oficial de estado)
+# 62. Estado Real de Implementação (v1.6 — fonte oficial de estado)
 
-> **📌 Snapshot vigente — 25/09/2026 / Fase E Concluída.** Build e testes
-> atuais passaram: Agent 143/143 unitários + 13/13 integração; Web 33/33 +
-> build; migrations local/remoto alinhadas até `20260923120000`. Concluídas as
-> três subfases da Fase E: E1 (máquina de estados MQTT e eliminação de phantom
-> jobs), E2 (autenticação resiliente no boot sem perda de sessão) e E3 (FTPS com
-> TLS Implícito e extração precisa de slice_info.config). O MVP está pronto para
-> a release da Fase F (Golden Test E2E com hardware real).
+> **📌 Snapshot vigente — 26/09/2026 / Conclusão Técnica da Fase F0.**
+> Testes e builds passaram com 100% de sucesso: Agent 148/148 unitários +
+> 13/13 integração; Web 58/58 unitários + build produção.
+>
+> **Correções críticas implementadas e validadas nesta sessão:**
+> 1. **Auth / RLS / Telemetria Stale (Problema A):**
+>    - `bootstrapRuntimeConfig()` não sobrescreve mais a instância Supabase
+>      autenticada por uma cliente anônimo.
+>    - `authenticateAgentSession` e `startAgent` operam sob a mesma sessão.
+>    - `web-app` agora avalia `isPrinterLivePrinting` (`online && (RUNNING || PAUSE)`),
+>      ocultando "Impressão ao Vivo" quando a impressora está offline.
+> 2. **Separação de Cor HEX e Nome do Carretel (Problema B):**
+>    - `bambuCloudSpoolSync` normaliza HEX para `color_hex` e resolve nomes
+>      legíveis para `color_name` (ex.: "PLA", "PETG VERDE"), sem poluir com HEX.
+>    - Backfill executado com sucesso nos 14 spools remotos do Supabase.
+>    - Web UI atualizada com utilitários `getSpoolDisplayName` e `getSpoolSwatchColor`.
+> 3. **Empacotador e Release:**
+>    - `@yao-pkg/pkg` configurado com `--public --public-packages "*"` evitando
+>      deadlocks no bytecode cache do Windows.
+>    - Agent SHA256: `C6ECAAC0E21F7202ADD98AD0553A3F7E90330519998BE0E1AB1B3F679FA1A05D`.
+>    - Bridge SHA256: `116B144218D7726F45E72F55B22DF81BFCE72A6F99E30149A713097862DEE9B3`.
+>    - Instalador Inno Setup: `desktop-agent/installer/output/FilamapAgentSetup.exe`
+>      (SHA256: `23EC10CF65C8D6E8B920F0278CE53D16BB7B5B8700BBC79A4B8295DB218E4028`).
+>
+> **Ponto de Controle / UAC Gate:**
+> A instalação em `C:\Program Files\Filamap Agent` requer privilégios de Administrador
+> (`PrivilegesRequired=admin`). Conforme protocolo estrito, o agente pausou e preparou
+> o instalador para execução pelo usuário com elevação manual.
 
 
 > **📌 Aviso v1.3 (19/09/2026) — este documento é a fonte oficial do

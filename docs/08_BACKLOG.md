@@ -1,19 +1,22 @@
-# BACKLOG VIGENTE — 25/09/2026 — FASE E CONCLUÍDA
+# BACKLOG VIGENTE — 26/09/2026 — FASE F0 CONCLUÍDA TECNICAMENTE
 
-Status do núcleo operacional após a Fase E (E1, E2, E3):
+Status do núcleo operacional após a Fase F0:
 - [x] **E1 — Phantom Job / MQTT**: máquina de estados pura implementada, tolerante a deltas parciais, descarte de jobs órfãos a 0%, preservação de jobId e finalização única (`9bc9785`).
 - [x] **E2 — Autenticação no Boot**: persistência robusta do refresh token, retentativa com backoff para erros transitórios de rede/DNS, token só é revogado com prova explícita (`invalid_grant`), preservação do Access Code (`744300f`).
 - [x] **E3 — FTPS / .3MF / slice_info.config**: conexão FTPS com TLS Implícito comprovada na porta 990, caminhos remotos normalizados sem `/sdcard/`, extração precisa de `used_g` e mapeamento de IDs de filamento para slots (`e1ef6d5`).
+- [x] **F0.A — Auth / RLS / Telemetria Stale**: preservação da instância Supabase autenticada em `bootstrapRuntimeConfig`/`startAgent`; validação de impressora online na Web (`isPrinterLivePrinting`) eliminando "impressão ao vivo" stale (`8f2226f`, `02a1b03`).
+- [x] **F0.B — Resolução de Cores HEX e Nomes**: separação estrita de `color_hex` e `color_name` no sync e exibição Web com auto-cura e backfill no Supabase (`c556ba1`).
+- [x] **F0.C — Release e Empacotador**: empacotamento determinístico via `@yao-pkg/pkg` otimizado (`cd0a4b7`) e instalador Inno Setup gerado com sucesso.
 
-Próximos passos operacionais (Fase F - Golden Test e Homologação Física):
-- [ ] gerar release instalável do Agent atualizada com as correções da Fase E;
-- [ ] instalar com controle de hash na máquina operacional;
-- [ ] executar Golden Test E2E de uma cor com pesagem antes e depois;
-- [ ] executar Golden Test E2E multicolor;
-- [ ] homologar em hardware real a resolução de spool físico Bambu Cloud × NFC.
+Próximos passos operacionais:
+- [ ] Executar instalador `FilamapAgentSetup.exe` com elevação de Administrador (UAC);
+- [ ] Validar auditoria pós-instalação no host (processo único, tarefa agendada, telemetria viva);
+- [ ] Executar Golden Test E2E de uma cor com pesagem antes e depois (Fase F1);
+- [ ] Executar Golden Test E2E multicolor (Fase F2);
+- [ ] Homologar em hardware real a resolução de spool físico Bambu Cloud × NFC.
 
 > Itens históricos abaixo são preservados para rastreabilidade. Quando houver
-> conflito de status, esta seção de 25/09/2026 prevalece.
+> conflito de status, esta seção de 26/09/2026 prevalece.
 
 ---
 

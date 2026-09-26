@@ -10,6 +10,9 @@ import {
   processBridgeOutput,
   parseBambuCloudSpoolRecord,
   syncBambuCloudSpoolsFromParsed,
+  normalizeColorHex,
+  resolveSpoolColorName,
+  buildSpoolInsertRow,
   type BridgeRunResult,
   type ParsedBambuCloudSpool,
 } from "./bambuCloudSpoolSync";
@@ -574,4 +577,78 @@ test("execução repetida é idempotente: não duplica perfis nem spools", async
   assert.equal(second.spoolsUpdated, 3);
   assert.equal(client.tables.spools.length, 3, "número de spools não pode crescer");
   assert.equal(client.tables.user_filament_profiles.length, 2, "número de perfis não pode crescer");
+});
+
+test("normalizeColorHex normaliza hexadecimais de 6 e 8 caracteres e rejeita inválidos", () => {
+  assert.equal(normalizeColorHex("161616"), "#161616");
+  assert.equal(normalizeColorHex("#161616"), "#161616");
+  assert.equal(normalizeColorHex("FF0000FF"), "#FF0000");
+  assert.equal(normalizeColorHex("#00CC00FF"), "#00CC00");
+  assert.equal(normalizeColorHex(""), null);
+  assert.equal(normalizeColorHex(null), null);
+  assert.equal(normalizeColorHex(undefined), null);
+  assert.equal(normalizeColorHex("ZZZZZZ"), null);
+});
+
+test("resolveSpoolColorName prioriza display_name do perfil ou filamentName legível", () => {
+  const spool = silkSpool({ filamentName: "PLA VERMELHO_ULTRA_SILK" });
+  assert.equal(resolveSpoolColorName(spool, "Bambu PLA Vermelho"), "Bambu PLA Vermelho");
+  assert.equal(resolveSpoolColorName(spool, null), "PLA VERMELHO_ULTRA_SILK");
+
+  // Se filamentName for um código hex, recorre à marca + material
+  const hexSpool = silkSpool({ filamentName: "#161616", filamentVendor: "Bambu Lab", filamentType: "PLA Basic" });
+  assert.equal(resolveSpoolColorName(hexSpool, null), "Bambu Lab PLA Basic");
+});
+
+test("buildSpoolInsertRow preenche color_name amigável e color_hex normalizado", () => {
+  const spool = silkSpool();
+  const row = buildSpoolInsertRow(spool, USER_ID, "profile-123", "Bambu PLA Seda Vermelho", "2026-09-26T00:00:00Z");
+
+  assert.equal(row.color_name, "Bambu PLA Seda Vermelho");
+  assert.equal(row.color_hex, "#FF0000");
+  assert.equal(row.user_id, USER_ID);
+  assert.equal(row.material, "PLA");
+});
+
+test("syncBambuCloudSpoolsFromParsed auto-corrige registros legados com color_name em HEX e color_hex nulo", () => {
+  const existingProfileId = randomUUID();
+  const existingSpoolId = randomUUID();
+  const now = new Date().toISOString();
+
+  const client = new FakeSupabaseClient({
+    profiles: [
+      {
+        id: existingProfileId,
+        user_id: USER_ID,
+        source: "bambu_cloud",
+        source_key: "P790d873",
+        source_profile_name: "PLA VERMELHO_ULTRA_SILK",
+        display_name: "Bambu Lab PLA Silk Vermelho",
+        material: "PLA",
+        updated_at: now,
+      },
+    ],
+    spools: [
+      {
+        id: existingSpoolId,
+        user_id: USER_ID,
+        bambu_spool_id: "15582983",
+        filament_profile_id: existingProfileId,
+        brand: "Bambu Lab",
+        material: "PLA",
+        color_name: "#161616", // valor legado em hex
+        color_hex: null, // legado sem color_hex
+        current_weight: 900,
+        updated_at: now,
+      },
+    ],
+  });
+
+  return syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]).then((result) => {
+    assert.equal(result.spoolsUpdated, 1);
+    const updated = client.tables.spools[0];
+    assert.equal(updated.color_name, "PLA VERMELHO_ULTRA_SILK");
+    assert.equal(updated.color_hex, "#FF0000");
+    assert.equal(updated.current_weight, 900, "peso deve ser estritamente preservado");
+  });
 });

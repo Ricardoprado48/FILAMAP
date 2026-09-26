@@ -355,14 +355,64 @@ function buildSourceMetadata(spool: ParsedBambuCloudSpool): Record<string, unkno
 }
 
 /**
+ * Normaliza um valor de cor para formato hexadecimal padrão #RRGGBB.
+ * Trata valores de 6 dígitos (#RRGGBB ou RRGGBB) e 8 dígitos (RRGGBBAA com alpha).
+ */
+export function normalizeColorHex(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  let cleaned = raw.trim();
+  if (cleaned.startsWith("#")) {
+    cleaned = cleaned.substring(1);
+  }
+  if (/^[0-9A-Fa-f]{6}$/.test(cleaned)) {
+    return `#${cleaned.toUpperCase()}`;
+  }
+  if (/^[0-9A-Fa-f]{8}$/.test(cleaned)) {
+    return `#${cleaned.substring(0, 6).toUpperCase()}`;
+  }
+  if (/^[0-9A-Fa-f]{3}$/.test(cleaned)) {
+    const [r, g, b] = cleaned;
+    return `#${r}${r}${g}${g}${b}${b}`.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * Determina um nome legível para o carretel, evitando que códigos hexadecimais
+ * sejam utilizados como nome de exibição.
+ */
+export function resolveSpoolColorName(
+  spool: ParsedBambuCloudSpool,
+  profileDisplayName?: string | null
+): string {
+  if (profileDisplayName && !normalizeColorHex(profileDisplayName)) {
+    return profileDisplayName;
+  }
+
+  if (spool.filamentName && !normalizeColorHex(spool.filamentName)) {
+    return spool.filamentName;
+  }
+
+  const brand = spool.filamentVendor && spool.filamentVendor !== "+" && spool.filamentVendor !== "-"
+    ? spool.filamentVendor.trim()
+    : "";
+  if (brand && brand !== spool.filamentType) {
+    return `${brand} ${spool.filamentType}`;
+  }
+
+  return spool.filamentType || "Filamento";
+}
+
+/**
  * Payload de INSERT: só roda pra spool físico novo, então precisa
  * preencher as colunas NOT NULL (brand, material) -- não há dado local
  * anterior pra preservar ainda.
  */
-function buildSpoolInsertRow(
+export function buildSpoolInsertRow(
   spool: ParsedBambuCloudSpool,
   userId: string,
   filamentProfileId: string | null,
+  profileDisplayName: string | null,
   now: string
 ) {
   return {
@@ -371,7 +421,8 @@ function buildSpoolInsertRow(
     filament_profile_id: filamentProfileId,
     brand: spool.filamentVendor || spool.filamentType,
     material: spool.filamentType,
-    color_name: spool.color,
+    color_name: resolveSpoolColorName(spool, profileDisplayName),
+    color_hex: normalizeColorHex(spool.color),
     bambu_in_printer: spool.inPrinter,
     bambu_dev_id: spool.devId,
     bambu_device_name: spool.deviceName,
@@ -389,10 +440,11 @@ function buildSpoolInsertRow(
  * campo controlado pelo Filamap (regra 10) nunca aparecem aqui -- por não
  * estarem na chave do UPDATE, o Supabase/Postgres não os toca.
  */
-function buildSpoolUpdateRow(
+export function buildSpoolUpdateRow(
   spool: ParsedBambuCloudSpool,
   filamentProfileId: string | null,
-  now: string
+  now: string,
+  extraDisplayUpdates?: { color_name?: string; color_hex?: string | null }
 ) {
   return {
     filament_profile_id: filamentProfileId,
@@ -405,6 +457,8 @@ function buildSpoolUpdateRow(
     bambu_source_metadata: buildSourceMetadata(spool),
     bambu_synced_at: now,
     updated_at: now,
+    ...(extraDisplayUpdates?.color_name ? { color_name: extraDisplayUpdates.color_name } : {}),
+    ...(extraDisplayUpdates?.color_hex ? { color_hex: extraDisplayUpdates.color_hex } : {}),
   };
 }
 
@@ -455,14 +509,20 @@ export async function syncBambuCloudSpoolsFromParsed(
 
   const { data: existingSpools, error: existingError } = await supabase
     .from("spools")
-    .select("id, bambu_spool_id")
+    .select("id, bambu_spool_id, color_name, color_hex")
     .eq("user_id", userId)
     .in("bambu_spool_id", bambuSpoolIds);
 
   if (existingError) throw existingError;
 
-  const existingIdByBambuSpoolId = new Map<string, string>(
-    (existingSpools || []).map((row: any) => [row.bambu_spool_id as string, row.id as string])
+  const existingSpoolByBambuSpoolId = new Map<
+    string,
+    { id: string; color_name?: string | null; color_hex?: string | null }
+  >(
+    (existingSpools || []).map((row: any) => [
+      row.bambu_spool_id as string,
+      { id: row.id, color_name: row.color_name, color_hex: row.color_hex },
+    ])
   );
 
   const rowsToInsert: ReturnType<typeof buildSpoolInsertRow>[] = [];
@@ -470,15 +530,27 @@ export async function syncBambuCloudSpoolsFromParsed(
 
   for (const spool of spools) {
     const filamentProfileId = profileIdByFilamentId.get(spool.filamentId) ?? null;
-    const existingId = existingIdByBambuSpoolId.get(spool.bambuSpoolId);
+    const profileRow = profileRowByFilamentId.get(spool.filamentId);
+    const existing = existingSpoolByBambuSpoolId.get(spool.bambuSpoolId);
 
-    if (existingId) {
+    if (existing) {
+      const extraDisplayUpdates: { color_name?: string; color_hex?: string | null } = {};
+      const isLegacyHexName = Boolean(normalizeColorHex(existing.color_name));
+      if (!existing.color_name || isLegacyHexName) {
+        extraDisplayUpdates.color_name = resolveSpoolColorName(spool, profileRow?.display_name);
+      }
+      if (!existing.color_hex) {
+        extraDisplayUpdates.color_hex = normalizeColorHex(spool.color);
+      }
+
       rowsToUpdate.push({
-        id: existingId,
-        payload: buildSpoolUpdateRow(spool, filamentProfileId, now),
+        id: existing.id,
+        payload: buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
       });
     } else {
-      rowsToInsert.push(buildSpoolInsertRow(spool, userId, filamentProfileId, now));
+      rowsToInsert.push(
+        buildSpoolInsertRow(spool, userId, filamentProfileId, profileRow?.display_name ?? null, now)
+      );
     }
   }
 

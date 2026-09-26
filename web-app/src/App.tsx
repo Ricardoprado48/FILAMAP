@@ -1,13 +1,13 @@
-﻿import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
-import { isPrinterOnline } from "./utils/printer";
+import { isPrinterOnline, isPrinterLivePrinting } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
-import { filterInventory, groupInventoryByMaterial } from "./utils/inventory";
+import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 import {
   needsWeighing,
@@ -522,12 +522,12 @@ export default function App() {
     const tare = (spool.spool_tare_weight || 218).toString();
     setTareWeight(tare);
     setGrossWeight((spool.current_weight + (parseFloat(tare) || 0)).toString());
-    setCustomTagId(spool.nfc_uid || generateAutoTagId(spool.material, spool.color_name));
+    setCustomTagId(spool.nfc_uid || generateAutoTagId(spool.material, getSpoolDisplayName(spool)));
     setFeedbackMsg(null);
   }
 
   async function handleDeleteSpool(spool: Spool) {
-    if (!window.confirm(`Excluir carretel "${spool.color_name}"?`)) return;
+    if (!window.confirm(`Excluir carretel "${getSpoolDisplayName(spool)}"?`)) return;
     await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
     await supabase.from("spools").delete().eq("id", spool.id);
     await loadData();
@@ -540,7 +540,7 @@ export default function App() {
       return;
     }
     const netWeight = Math.max(0, (parseFloat(grossWeight) || 0) - (parseFloat(tareWeight) || 0));
-    const finalTagId = customTagId.trim() || generateAutoTagId(writerSpool.material, writerSpool.color_name);
+    const finalTagId = customTagId.trim() || generateAutoTagId(writerSpool.material, getSpoolDisplayName(writerSpool));
     const fullTargetUrl = `https://filamap.pages.dev/?tag=${encodeURIComponent(finalTagId)}`;
     const wroteToTag = await writeTagUrl(fullTargetUrl);
     // Sem essa checagem, uma falha na gravação física (tag afastada cedo
@@ -562,7 +562,7 @@ export default function App() {
       return;
     }
 
-    setFeedbackMsg(`✅ Tag "${finalTagId}" gravada com sucesso no carretel "${writerSpool.color_name}"!`);
+    setFeedbackMsg(`✅ Tag "${finalTagId}" gravada com sucesso no carretel "${getSpoolDisplayName(writerSpool)}"!`);
     setWriterSpoolId("");
     setCustomTagId("");
     setGrossWeight("");
@@ -604,8 +604,8 @@ export default function App() {
 
   const activePrinter =
     getActivePrinter(printers);
-  const isPrinting = activePrinter?.gcode_state === "RUNNING" || activePrinter?.gcode_state === "PAUSE";
   const printerOnline = isPrinterOnline(activePrinter);
+  const isPrinting = isPrinterLivePrinting(activePrinter);
 
   function renderSpoolCard(spool: Spool) {
     const location = formatBambuLocation(spool);
@@ -615,9 +615,9 @@ export default function App() {
     return (
       <div key={spool.id} style={{ background: "#1e293b", border: `1px solid ${spoolNeedsWeighing ? "#d97706" : "#334155"}`, borderRadius: 8, padding: 10, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: spool.color_hex, border: "2px solid #64748b", flexShrink: 0 }} />
+          <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: getSpoolSwatchColor(spool), border: "2px solid #64748b", flexShrink: 0 }} />
           <div>
-            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spool.color_name}</strong>
+            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</strong>
             <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
               <span>{spool.brand} • {spool.material}</span>
               {getNfcStatus(spool) === "written" ? (
@@ -751,25 +751,29 @@ export default function App() {
           <div style={{ background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b", border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <strong style={{ fontSize: 15, color: "#f8fafc" }}>{isPrinting ? "IMPRESSÃO AO VIVO" : "STATUS DA IMPRESSORA"}</strong>
-              <span style={{ background: isPrinting ? "rgba(34, 197, 94, 0.2)" : "#334155", color: isPrinting ? "#4ade80" : "#94a3b8", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
-                {activePrinter?.gcode_state || "OCIOSA"}
+              <span style={{ background: isPrinting ? "rgba(34, 197, 94, 0.2)" : !printerOnline ? "rgba(239, 68, 68, 0.2)" : "#334155", color: isPrinting ? "#4ade80" : !printerOnline ? "#f87171" : "#94a3b8", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
+                {!printerOnline ? "DESCONECTADA" : (activePrinter?.gcode_state || "OCIOSA")}
               </span>
             </div>
             <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginBottom: 12 }}>
-              {activePrinter?.current_task || "Nenhum arquivo em impressão"}
+              {!printerOnline ? "Desktop Agent ou impressora offline" : isPrinting ? (activePrinter?.current_task || "Arquivo em impressão") : "Pronta para impressão"}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#cbd5e1" }}>
-              <span>Progresso: <strong style={{ color: "#38bdf8" }}>{activePrinter?.print_progress || 0}%</strong></span>
-              <span>Restante: <strong style={{ color: "#f8fafc" }}>{activePrinter?.remaining_time_min || 0} min</strong></span>
-            </div>
-            <div style={{ width: "100%", height: 10, background: "#0f172a", borderRadius: 5, overflow: "hidden", marginBottom: 12 }}>
-              <div style={{ width: `${activePrinter?.print_progress || 0}%`, height: "100%", background: "linear-gradient(90deg, #0284c7, #38bdf8)" }} />
-            </div>
+            {isPrinting && (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#cbd5e1" }}>
+                  <span>Progresso: <strong style={{ color: "#38bdf8" }}>{activePrinter?.print_progress || 0}%</strong></span>
+                  <span>Restante: <strong style={{ color: "#f8fafc" }}>{activePrinter?.remaining_time_min || 0} min</strong></span>
+                </div>
+                <div style={{ width: "100%", height: 10, background: "#0f172a", borderRadius: 5, overflow: "hidden", marginBottom: 12 }}>
+                  <div style={{ width: `${activePrinter?.print_progress || 0}%`, height: "100%", background: "linear-gradient(90deg, #0284c7, #38bdf8)" }} />
+                </div>
+              </>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, background: "#0f172a", padding: 10, borderRadius: 8 }}>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>CAMADA</span><div style={{ fontSize: 13, fontWeight: 700 }}>{activePrinter?.current_layer || 0} / {activePrinter?.total_layers || 0}</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>BICO</span><div style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{activePrinter?.nozzle_temp || 0}°C</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>MESA</span><div style={{ fontSize: 13, fontWeight: 700, color: "#f59e0b" }}>{activePrinter?.bed_temp || 0}°C</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>SLOT EM USO</span><div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8" }}>Slot {(activePrinter?.active_slot_index || 0) + 1}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>CAMADA</span><div style={{ fontSize: 13, fontWeight: 700 }}>{printerOnline ? `${activePrinter?.current_layer || 0} / ${activePrinter?.total_layers || 0}` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>BICO</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#ef4444" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.nozzle_temp || 0}°C` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>MESA</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#f59e0b" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.bed_temp || 0}°C` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>SLOT EM USO</span><div style={{ fontSize: 13, fontWeight: 700, color: isPrinting ? "#38bdf8" : "#94a3b8" }}>{isPrinting ? `Slot ${(activePrinter?.active_slot_index || 0) + 1}` : "--"}</div></div>
             </div>
           </div>
 
@@ -783,11 +787,11 @@ export default function App() {
                   <div key={slotIdx} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: isScanningThisSlot ? "1px solid #38bdf8" : "1px solid #334155", minHeight: 120 }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>SLOT {slotIdx + 1}</span>
-                      <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? spool.color_hex : "#334155", display: "inline-block" }} />
+                      <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? getSpoolSwatchColor(spool) : "#334155", display: "inline-block" }} />
                     </div>
                     {spool ? (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{spool.color_name}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</div>
                         <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.material}</div>
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
                         <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
@@ -839,7 +843,7 @@ export default function App() {
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{log.subtask_name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>
-                        {log.spool ? `${log.spool.material} • ${log.spool.color_name}` : "Sem carretel"} • Status: <span style={{ color: "#34d399" }}>{log.status}</span>
+                        {log.spool ? `${log.spool.material} • ${getSpoolDisplayName(log.spool)}` : "Sem carretel"} • Status: <span style={{ color: "#34d399" }}>{log.status}</span>
                       </div>
                     </div>
                     <div style={{ textAlign: "right" }}>
@@ -1120,7 +1124,7 @@ export default function App() {
                           >
                             <option value="">F{idx + 1}: Carretel do Estoque...</option>
                             {inventory.map((s) => (
-                              <option key={s.id} value={s.id}>{s.color_name} ({s.material}) - R${s.price_paid || 85}/kg</option>
+                              <option key={s.id} value={s.id}>{getSpoolDisplayName(s)} ({s.material}) - R${s.price_paid || 85}/kg</option>
                             ))}
                           </select>
                           <input
@@ -1222,7 +1226,7 @@ export default function App() {
                   return (
                     <option key={s.id} value={s.id}>
                       {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : "⚠️ "}
-                      {`${s.color_name} — ${s.brand} — ${s.material}`}
+                      {`${getSpoolDisplayName(s)} — ${s.brand} — ${s.material}`}
                       {nfcStatus === "written" ? " (tag gravada)" : nfcStatus === "pending" ? " (aguardando gravação física)" : " (sem tag)"}
                     </option>
                   );
@@ -1244,8 +1248,8 @@ export default function App() {
                   <div>
                     <label style={{ fontSize: 11, color: "#64748b" }}>Cor</label>
                     <div style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#cbd5e1", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: writerSpool.color_hex, display: "inline-block", flexShrink: 0 }} />
-                      {writerSpool.color_name}
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: getSpoolSwatchColor(writerSpool), display: "inline-block", flexShrink: 0 }} />
+                      {getSpoolDisplayName(writerSpool)}
                     </div>
                   </div>
                 </div>
@@ -1281,7 +1285,7 @@ export default function App() {
       {weighingSpool && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
           <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
-            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {weighingSpool.color_name}</h3>
+            <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {getSpoolDisplayName(weighingSpool)}</h3>
             {needsWeighing(weighingSpool) && (
               <p style={{ margin: "0 0 10px", color: "#fbbf24", fontSize: 12 }}>
                 Este carretel veio da Bambu e ainda não foi pesado no Filamap -- o peso {weighingSpool.current_weight}g é só um valor padrão.

@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "=== EMPACOTANDO AGENT ==="
-& npx pkg dist/index.js --targets node22-win-x64 --output filamap-agent.exe
+& npx pkg dist/index.js --targets node22-win-x64 --public --public-packages "*" --no-bytecode --output filamap-agent.exe
 if ($LASTEXITCODE -ne 0) {
     throw "pkg falhou com exit code $LASTEXITCODE"
 }

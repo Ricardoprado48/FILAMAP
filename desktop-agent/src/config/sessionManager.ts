@@ -11,7 +11,9 @@ export interface AuthenticateSessionOptions {
   supabase: SupabaseClient;
   auth: AuthStrategy;
   agentEmail: string;
+  getAgentEmail?: () => string;
   printerAccessCode: string;
+  getPrinterAccessCode?: () => string;
   secretStore: SecretStore;
   promptLogin?: () => Promise<AuthStrategy>;
   maxTransitoryRetries?: number;
@@ -205,8 +207,11 @@ export async function authenticateAgentSession(
 
   // 2. Caminho de autenticação por e-mail/senha
   if (currentAuth.type === "password") {
+    const emailToUse = options.getAgentEmail ? options.getAgentEmail() : agentEmail;
+    const accessCodeToUse = options.getPrinterAccessCode ? options.getPrinterAccessCode() : printerAccessCode;
+
     const result = await supabase.auth.signInWithPassword({
-      email: agentEmail,
+      email: emailToUse,
       password: currentAuth.password,
     });
 
@@ -219,7 +224,7 @@ export async function authenticateAgentSession(
     await persistSessionSecrets(
       secretStore,
       session.refresh_token ?? null,
-      printerAccessCode
+      accessCodeToUse
     );
 
     logInfo("✅ Autenticado com sucesso via e-mail e senha. Nova sessão persistida.");

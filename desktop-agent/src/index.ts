@@ -70,9 +70,11 @@ async function bootstrapRuntimeConfig() {
   PRINTER_SERIAL = resolved.printerSerial;
   PRINTER_ACCESS_CODE = resolved.printerAccessCode;
 
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: { persistSession: false, autoRefreshToken: true },
-  });
+  if (!supabase) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: true },
+    });
+  }
 
   return resolved.auth;
 }
@@ -109,7 +111,9 @@ async function startAgent() {
       supabase,
       auth,
       agentEmail: AGENT_EMAIL,
+      getAgentEmail: () => AGENT_EMAIL,
       printerAccessCode: PRINTER_ACCESS_CODE,
+      getPrinterAccessCode: () => PRINTER_ACCESS_CODE,
       secretStore: activeSecretStore,
       promptLogin: async () => {
         return bootstrapRuntimeConfig();
@@ -118,6 +122,13 @@ async function startAgent() {
   } catch (error: any) {
     console.error("❌ Falha na autenticação do agente:", error?.message || error);
     process.exit(1);
+  }
+
+  if (authResult?.session?.access_token && authResult?.session?.refresh_token) {
+    await supabase.auth.setSession({
+      access_token: authResult.session.access_token,
+      refresh_token: authResult.session.refresh_token,
+    });
   }
 
   const authenticatedUserId = authResult.userId;
@@ -211,7 +222,13 @@ async function startAgent() {
     if (!printer) {
       const { data: inserted, error: insertError } = await supabase
         .from("printers")
-        .insert({ serial: PRINTER_SERIAL, model: "A1", ip_address: PRINTER_IP, is_online: true })
+        .insert({
+          user_id: authenticatedUserId,
+          serial: PRINTER_SERIAL,
+          model: "A1",
+          ip_address: PRINTER_IP,
+          is_online: true,
+        })
         .select()
         .single();
       if (insertError) throw insertError;

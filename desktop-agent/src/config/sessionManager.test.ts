@@ -422,3 +422,72 @@ test("H: reinicialização simulada -> sessão restaurada automaticamente sem lo
   assert.equal(rebootResult.userId, "user-persistent");
   assert.equal(rebootResult.source, "refresh_token");
 });
+
+test("I: token revogado -> promptLogin fornece nova senha -> cliente autentica e sessão é retornada", async () => {
+  const secretStore = new MemorySecretStore({
+    supabaseRefreshToken: "expired-token",
+    printerAccessCode: "OLD_ACCESS",
+  });
+
+  let loggedInEmail = "";
+  let loggedInPassword = "";
+  let sessionStored: any = null;
+
+  const fakeSupabase = {
+    auth: {
+      refreshSession: async () => {
+        return {
+          data: { session: null },
+          error: new AuthApiError("Invalid Refresh Token", 400, "invalid_grant"),
+        };
+      },
+      signInWithPassword: async ({ email, password }: any) => {
+        loggedInEmail = email;
+        loggedInPassword = password;
+        const session = {
+          access_token: "new-access-token",
+          refresh_token: "brand-new-refresh-token",
+          user: { id: "user-reauth-123" },
+        };
+        sessionStored = session;
+        return {
+          data: { session },
+          error: null,
+        };
+      },
+      setSession: async (session: any) => {
+        sessionStored = session;
+        return { data: { session }, error: null };
+      },
+    },
+  } as unknown as SupabaseClient;
+
+  let currentEmail = "old@filamap.com";
+  let currentAccessCode = "OLD_ACCESS";
+
+  const result = await authenticateAgentSession({
+    supabase: fakeSupabase,
+    auth: { type: "refresh_token", refreshToken: "expired-token" },
+    agentEmail: currentEmail,
+    getAgentEmail: () => currentEmail,
+    printerAccessCode: currentAccessCode,
+    getPrinterAccessCode: () => currentAccessCode,
+    secretStore,
+    promptLogin: async () => {
+      currentEmail = "newuser@filamap.com";
+      currentAccessCode = "NEW_ACCESS_CODE";
+      return { type: "password", password: "fresh-password" };
+    },
+  });
+
+  assert.equal(result.userId, "user-reauth-123");
+  assert.equal(result.source, "password");
+  assert.equal(loggedInEmail, "newuser@filamap.com");
+  assert.equal(loggedInPassword, "fresh-password");
+  assert.equal(result.session.access_token, "new-access-token");
+
+  const secrets = await secretStore.load();
+  assert.equal(secrets.supabaseRefreshToken, "brand-new-refresh-token");
+  assert.equal(secrets.printerAccessCode, "NEW_ACCESS_CODE");
+});
+

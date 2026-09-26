@@ -1,4 +1,4 @@
-﻿import type { Printer } from "../types";
+import type { Printer } from "../types";
 import { PRINTER_ONLINE_THRESHOLD_MS } from "../constants";
 
 export function isPrinterOnline(
@@ -12,3 +12,11 @@ export function isPrinterOnline(
     PRINTER_ONLINE_THRESHOLD_MS
   );
 }
+
+export function isPrinterLivePrinting(
+  printer?: Printer | null
+): boolean {
+  if (!isPrinterOnline(printer)) return false;
+  return printer?.gcode_state === "RUNNING" || printer?.gcode_state === "PAUSE";
+}
+

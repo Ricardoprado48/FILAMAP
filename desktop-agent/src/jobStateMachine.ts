@@ -122,7 +122,7 @@ export class JobStateMachine {
   constructor(options: JobStateMachineOptions = {}) {
     this.currentJob = options.initialJob ? { ...options.initialJob } : null;
     this.lastGcodeState = options.initialGcodeState ?? "IDLE";
-    this.activeSlotIndex = options.initialSlotIndex ?? 0;
+    this.activeSlotIndex = options.initialSlotIndex !== undefined ? options.initialSlotIndex : -1;
     this.lastKnownSubtaskName = this.currentJob?.subtaskName ?? "";
     this.lastKnownGcodeFile = this.currentJob?.gcodeFile ?? "";
     if (this.currentJob?.amsMapping) {
@@ -138,8 +138,11 @@ export class JobStateMachine {
     return this.lastGcodeState;
   }
 
-  public getActiveSlotIndex(): number {
-    return this.activeSlotIndex;
+  public getActiveSlotIndex(): number | null {
+    if (this.activeSlotIndex >= 0 && this.activeSlotIndex <= 15 && this.activeSlotIndex !== 255) {
+      return this.activeSlotIndex;
+    }
+    return null;
   }
 
   /**
@@ -166,8 +169,12 @@ export class JobStateMachine {
     if (rawSlot !== undefined) {
       const slotVal = Number(rawSlot);
       // Valor 255 é transição/retração -- nunca converte para 0 e nunca adiciona a usedSlots
-      if (!isNaN(slotVal) && slotVal >= 0 && slotVal !== 255) {
-        this.activeSlotIndex = slotVal;
+      if (!isNaN(slotVal)) {
+        if (slotVal >= 0 && slotVal <= 15 && slotVal !== 255) {
+          this.activeSlotIndex = slotVal;
+        } else if (slotVal === 255) {
+          this.activeSlotIndex = -1;
+        }
       }
     }
 
@@ -405,6 +412,17 @@ export class JobStateMachine {
 
   /** Permite anexar o ams_mapping capturado via MQTT ao job ativo */
   public attachAmsMapping(mapping: number[]): void {
+    if (this.currentJob?.amsMapping && this.currentJob.amsMapping.length > 0) {
+      const isDifferent =
+        this.currentJob.amsMapping.length !== mapping.length ||
+        this.currentJob.amsMapping.some((val, idx) => val !== mapping[idx]);
+      if (isDifferent) {
+        console.warn(
+          `⚠️ ams_mapping conflitante recebido durante o job ${this.currentJob.jobId}. Preservando mapping original: [${this.currentJob.amsMapping}] contra novo [${mapping}]`
+        );
+        return;
+      }
+    }
     this.lastKnownAmsMapping = mapping;
     if (this.currentJob) {
       this.currentJob.amsMapping = mapping;

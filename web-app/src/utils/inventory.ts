@@ -5,6 +5,26 @@ export function isHexColor(val: string | null | undefined): boolean {
   return /^#?([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(val.trim());
 }
 
+export function getSpoolBrandDisplay(
+  brand: string | null | undefined,
+  material?: string | null
+): string {
+  const cleanBrand = brand?.trim();
+  const cleanMat = material?.trim();
+  if (
+    !cleanBrand ||
+    cleanBrand === "+" ||
+    cleanBrand === "-" ||
+    cleanBrand.toLowerCase() === "generic"
+  ) {
+    return "Genérico";
+  }
+  if (cleanMat && cleanBrand.toUpperCase() === cleanMat.toUpperCase()) {
+    return "Genérico";
+  }
+  return cleanBrand;
+}
+
 export function getSpoolDisplayName(spool: Partial<Spool> | null | undefined): string {
   if (!spool) return "Sem carretel";
   const colorName = spool.color_name?.trim();
@@ -78,4 +98,14 @@ export function groupInventoryByMaterial(
     },
     {}
   );
+}
+
+export function getInPrinterCountDisplay(
+  visibleCount: number,
+  totalCount: number
+): string {
+  if (visibleCount === totalCount) {
+    return `(${totalCount})`;
+  }
+  return `(${visibleCount} de ${totalCount})`;
 }

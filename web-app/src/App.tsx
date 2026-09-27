@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
+import { FilamapLogo, FilamapIcon } from "./components/Brand";
 
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline, isPrinterLivePrinting } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
-import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor } from "./utils/inventory";
+import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor, getSpoolBrandDisplay, getInPrinterCountDisplay } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 import {
   needsWeighing,
@@ -591,6 +592,7 @@ export default function App() {
 
   const sortedFilteredInventory = sortSpoolsForSpoolScreen(filteredInventory);
   const spoolsInPrinter = sortedFilteredInventory.filter((s) => s.bambu_in_printer);
+  const totalInPrinterCount = inventory.filter((s) => s.bambu_in_printer).length;
   const otherSpools = sortedFilteredInventory.filter((s) => !s.bambu_in_printer);
 
   const groupedByMaterial =
@@ -619,7 +621,7 @@ export default function App() {
           <div>
             <strong style={{ fontSize: 13, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</strong>
             <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
-              <span>{spool.brand} • {spool.material}</span>
+              <span>{getSpoolBrandDisplay(spool.brand, spool.material)} • {spool.material}</span>
               {getNfcStatus(spool) === "written" ? (
                 <span title={`Tag física gravada em ${new Date(spool.nfc_written_at!).toLocaleString()} — ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>✅ Tag gravada</span>
               ) : getNfcStatus(spool) === "pending" ? (
@@ -628,7 +630,7 @@ export default function App() {
                 <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
               )}
               {spool.bambu_spool_id && (
-                <span title="Sincronizado da conta Bambu (Cloud Spool Sync)" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #0284c7", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🌐 Bambu</span>
+                <span title="Origem do registro: sincronizado via ecossistema Bambu (Cloud Spool Sync)" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #0284c7", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🌐 Sincronizado</span>
               )}
               {spoolNeedsWeighing && (
                 <span title="Peso ainda não foi conferido na balança pelo Filamap" style={{ background: "rgba(217, 119, 6, 0.18)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Precisa pesagem</span>
@@ -668,10 +670,10 @@ export default function App() {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f172a" }}>
         <div style={{ maxWidth: 380, width: "100%", background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 24, boxSizing: "border-box" }}>
-          <div style={{ textAlign: "center", marginBottom: 20 }}>
-            <span style={{ fontSize: 36 }}>🧵</span>
-            <h1 style={{ margin: "8px 0 0", fontSize: 24, color: "#38bdf8", fontWeight: 900 }}>FILAMAP</h1>
-            <p style={{ margin: "4px 0 0", color: "#94a3b8", fontSize: 12 }}>Acesso à Oficina & Estoque NFC</p>
+          <div style={{ textAlign: "center", marginBottom: 22, display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <FilamapIcon size={64} style={{ marginBottom: 12, filter: "drop-shadow(0 4px 14px rgba(2, 132, 199, 0.4))" }} />
+            <FilamapLogo height={38} alt="FILAMAP" style={{ margin: "0 auto" }} />
+            <p style={{ margin: "8px 0 0", color: "#94a3b8", fontSize: 12, fontWeight: 500 }}>Acesso à Oficina &amp; Estoque NFC</p>
           </div>
           <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
@@ -699,18 +701,20 @@ export default function App() {
           0% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.55; }
           100% { transform: translate(-50%, -50%) scale(1.9); opacity: 0; }
         }
+        @media (max-width: 520px) {
+          .filamap-header-sub { display: none !important; }
+        }
       `}</style>
       {/* Topo */}
       <header style={{ borderBottom: "1px solid #334155", paddingBottom: 14, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 26 }}>🧵</span>
-            <div>
-              <h1 style={{ margin: 0, fontSize: 22, color: "#38bdf8", fontWeight: 900, letterSpacing: "-0.02em" }}>FILAMAP</h1>
-              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11 }}>Bambu Lab A1 & Estoque NFC</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+            <FilamapLogo height={36} alt="FILAMAP" />
+            <div className="filamap-header-sub" style={{ borderLeft: "1px solid #334155", paddingLeft: 10, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11, fontWeight: 500, whiteSpace: "nowrap" }}>Bambu Lab A1 &amp; Estoque NFC</p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
             <span style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, background: printerOnline ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)", color: printerOnline ? "#34d399" : "#f87171", border: `1px solid ${printerOnline ? "#059669" : "#dc2626"}` }}>
               {printerOnline ? "ONLINE" : "OFFLINE"}
             </span>
@@ -885,13 +889,19 @@ export default function App() {
             </div>
           )}
 
-          {spoolsInPrinter.length > 0 && (
+          {totalInPrinterCount > 0 && (
             <div style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #38bdf8", overflow: "hidden", marginBottom: 16 }}>
               <div style={{ padding: "10px 14px", background: "rgba(2, 132, 199, 0.15)", borderBottom: "1px solid #334155" }}>
-                <strong style={{ color: "#38bdf8" }}>📍 Na Impressora Agora ({spoolsInPrinter.length})</strong>
+                <strong style={{ color: "#38bdf8" }}>📍 Na Impressora Agora {getInPrinterCountDisplay(spoolsInPrinter.length, totalInPrinterCount)}</strong>
               </div>
               <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                {spoolsInPrinter.map((spool) => renderSpoolCard(spool))}
+                {spoolsInPrinter.length > 0 ? (
+                  spoolsInPrinter.map((spool) => renderSpoolCard(spool))
+                ) : (
+                  <div style={{ padding: "10px", textAlign: "center", color: "#94a3b8", fontSize: 12 }}>
+                    Nenhum carretel na impressora corresponde aos filtros aplicados.
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1288,7 +1298,7 @@ export default function App() {
             <h3 style={{ margin: "0 0 10px", color: "#fff" }}>⚖️ Re-pesar {getSpoolDisplayName(weighingSpool)}</h3>
             {needsWeighing(weighingSpool) && (
               <p style={{ margin: "0 0 10px", color: "#fbbf24", fontSize: 12 }}>
-                Este carretel veio da Bambu e ainda não foi pesado no Filamap -- o peso {weighingSpool.current_weight}g é só um valor padrão.
+                Este carretel foi sincronizado via ecossistema Bambu e ainda não foi pesado no Filamap -- o peso {weighingSpool.current_weight}g é só um valor padrão.
               </p>
             )}
             <form onSubmit={handleSaveWeigh} style={{ display: "flex", flexDirection: "column", gap: 12 }}>

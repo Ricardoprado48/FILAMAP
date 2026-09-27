@@ -1,14 +1,36 @@
 import { describe, it, expect } from "vitest";
 import {
   isHexColor,
+  getSpoolBrandDisplay,
   getSpoolDisplayName,
   getSpoolSwatchColor,
   filterInventory,
   groupInventoryByMaterial,
+  getInPrinterCountDisplay,
 } from "./inventory";
 import type { Spool } from "../types";
 
 describe("inventory utils", () => {
+  describe("getSpoolBrandDisplay", () => {
+    it("returns brand name when valid and distinct from material", () => {
+      expect(getSpoolBrandDisplay("Bambu Lab", "PLA")).toBe("Bambu Lab");
+      expect(getSpoolBrandDisplay("Voolt3D", "PLA")).toBe("Voolt3D");
+      expect(getSpoolBrandDisplay("Easy Print", "PETG")).toBe("Easy Print");
+      expect(getSpoolBrandDisplay("MasterPrint", "PETG")).toBe("MasterPrint");
+    });
+
+    it("returns 'Genérico' when brand is equal to material, empty, or placeholder", () => {
+      expect(getSpoolBrandDisplay("PLA", "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay("petg", "PETG")).toBe("Genérico");
+      expect(getSpoolBrandDisplay("+", "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay("-", "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay("Generic", "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay("", "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay(null, "PLA")).toBe("Genérico");
+      expect(getSpoolBrandDisplay(undefined, "PLA")).toBe("Genérico");
+    });
+  });
+
   describe("isHexColor", () => {
     it("identifies 3, 6, and 8 character hex codes with and without hash", () => {
       expect(isHexColor("#161616")).toBe(true);
@@ -175,6 +197,20 @@ describe("inventory utils", () => {
       ];
       const grouped = groupInventoryByMaterial(inventory);
       expect(grouped["PLA"]).toHaveLength(2);
+    });
+  });
+
+  describe("getInPrinterCountDisplay", () => {
+    it("shows simple count when visible equals total physical count", () => {
+      expect(getInPrinterCountDisplay(3, 3)).toBe("(3)");
+      expect(getInPrinterCountDisplay(1, 1)).toBe("(1)");
+      expect(getInPrinterCountDisplay(0, 0)).toBe("(0)");
+    });
+
+    it("shows 'X de Y' when filters hide some installed spools", () => {
+      expect(getInPrinterCountDisplay(2, 3)).toBe("(2 de 3)");
+      expect(getInPrinterCountDisplay(1, 3)).toBe("(1 de 3)");
+      expect(getInPrinterCountDisplay(0, 3)).toBe("(0 de 3)");
     });
   });
 });

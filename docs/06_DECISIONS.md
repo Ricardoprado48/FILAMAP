@@ -55,6 +55,20 @@ Este arquivo registra decisões duradouras identificadas no repositório. Novas 
 
 **Motivo:** conversas longas perderam contexto e passaram a contradizer decisões/código existentes.
 
+## DEC-010 — Desacoplamento Semântico de Status: Agent ≠ Impressora
+
+**Status:** implementada em 27/09/2026 (Fase H)  
+**Decisão:** Agent e Impressora possuem estados operacionais independentes no header e status card:
+1. **Agent Status:**
+   - `ONLINE`: heartbeat `last_seen_at` atualizado em menos de 45s (cadência nominal 15s).
+   - `OFFLINE`: heartbeat ausente ou expirado (>= 45s).
+   - `VERIFICANDO`: estado inicial de startup antes da primeira carga.
+2. **Impressora Status:**
+   - `ONLINE`: Agent Online E telemetria recente da impressora (< 60s) com `is_online === true`.
+   - `OFFLINE`: Agent Online E telemetria expirada/desconectada (`is_online === false`).
+   - `SEM COMUNICAÇÃO`: Agent Offline (ausência de observador confiável impede atestar se a impressora física está ligada/desligada).
+   - `VERIFICANDO`: estado inicial de startup.
+
 ## Decisões ainda NÃO tomadas
 
 Os itens abaixo aparecem como visão ou necessidade, mas não devem ser tratados como arquitetura já aprovada em implementação:

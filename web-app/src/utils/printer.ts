@@ -1,22 +1,14 @@
 import type { Printer } from "../types";
-import { PRINTER_ONLINE_THRESHOLD_MS } from "../constants";
+import { getPrinterStatus, isPrinterLivePrinting as isLivePrinting } from "./status";
 
 export function isPrinterOnline(
   printer?: Printer | null
 ): boolean {
-  if (!printer?.last_seen_at) return false;
-
-  return (
-    Date.now() -
-      new Date(printer.last_seen_at).getTime() <
-    PRINTER_ONLINE_THRESHOLD_MS
-  );
+  return getPrinterStatus(printer) === "ONLINE";
 }
 
 export function isPrinterLivePrinting(
   printer?: Printer | null
 ): boolean {
-  if (!isPrinterOnline(printer)) return false;
-  return printer?.gcode_state === "RUNNING" || printer?.gcode_state === "PAUSE";
+  return isLivePrinting(printer);
 }
-

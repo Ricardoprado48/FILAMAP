@@ -1,5 +1,28 @@
 # 09 — Changelog Técnico
 
+## 27/09/2026 — Fase H: Consolidação Operacional e UX Essencial
+
+- **Desacoplamento Semântico de Status no Header e Cards:**
+  - Substituído o badge genérico "ONLINE / OFFLINE" por dois badges operacionais independentes:
+    - `Agent: Online` / `Agent: Offline` (baseado em `last_seen_at` < 45s).
+    - `Impressora: Online` / `Impressora: Offline` / `Impressora: Sem comunicação` (com `SEM_COMUNICACAO` quando o Agent está Offline).
+  - Ticker periódico no React (5s) para expirar visualmente os badges mesmo sem novos fetches.
+- **Card de Status da Impressora Amigável:**
+  - Mapeamento operacional de estados técnicos (`RUNNING` -> "Imprimindo", `PAUSE` -> "Pausada", `IDLE`/`FINISH` -> "Pronta para impressão", `FAILED` -> "Falha na impressão", `STOP`/`CANCEL` -> "Interrompida").
+  - "Slot em uso" estritamente semântico: `0` -> "Slot 1", `2` -> "Slot 3", `3` -> "Slot 4", e `null`/`undefined`/`-1`/`255`/`NaN`/em repouso -> `"--"`.
+- **Histórico Multicolor Agrupado por Job:**
+  - `groupPrintLogsByJob`: agrupa múltiplos logs com o mesmo `job_id` em um único card de job com consumo total somado e breakdown individual de cada carretel com respectivo swatch e débito (`-X.Xg`).
+  - Preservação estrita de logs legados individuais (sem `job_id`).
+  - Preservação de visibilidade de slots órfãos com badge explicativo "SEM CARRETEL".
+  - Borda dupla de alto contraste (`border: 1px solid rgba(255,255,255,0.25)`, `boxShadow: 0 0 0 1px rgba(0,0,0,0.5)`) para swatches escuros (Preto Velvet).
+- **Testes Herméticos:**
+  - `status.test.ts`: Fixtures A a L (100% PASS).
+  - `history.test.ts`: Fixtures U a Z (100% PASS).
+  - `inventory.test.ts`: Fixtures M a T (100% PASS).
+  - Total Web: 92/92 testes PASS.
+  - Total Agent: 174/174 unitários PASS, 13/13 integração PASS.
+- **Deploy:** Produção Web publicada no Cloudflare Pages (`https://filamap.pages.dev`).
+
 ## 27/09/2026 — Correção de Regressão MQTT: Remoção de Assinatura em /request
 
 - **Causa Raiz Identificada:** O broker MQTT local da Bambu Lab A1 fecha sumariamente conexões que tentem assinar o tópico `device/${PRINTER_SERIAL}/request` (reservado apenas para comandos enviados à impressora).

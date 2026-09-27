@@ -1,28 +1,16 @@
-# BACKLOG VIGENTE — 27/09/2026 — GATE 1 CONCLUÍDO & REGRESSÃO MQTT RESOLVIDA
+# BACKLOG VIGENTE — 27/09/2026 — FASE H CONCLUÍDA
 
 Status do núcleo operacional após a sessão atual:
-- [x] **Gate 1 — Mapeamento Multicolor (`ams_mapping`) & Slot em Uso**:
-  - Resolução por 4 níveis de precedência: `ams_mapping` do MQTT (`[0, 2, 3]`), slot derivado, `ams_slots` reconciliado, carretel físico;
-  - Regra de ambiguidade: sem `ams_mapping` e >= 2 candidatos fisicamente compatíveis -> status AMBIGUOUS, `spool_id = null`, ZERO estoque debitado, `needs_weighing` não marcado por punição;
-  - Leitura de `tray_now` corrigida no payload MQTT da A1/AMS Lite, ignorando valor transitório `255` sem converter para 0 e sem poluir `usedSlots`;
-  - Captura e persistência de `ams_mapping` em `%APPDATA%\Filamap\agent-state.json`;
-  - 173/173 unitários e 13/13 integração PASS.
-- [x] **Correção da Regressão MQTT**:
-  - Removida subscrição indevida em `device/${PRINTER_SERIAL}/request`, que provocava fechamento imediato do socket TCP pelo broker da Bambu A1;
-  - Mantida subscrição exclusiva em `/report`; telemetria `print.ams_mapping` capturada normalmente;
-  - Estabilidade de 15 segundos comprovada em hardware real com 0 reconnects e 0 disconnects.
-- [x] **Saneamento Cirúrgico do Estoque do Incidente Multicolor**:
-  - Vermelho Ultra Silk ajustado para 890.20g (-2.00g);
-  - MasterPrint PETG Branco ajustado para 353.20g (-0.80g);
-  - Preto Velvet mantido em 742.20g;
-  - Total no banco: 29 spools, 17 catalog_items, 3 print_logs (preservados intactos).
-- [x] **Nova Release Gerada**:
-  - Agent SHA256: `D15909F2EA548642D75C9BDA6BFCBC4390CABC9E8892D050CCB35431962824B2`;
-  - Instalador SHA256: `4524F89973C6AE95886ADB98E4CE875AB5F3BB9A6E1500200D44903290BE49E2`.
-
-Próximos passos operacionais:
-- [ ] Cliente executar o instalador `desktop-agent/installer/output/FilamapAgentSetup.exe` com privilégios de Administrador (UAC);
-- [ ] Retomada da homologação física / Golden Test multicolor.
+- [x] **Fase H — Consolidação Operacional e UX Essencial**:
+  - Desacoplamento semântico dos status de Agent (`last_seen_at` < 45s) e Impressora (`last_online`/`is_online` < 60s, com `SEM_COMUNICACAO` quando o Agent está Offline);
+  - Ticker reativo na UI (5s) para expirar visualmente os badges em tempo real;
+  - Card de status operacional humano ("Imprimindo", "Pausada", "Pronta para impressão", "Desconectada", "Aguardando Desktop Agent");
+  - "Slot em uso" estritamente semântico: `0` -> "Slot 1", `2` -> "Slot 3", `3` -> "Slot 4", e repouso/transição 255 -> `"--"`;
+  - Histórico de impressões multicolor agrupado fielmente por `job_id`, somando o consumo total e exibindo breakdown detalhado com swatches de alto contraste para carretéis escuros (Preto Velvet);
+  - Preservação estrita dos 6 logs existentes e dos saldos de estoque (Preto 739.30g, Vermelho 888.40g, Branco 352.50g);
+  - Testes herméticos: 92/92 Web PASS, 174/174 Agent unitários PASS, 13/13 Agent integração PASS;
+  - Deploy em produção Web homologado: `https://filamap.pages.dev`.
+- [ ] **Próximo Passo**: Fase I — Jornada Completa do Usuário.
 
 > Itens históricos abaixo são preservados para rastreabilidade. Quando houver
 > conflito de status, esta seção de 26/09/2026 prevalece.

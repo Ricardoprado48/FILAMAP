@@ -1,10 +1,11 @@
-﻿export interface Printer {
+export interface Printer {
   id: string;
   serial: string;
   model: string;
   ip_address: string;
   is_online: boolean;
   last_seen_at?: string | null;
+  last_online?: string | null;
   current_task?: string;
   print_progress?: number;
   remaining_time_min?: number;
@@ -71,4 +72,7 @@ export interface PrintLog {
   needs_weighing?: boolean;
   spool_id?: string;
   spool?: Spool;
+  job_id?: string | null;
+  orphan_slot?: boolean;
+  consumption_quality?: string;
 }

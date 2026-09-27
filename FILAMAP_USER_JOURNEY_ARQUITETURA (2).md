@@ -1894,9 +1894,29 @@ Retirar bobina
 
 ---
 
-# 62. Estado Real de Implementação (v1.10 — fonte oficial de estado)
+# 62. Estado Real de Implementação (v1.11 — fonte oficial de estado)
 
-> **📌 Snapshot vigente — 27/09/2026 / Correção da Regressão MQTT pós-Gate 1 & Estabilidade de Rede.**
+> **📌 Snapshot vigente — 27/09/2026 / Fase H: Consolidação Operacional e UX Essencial.**
+> Testes e builds passaram com 100% de sucesso:
+> - Agent: 174/174 unitários PASS, 13/13 integração PASS (Release homologada instalada: `DAF1BECCD672D48D54E81E94841C36405CF949761A0C7ED1D9CB49E5E3E633A4`);
+> - Web: 92/92 unitários PASS (+30 novos testes para status e histórico), build de produção Vite PASS;
+> - Produção Web publicada no Cloudflare Pages: `https://filamap.pages.dev`.
+>
+> **Entregas da Fase H implementadas e homologadas:**
+> 1. **Desacoplamento de Status no Header:** Dois badges independentes e responsivos substituíram o antigo "ONLINE/OFFLINE" ambíguo:
+>    - `Agent: Online` / `Agent: Offline` (baseado no heartbeat `last_seen_at` < 45s);
+>    - `Impressora: Online` / `Impressora: Offline` / `Impressora: Sem comunicação` (com `SEM_COMUNICACAO` mandatório quando o Agent está Offline);
+>    - Ticker reativo a cada 5s para recálculo contínuo de expiração em tela.
+> 2. **Card de Status da Impressora Amigável:** Mapeamento operacional claro para usuário (`RUNNING` -> "Imprimindo", `PAUSE` -> "Pausada", `IDLE`/`FINISH` -> "Pronta para impressão", `FAILED` -> "Falha na impressão", `STOP`/`CANCEL` -> "Interrompida"). "Slot em uso" estritamente semântico (`0` -> "Slot 1", `2` -> "Slot 3", `3` -> "Slot 4", e repouso/255 -> `"--"`).
+> 3. **Histórico Multicolor Agrupado por Job:**
+>    - Múltiplos registros com o mesmo `job_id` são consolidados em um único card com soma do consumo total e breakdown individual de cada carretel/cor com swatch de alto contraste (inclusive para Preto Velvet);
+>    - Registros legados individuais sem `job_id` permanecem intactos e isolados;
+>    - Visibilidade de slots órfãos preservada com badge explicativo "SEM CARRETEL".
+> 4. **Integridade de Dados Mantida:** Zero alterações de pesos de estoque, zero migrações destrutivas, 6 logs históricos preservados intactos (3 do incidente + 3 do Golden Test multicolor).
+>
+> ---
+>
+> **📌 Snapshot anterior — 27/09/2026 / Correção da Regressão MQTT pós-Gate 1 & Estabilidade de Rede.**
 > Testes e builds passaram com 100% de sucesso: Agent 173/173 unitários (+1 de regressão) +
 > 13/13 integração; Web 62/62 unitários + build produção.
 >

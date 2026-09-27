@@ -1,4 +1,4 @@
-﻿export const POPULAR_BRANDS = [
+export const POPULAR_BRANDS = [
   "Voolt3D",
   "3D Fila",
   "Bambu Lab",
@@ -27,4 +27,5 @@ export const TARE_PRESETS = [
   { label: "Padrão (220g)", val: "220" },
 ];
 
-export const PRINTER_ONLINE_THRESHOLD_MS = 30000;
+export const AGENT_ONLINE_THRESHOLD_MS = 45000;
+export const PRINTER_ONLINE_THRESHOLD_MS = 60000;

@@ -25,13 +25,13 @@ describe("printer utils", () => {
       expect(isPrinterOnline(printer)).toBe(false);
     });
 
-    it("retorna true se last_seen_at for recente (< 30s)", () => {
+    it("retorna true se last_seen_at for recente (< 45s)", () => {
       const printer = createPrinter({ last_seen_at: new Date(Date.now() - 5000).toISOString() });
       expect(isPrinterOnline(printer)).toBe(true);
     });
 
-    it("retorna false se last_seen_at for antigo (> 30s)", () => {
-      const printer = createPrinter({ last_seen_at: new Date(Date.now() - 35000).toISOString() });
+    it("retorna false se last_seen_at for antigo (> 45s)", () => {
+      const printer = createPrinter({ last_seen_at: new Date(Date.now() - 50000).toISOString() });
       expect(isPrinterOnline(printer)).toBe(false);
     });
   });
@@ -55,7 +55,7 @@ describe("printer utils", () => {
 
     it("I: RUNNING + last_seen_at expirado -> card ao vivo inativo (false)", () => {
       const printer = createPrinter({
-        last_seen_at: new Date(Date.now() - 40000).toISOString(),
+        last_seen_at: new Date(Date.now() - 50000).toISOString(),
         gcode_state: "RUNNING",
       });
       expect(isPrinterLivePrinting(printer)).toBe(false);

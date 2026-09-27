@@ -6,7 +6,15 @@ import { FilamapLogo, FilamapIcon } from "./components/Brand";
 
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
-import { isPrinterOnline, isPrinterLivePrinting } from "./utils/printer";
+import {
+  getAgentStatus,
+  getPrinterStatus,
+  formatPrinterOperationalState,
+  isPrinterLivePrinting,
+  getAgentBadgeProps,
+  getPrinterBadgeProps,
+} from "./utils/status";
+import { groupPrintLogsByJob, formatGramsDisplay } from "./utils/history";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
 import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor, getSpoolBrandDisplay, getInPrinterCountDisplay, formatActiveSlotDisplay } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
@@ -604,10 +612,19 @@ export default function App() {
   const writerSpool =
     getWriterSpool(inventory, writerSpoolId);
 
-  const activePrinter =
-    getActivePrinter(printers);
-  const printerOnline = isPrinterOnline(activePrinter);
-  const isPrinting = isPrinterLivePrinting(activePrinter);
+  const [currentTick, setCurrentTick] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTick(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const activePrinter = getActivePrinter(printers);
+  const agentStatus = getAgentStatus(activePrinter, currentTick);
+  const printerStatus = getPrinterStatus(activePrinter, currentTick);
+  const printerOperationalText = formatPrinterOperationalState(activePrinter, agentStatus, printerStatus, currentTick);
+  const isPrinting = isPrinterLivePrinting(activePrinter, currentTick);
+  const agentBadge = getAgentBadgeProps(agentStatus);
+  const printerBadge = getPrinterBadgeProps(printerStatus);
 
   function renderSpoolCard(spool: Spool) {
     const location = formatBambuLocation(spool);
@@ -714,11 +731,46 @@ export default function App() {
               <p style={{ margin: 0, color: "#94a3b8", fontSize: 11, fontWeight: 500, whiteSpace: "nowrap" }}>Bambu Lab A1 &amp; Estoque NFC</p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-            <span style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 700, background: printerOnline ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)", color: printerOnline ? "#34d399" : "#f87171", border: `1px solid ${printerOnline ? "#059669" : "#dc2626"}` }}>
-              {printerOnline ? "ONLINE" : "OFFLINE"}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <span
+              title={`Agent: ${agentStatus}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "3px 8px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 700,
+                background: agentBadge.bg,
+                color: agentBadge.color,
+                border: `1px solid ${agentBadge.border}`,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: agentBadge.dotColor }} />
+              {agentBadge.label}
             </span>
-            <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+            <span
+              title={`Impressora: ${printerStatus}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "3px 8px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 700,
+                background: printerBadge.bg,
+                color: printerBadge.color,
+                border: `1px solid ${printerBadge.border}`,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: printerBadge.dotColor }} />
+              {printerBadge.label}
+            </span>
+            <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
           </div>
@@ -753,14 +805,28 @@ export default function App() {
         <div>
 
           <div style={{ background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b", border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
               <strong style={{ fontSize: 15, color: "#f8fafc" }}>{isPrinting ? "IMPRESSÃO AO VIVO" : "STATUS DA IMPRESSORA"}</strong>
-              <span style={{ background: isPrinting ? "rgba(34, 197, 94, 0.2)" : !printerOnline ? "rgba(239, 68, 68, 0.2)" : "#334155", color: isPrinting ? "#4ade80" : !printerOnline ? "#f87171" : "#94a3b8", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
-                {!printerOnline ? "DESCONECTADA" : (activePrinter?.gcode_state || "OCIOSA")}
+              <span style={{
+                background: isPrinting ? "rgba(34, 197, 94, 0.2)" : printerStatus === "ONLINE" ? "rgba(16, 185, 129, 0.15)" : printerStatus === "SEM_COMUNICACAO" ? "rgba(245, 158, 11, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                color: isPrinting ? "#4ade80" : printerStatus === "ONLINE" ? "#34d399" : printerStatus === "SEM_COMUNICACAO" ? "#fbbf24" : "#f87171",
+                border: `1px solid ${isPrinting ? "#16a34a" : printerStatus === "ONLINE" ? "#059669" : printerStatus === "SEM_COMUNICACAO" ? "#d97706" : "#dc2626"}`,
+                padding: "2px 8px",
+                borderRadius: 12,
+                fontSize: 11,
+                fontWeight: 700
+              }}>
+                {printerOperationalText}
               </span>
             </div>
             <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginBottom: 12 }}>
-              {!printerOnline ? "Desktop Agent ou impressora offline" : isPrinting ? (activePrinter?.current_task || "Arquivo em impressão") : "Pronta para impressão"}
+              {printerStatus === "SEM_COMUNICACAO"
+                ? "Aguardando comunicação com Desktop Agent"
+                : printerStatus === "OFFLINE"
+                ? "Impressora desligada ou desconectada da rede local"
+                : isPrinting
+                ? (activePrinter?.current_task || "Arquivo em impressão")
+                : "Pronta para impressão"}
             </div>
             {isPrinting && (
               <>
@@ -774,9 +840,9 @@ export default function App() {
               </>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, background: "#0f172a", padding: 10, borderRadius: 8 }}>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>CAMADA</span><div style={{ fontSize: 13, fontWeight: 700 }}>{printerOnline ? `${activePrinter?.current_layer || 0} / ${activePrinter?.total_layers || 0}` : "--"}</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>BICO</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#ef4444" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.nozzle_temp || 0}°C` : "--"}</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>MESA</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#f59e0b" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.bed_temp || 0}°C` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>CAMADA</span><div style={{ fontSize: 13, fontWeight: 700 }}>{isPrinting ? `${activePrinter?.current_layer || 0} / ${activePrinter?.total_layers || 0}` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>BICO</span><div style={{ fontSize: 13, fontWeight: 700, color: printerStatus === "ONLINE" ? "#ef4444" : "#94a3b8" }}>{printerStatus === "ONLINE" ? `${activePrinter?.nozzle_temp || 0}°C` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>MESA</span><div style={{ fontSize: 13, fontWeight: 700, color: printerStatus === "ONLINE" ? "#f59e0b" : "#94a3b8" }}>{printerStatus === "ONLINE" ? `${activePrinter?.bed_temp || 0}°C` : "--"}</div></div>
               <div><span style={{ fontSize: 10, color: "#94a3b8" }}>SLOT EM USO</span><div style={{ fontSize: 13, fontWeight: 700, color: isPrinting && activePrinter?.active_slot_index !== null && activePrinter?.active_slot_index !== undefined && activePrinter?.active_slot_index !== 255 ? "#38bdf8" : "#94a3b8" }}>{formatActiveSlotDisplay(activePrinter?.active_slot_index, isPrinting)}</div></div>
             </div>
           </div>
@@ -841,19 +907,54 @@ export default function App() {
             {printLogs.length === 0 ? (
               <div style={{ textAlign: "center", padding: "16px", color: "#64748b", fontSize: 12 }}>Nenhuma impressão registrada.</div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {printLogs.map((log) => (
-                  <div key={log.id} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{log.subtask_name}</div>
-                      <div style={{ fontSize: 11, color: "#64748b" }}>
-                        {log.spool ? `${log.spool.material} • ${getSpoolDisplayName(log.spool)}` : "Sem carretel"} • Status: <span style={{ color: "#34d399" }}>{log.status}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {groupPrintLogsByJob(printLogs).map((job) => (
+                  <div key={job.key} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{job.subtask_name}</div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                          {job.completed_at ? new Date(job.completed_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Data não disponível"} • Status: <span style={{ color: "#34d399", fontWeight: 600 }}>{job.status}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: "#f87171" }}>
+                          {`-${formatGramsDisplay(job.total_used_g)}`}
+                        </span>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: "#f87171" }}>
-                        {`-${log.filament_used_g}g`}
-                      </span>
+
+                    {/* Breakdown de carretéis/cores */}
+                    <div style={{ borderTop: "1px solid #1e293b", paddingTop: 8, marginTop: 4, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {job.items.map((item) => (
+                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: "50%",
+                                backgroundColor: item.color_hex,
+                                display: "inline-block",
+                                flexShrink: 0,
+                                border: "1px solid rgba(255, 255, 255, 0.25)",
+                                boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.5)",
+                              }}
+                            />
+                            <span style={{ color: item.orphan_slot ? "#f87171" : "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.orphan_slot ? (
+                                <span style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700, marginRight: 6 }}>
+                                  SEM CARRETEL
+                                </span>
+                              ) : null}
+                              {item.material ? `${item.material} • ` : ""}{item.color_name || item.spool_name}
+                            </span>
+                          </div>
+                          <span style={{ color: "#94a3b8", fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
+                            {`-${item.used_g}g`}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}

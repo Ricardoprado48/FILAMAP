@@ -338,8 +338,158 @@ function buildProfileRow(
   };
 }
 
-function buildSourceMetadata(spool: ParsedBambuCloudSpool): Record<string, unknown> {
+export interface ReconciliationCandidate {
+  id: string;
+  brand?: string | null;
+  material?: string | null;
+  color_name?: string | null;
+  color_hex?: string | null;
+  bambu_spool_id?: string | null;
+  bambu_source_metadata?: Record<string, unknown> | null;
+  filament_profile_id?: string | null;
+}
+
+function cleanText(str: string | null | undefined): string {
+  if (!str) return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+export function isStrongCandidateMatch(
+  candidate: ReconciliationCandidate,
+  spool: ParsedBambuCloudSpool,
+  profileDisplayName?: string | null
+): boolean {
+  if (!candidate || !spool) return false;
+
+  // Material deve ser estritamente compatível (PLA com PLA, PETG com PETG, etc.)
+  const candMat = cleanText(candidate.material);
+  const spoolMat = cleanText(spool.filamentType);
+  if (!candMat || !spoolMat || candMat !== spoolMat) {
+    return false;
+  }
+
+  // Se já tiver bambu_spool_id diferente do buscado, não é candidato desvinculado
+  if (candidate.bambu_spool_id && candidate.bambu_spool_id !== spool.bambuSpoolId) {
+    return false;
+  }
+
+  // Se houver RFID na nuvem e no carretel, checa igualdade
+  if (spool.rfid && candidate.bambu_source_metadata && typeof candidate.bambu_source_metadata.rfid === "string") {
+    if (candidate.bambu_source_metadata.rfid !== spool.rfid) {
+      return false;
+    }
+  }
+
+  // Nomes para comparação
+  const candColor = cleanText(candidate.color_name);
+  const candBrand = cleanText(candidate.brand);
+  const candMatColor = candMat + candColor;
+  const candFull = candBrand + candMatColor;
+
+  const targetNames = [
+    cleanText(spool.filamentName),
+    cleanText(profileDisplayName),
+  ].filter(Boolean);
+
+  const targetColors = targetNames.map((t) => {
+    if (t.startsWith(spoolMat)) {
+      return t.slice(spoolMat.length);
+    }
+    return t;
+  });
+
+  for (const target of targetNames) {
+    if (!target) continue;
+
+    // 1. Igualdade exata
+    if (
+      target === candColor ||
+      target === candMatColor ||
+      target === candFull ||
+      (candBrand && target === candBrand + candColor)
+    ) {
+      return true;
+    }
+
+    // 2. Contém a cor distinta
+    if (candColor && candColor.length >= 4) {
+      if (target.includes(candColor) || candColor.includes(target)) {
+        return true;
+      }
+    }
+  }
+
+  for (const tColor of targetColors) {
+    if (!tColor || tColor.length < 3) continue;
+
+    if (
+      candColor === tColor ||
+      candColor.includes(tColor) ||
+      tColor.includes(candColor)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function findStrongReconciliationCandidate<T extends ReconciliationCandidate>(
+  spool: ParsedBambuCloudSpool,
+  profileDisplayName: string | null | undefined,
+  unlinkedCandidates: T[]
+): T | null {
+  const matches = unlinkedCandidates.filter((cand) =>
+    isStrongCandidateMatch(cand, spool, profileDisplayName)
+  );
+
+  // Regra crítica: só reconcilia se houver correspondência ÚNICA.
+  // Se houver ambiguidade (mais de 1) ou nenhuma, retorna null.
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  return null;
+}
+
+export function resolveSpoolBrand(
+  spool: ParsedBambuCloudSpool
+): string {
+  // Se possuir tag RFID física da Bambu Lab
+  if (spool.rfid && spool.rfid.trim().length > 0) {
+    return "Bambu Lab";
+  }
+
+  const nameUpper = (spool.filamentName || "").toUpperCase();
+  if (nameUpper.includes("VOOLT3D") || nameUpper.includes("VOOLT")) return "Voolt3D";
+  if (nameUpper.includes("EASY PRINT") || nameUpper.includes("EASYPRINT")) return "Easy Print";
+  if (nameUpper.includes("MASTERPRINT") || nameUpper.includes("MASTER PRINT")) return "MasterPrint";
+  if (nameUpper.includes("FUSION") || nameUpper.includes("FUSIONX")) return "Fusion";
+
+  const vendor = spool.filamentVendor?.trim();
+  if (
+    vendor &&
+    vendor !== "+" &&
+    vendor !== "-" &&
+    vendor.toUpperCase() !== "GENERIC" &&
+    vendor.toUpperCase() !== spool.filamentType.toUpperCase()
+  ) {
+    return vendor;
+  }
+
+  return "Genérico";
+}
+
+export function buildSourceMetadata(
+  spool: ParsedBambuCloudSpool,
+  existingMetadata?: Record<string, unknown> | null
+): Record<string, unknown> {
   return {
+    ...(existingMetadata || {}),
     create_type: spool.createType,
     rfid: spool.rfid,
     color: spool.color,
@@ -419,7 +569,7 @@ export function buildSpoolInsertRow(
     user_id: userId,
     bambu_spool_id: spool.bambuSpoolId,
     filament_profile_id: filamentProfileId,
-    brand: spool.filamentVendor || spool.filamentType,
+    brand: resolveSpoolBrand(spool),
     material: spool.filamentType,
     color_name: resolveSpoolColorName(spool, profileDisplayName),
     color_hex: normalizeColorHex(spool.color),
@@ -470,8 +620,7 @@ export interface BambuCloudSpoolSyncCounts {
 
 /**
  * Recebe spools já validados (parseBambuCloudSpoolRecord) e faz o upsert
- * no Supabase. Separado de fetchBambuCloudSpools para que a lógica de
- * banco seja testável sem precisar rodar a bridge de verdade.
+ * no Supabase com reconciliação inteligente por forte evidência física.
  */
 export async function syncBambuCloudSpoolsFromParsed(
   supabase: SupabaseClient,
@@ -484,9 +633,7 @@ export async function syncBambuCloudSpoolsFromParsed(
 
   const now = new Date().toISOString();
 
-  // filamentId identifica o perfil lógico -- vários spools físicos podem
-  // compartilhar o mesmo filamentId, então dedup antes do upsert evita
-  // linhas conflitantes na mesma chamada.
+  // 1. Upsert perfis de filamento
   const profileRowByFilamentId = new Map<string, BambuCloudProfileRow>();
   for (const spool of spools) {
     profileRowByFilamentId.set(spool.filamentId, buildProfileRow(spool, userId, now));
@@ -505,53 +652,123 @@ export async function syncBambuCloudSpoolsFromParsed(
     (upsertedProfiles || []).map((row: any) => [row.source_key as string, row.id as string])
   );
 
-  const bambuSpoolIds = spools.map((s) => s.bambuSpoolId);
-
-  const { data: existingSpools, error: existingError } = await supabase
+  // 2. Buscar todos os carretéis do usuário para reconciliação inteligente
+  const { data: allUserSpools, error: existingError } = await supabase
     .from("spools")
-    .select("id, bambu_spool_id, color_name, color_hex")
-    .eq("user_id", userId)
-    .in("bambu_spool_id", bambuSpoolIds);
+    .select("id, bambu_spool_id, brand, material, color_name, color_hex, bambu_source_metadata, filament_profile_id")
+    .eq("user_id", userId);
 
   if (existingError) throw existingError;
 
-  const existingSpoolByBambuSpoolId = new Map<
-    string,
-    { id: string; color_name?: string | null; color_hex?: string | null }
-  >(
-    (existingSpools || []).map((row: any) => [
-      row.bambu_spool_id as string,
-      { id: row.id, color_name: row.color_name, color_hex: row.color_hex },
-    ])
-  );
+  const spoolsList = allUserSpools || [];
+
+  const spoolByPrimaryBambuId = new Map<string, any>();
+  const spoolBySecondaryBambuId = new Map<string, any>();
+  const unlinkedCandidates: any[] = [];
+
+  for (const s of spoolsList) {
+    if (s.bambu_spool_id) {
+      spoolByPrimaryBambuId.set(String(s.bambu_spool_id), s);
+    } else {
+      unlinkedCandidates.push(s);
+    }
+
+    const meta = s.bambu_source_metadata as Record<string, unknown> | null;
+    if (meta && Array.isArray(meta.secondary_bambu_spool_ids)) {
+      for (const secId of meta.secondary_bambu_spool_ids) {
+        spoolBySecondaryBambuId.set(String(secId), s);
+      }
+    }
+  }
 
   const rowsToInsert: ReturnType<typeof buildSpoolInsertRow>[] = [];
-  const rowsToUpdate: { id: string; payload: ReturnType<typeof buildSpoolUpdateRow> }[] = [];
+  const rowsToUpdate: { id: string; payload: any }[] = [];
 
   for (const spool of spools) {
     const filamentProfileId = profileIdByFilamentId.get(spool.filamentId) ?? null;
     const profileRow = profileRowByFilamentId.get(spool.filamentId);
-    const existing = existingSpoolByBambuSpoolId.get(spool.bambuSpoolId);
 
-    if (existing) {
+    // Caso A: Já existe com este bambu_spool_id primário
+    const primaryExisting = spoolByPrimaryBambuId.get(spool.bambuSpoolId);
+    if (primaryExisting) {
       const extraDisplayUpdates: { color_name?: string; color_hex?: string | null } = {};
-      const isLegacyHexName = Boolean(normalizeColorHex(existing.color_name));
-      if (!existing.color_name || isLegacyHexName) {
+      const isLegacyHexName = Boolean(normalizeColorHex(primaryExisting.color_name));
+      if (!primaryExisting.color_name || isLegacyHexName) {
         extraDisplayUpdates.color_name = resolveSpoolColorName(spool, profileRow?.display_name);
       }
-      if (!existing.color_hex) {
+      if (!primaryExisting.color_hex) {
         extraDisplayUpdates.color_hex = normalizeColorHex(spool.color);
       }
 
       rowsToUpdate.push({
-        id: existing.id,
-        payload: buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
+        id: primaryExisting.id,
+        payload: {
+          ...buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
+          bambu_source_metadata: buildSourceMetadata(spool, primaryExisting.bambu_source_metadata),
+        },
       });
-    } else {
-      rowsToInsert.push(
-        buildSpoolInsertRow(spool, userId, filamentProfileId, profileRow?.display_name ?? null, now)
-      );
+      continue;
     }
+
+    // Caso B: Já existe como bambu_spool_id secundário registrado
+    const secondaryExisting = spoolBySecondaryBambuId.get(spool.bambuSpoolId);
+    if (secondaryExisting) {
+      if (spool.inPrinter) {
+        rowsToUpdate.push({
+          id: secondaryExisting.id,
+          payload: {
+            bambu_in_printer: true,
+            bambu_dev_id: spool.devId,
+            bambu_device_name: spool.deviceName,
+            bambu_ams_sn: spool.amsSn,
+            bambu_ams_id: spool.amsId,
+            bambu_slot_id: spool.slotId,
+            bambu_synced_at: now,
+            updated_at: now,
+          },
+        });
+      }
+      continue;
+    }
+
+    // Caso C: Reconciliar com candidato desvinculado por forte evidência
+    const matchedCandidate = findStrongReconciliationCandidate(
+      spool,
+      profileRow?.display_name,
+      unlinkedCandidates
+    );
+
+    if (matchedCandidate) {
+      const idx = unlinkedCandidates.findIndex((c) => c.id === matchedCandidate.id);
+      if (idx !== -1) unlinkedCandidates.splice(idx, 1);
+
+      spoolByPrimaryBambuId.set(spool.bambuSpoolId, matchedCandidate);
+
+      const extraDisplayUpdates: { color_name?: string; color_hex?: string | null } = {};
+      const isLegacyHexName = Boolean(normalizeColorHex(matchedCandidate.color_name));
+      if (!matchedCandidate.color_name || isLegacyHexName) {
+        extraDisplayUpdates.color_name = resolveSpoolColorName(spool, profileRow?.display_name);
+      }
+      if (!matchedCandidate.color_hex) {
+        extraDisplayUpdates.color_hex = normalizeColorHex(spool.color);
+      }
+
+      rowsToUpdate.push({
+        id: matchedCandidate.id,
+        payload: {
+          ...buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
+          bambu_spool_id: spool.bambuSpoolId,
+          filament_profile_id: matchedCandidate.filament_profile_id || filamentProfileId,
+          bambu_source_metadata: buildSourceMetadata(spool, matchedCandidate.bambu_source_metadata),
+        },
+      });
+      continue;
+    }
+
+    // Caso D: Spool físico novo real
+    rowsToInsert.push(
+      buildSpoolInsertRow(spool, userId, filamentProfileId, profileRow?.display_name ?? null, now)
+    );
   }
 
   if (rowsToInsert.length > 0) {

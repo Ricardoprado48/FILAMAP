@@ -8,7 +8,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { JobStateMachine, ActiveJobState } from "./jobStateMachine";
+import { JobStateMachine, ActiveJobState, parseAmsMapping } from "./jobStateMachine";
 import {
   computeConsumptionPerSlot,
   buildJobConsumptionItems,
@@ -19,13 +19,15 @@ import {
 } from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
-import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow } from "./consumption";
+import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow, AmsSlotPhysicalCandidate } from "./consumption";
+import { getConfigDir } from "./config/configStore";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
 import { authenticateAgentSession } from "./config/sessionManager";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
+import { syncAmsProjection } from "./amsProjection";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 
 dotenv.config();
@@ -43,6 +45,7 @@ let PRINTER_SERIAL = "";
 let PRINTER_ACCESS_CODE = "";
 let supabase: SupabaseClient;
 let activeSecretStore: SecretStore;
+let lastMqttPrintPayload: any = null;
 
 async function bootstrapRuntimeConfig() {
   activeSecretStore = resolveSecretStore();
@@ -79,14 +82,43 @@ async function bootstrapRuntimeConfig() {
   return resolved.auth;
 }
 
-const STATE_FILE = path.join(process.cwd(), "agent-state.json");
+function getJobStateFilePath(): string {
+  try {
+    const configDir = getConfigDir();
+    if (fs.existsSync(configDir)) {
+      return path.join(configDir, "agent-state.json");
+    }
+  } catch {}
+  return path.join(process.cwd(), "agent-state.json");
+}
+
+const STATE_FILE = getJobStateFilePath();
 
 function loadJobState(): ActiveJobState | null {
   try {
-    if (fs.existsSync(STATE_FILE)) {
-      return JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
+    let candidatePath = STATE_FILE;
+    if (!fs.existsSync(candidatePath)) {
+      candidatePath = path.join(process.cwd(), "agent-state.json");
     }
-  } catch (e) {}
+    if (fs.existsSync(candidatePath)) {
+      const content = fs.readFileSync(candidatePath, "utf-8");
+      const parsed = JSON.parse(content);
+      if (
+        parsed &&
+        typeof parsed.jobId === "string" &&
+        parsed.jobId.trim() &&
+        typeof parsed.subtaskName === "string" &&
+        typeof parsed.startTime === "number"
+      ) {
+        return parsed as ActiveJobState;
+      } else {
+        console.warn("⚠️ agent-state.json inválido ou incompleto. Descartando resíduo obsoleto.");
+        try { fs.unlinkSync(candidatePath); } catch {}
+      }
+    }
+  } catch (e) {
+    console.error("⚠️ Erro ao carregar agent-state.json:", e);
+  }
   return null;
 }
 
@@ -94,10 +126,18 @@ function saveJobState(state: ActiveJobState | null) {
   try {
     if (state === null) {
       if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);
+      const cwdFile = path.join(process.cwd(), "agent-state.json");
+      if (fs.existsSync(cwdFile)) fs.unlinkSync(cwdFile);
     } else {
-      fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+      const dir = path.dirname(STATE_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const tmpFile = path.join(dir, `agent-state.${randomUUID()}.tmp`);
+      fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), "utf-8");
+      fs.renameSync(tmpFile, STATE_FILE);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error("⚠️ Erro ao salvar agent-state.json de forma atômica:", e);
+  }
 }
 
 async function startAgent() {
@@ -172,6 +212,9 @@ async function startAgent() {
   // indisponível/crash/timeout só loga e segue, nunca mata o Agent (a
   // bridge já teve histórico de crash na saída, corrigido no commit
   // 5bf1220, e o Agent não pode depender dela pra continuar funcionando).
+  let activePrinterRecord: any = null;
+  lastMqttPrintPayload = null;
+  let lastAmsFingerprint = "";
   let bambuCloudSyncInProgress = false;
 
   async function syncBambuCloud() {
@@ -186,6 +229,24 @@ async function startAgent() {
         `🧵 Cloud Spool Sync: ${result.spoolsInserted} novo(s), ${result.spoolsUpdated} atualizado(s), ` +
           `${result.profilesUpserted} perfil(is), ${result.skippedRecords} registro(s) ignorado(s) de ${result.totalRecords}.`
       );
+
+      if (lastMqttPrintPayload && activePrinterRecord) {
+        try {
+          const proj = await syncAmsProjection(
+            supabase,
+            activePrinterRecord.id,
+            PRINTER_SERIAL,
+            lastMqttPrintPayload
+          );
+          if (proj.slotsUpdated > 0 || proj.spoolsUpdated > 0) {
+            console.log(
+              `🔧 Projeção AMS pós-Cloud Sync: ${proj.slotsUpdated} slot(s) e ${proj.spoolsUpdated} carretel(is) reconciliados.`
+            );
+          }
+        } catch (projErr: any) {
+          console.warn("⚠️ Falha na projeção AMS pós-Cloud Sync:", projErr?.message || projErr);
+        }
+      }
     } catch (error: any) {
       console.warn(
         "⚠️ Falha ao sincronizar spools da conta Bambu:",
@@ -236,6 +297,8 @@ async function startAgent() {
     } else {
       await supabase.from("printers").update({ ip_address: PRINTER_IP, is_online: true }).eq("id", printer.id);
     }
+
+    activePrinterRecord = printer;
 
     // Heartbeat a cada 15s — grava last_seen_at independente do estado da
     // conexão MQTT com a impressora, é o sinal de "o processo do Agent
@@ -386,8 +449,58 @@ async function startAgent() {
     client.on("message", async (_topic, payload) => {
       try {
         const raw = JSON.parse(payload.toString());
+
+        // Captura ams_mapping enviado via comando (request ou report)
+        const possibleMapping =
+          raw.print?.ams_mapping ??
+          raw.ams_mapping ??
+          raw.request?.print?.ams_mapping ??
+          raw.request?.ams_mapping;
+
+        if (possibleMapping !== undefined) {
+          const mapping = parseAmsMapping(possibleMapping);
+          if (mapping && mapping.length > 0) {
+            console.log(`🗺️ ams_mapping detectado via MQTT: [${mapping.join(", ")}]`);
+            jobStateMachine.attachAmsMapping(mapping);
+            const curJob = jobStateMachine.getCurrentJob();
+            if (curJob) {
+              saveJobState(curJob);
+            }
+          }
+        }
+
         const print = raw.print;
         if (!print) return;
+
+        if (print.ams) {
+          lastMqttPrintPayload = print;
+          const amsFingerprint = JSON.stringify({
+            exist: print.ams.tray_exist_bits,
+            tray: print.ams.ams?.[0]?.tray?.map((t: any) => ({
+              id: t.id,
+              type: t.tray_type,
+              col: t.tray_color,
+            })),
+          });
+          if (amsFingerprint !== lastAmsFingerprint) {
+            lastAmsFingerprint = amsFingerprint;
+            try {
+              const proj = await syncAmsProjection(
+                supabase,
+                printer.id,
+                PRINTER_SERIAL,
+                print
+              );
+              if (proj.slotsUpdated > 0 || proj.spoolsUpdated > 0) {
+                console.log(
+                  `🔧 Projeção AMS atualizada via MQTT: ${proj.slotsUpdated} slot(s) e ${proj.spoolsUpdated} carretel(is) reconciliados com o hardware.`
+                );
+              }
+            } catch (projErr: any) {
+              console.warn("⚠️ Falha na projeção AMS via MQTT:", projErr?.message || projErr);
+            }
+          }
+        }
 
         const actions = jobStateMachine.processPrintPayload(print);
 
@@ -490,11 +603,49 @@ async function finalizeJob(
     // saber que outros slots foram usados nem pegar slice_info.config).
     const usedSlots = jobToFinalize?.usedSlots?.length ? jobToFinalize.usedSlots : [jobToFinalize?.activeSlot ?? 0];
 
+    // Prepara candidatos de slots AMS para resolução física de filamento
+    const { data: allAmsSlots } = await supabase
+      .from("ams_slots")
+      .select("slot_index, spool_id, spool:spools(material, color_hex, tray_info_idx)")
+      .eq("printer_id", printerId);
+
+    const availableSlots: AmsSlotPhysicalCandidate[] = [];
+    for (const r of (allAmsSlots || []) as any[]) {
+      if (r.spool_id) {
+        const spool = Array.isArray(r.spool) ? r.spool[0] : r.spool;
+        availableSlots.push({
+          slotIndex: r.slot_index,
+          material: spool?.material ?? null,
+          colorHex: spool?.color_hex ?? null,
+          trayInfoIdx: spool?.tray_info_idx ?? null,
+        });
+      }
+    }
+
+    const mqttTrays =
+      lastMqttPrintPayload?.ams?.ams?.[0]?.tray ||
+      lastMqttPrintPayload?.ams?.tray ||
+      [];
+    for (let idx = 0; idx < mqttTrays.length; idx++) {
+      const t = mqttTrays[idx];
+      const sIdx = Number(t.id ?? idx);
+      if (!availableSlots.some((s) => s.slotIndex === sIdx) && (t.tray_color || t.tray_type)) {
+        availableSlots.push({
+          slotIndex: sIdx,
+          material: t.tray_type ?? null,
+          colorHex: t.tray_color ?? null,
+          trayInfoIdx: t.tray_info_idx ?? null,
+        });
+      }
+    }
+
     const perSlot = computeConsumptionPerSlot(
       usedSlots,
       jobToFinalize?.filamentSliceInfo,
       jobToFinalize?.filamentGrams || 0,
-      durationMinutes
+      durationMinutes,
+      jobToFinalize?.amsMapping,
+      availableSlots
     );
 
     const usedSlotIndexes = Array.from(perSlot.keys());

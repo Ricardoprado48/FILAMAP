@@ -8,7 +8,7 @@ import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import { isPrinterOnline, isPrinterLivePrinting } from "./utils/printer";
 import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
-import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor, getSpoolBrandDisplay, getInPrinterCountDisplay } from "./utils/inventory";
+import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor, getSpoolBrandDisplay, getInPrinterCountDisplay, formatActiveSlotDisplay } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 import {
   needsWeighing,
@@ -777,7 +777,7 @@ export default function App() {
               <div><span style={{ fontSize: 10, color: "#94a3b8" }}>CAMADA</span><div style={{ fontSize: 13, fontWeight: 700 }}>{printerOnline ? `${activePrinter?.current_layer || 0} / ${activePrinter?.total_layers || 0}` : "--"}</div></div>
               <div><span style={{ fontSize: 10, color: "#94a3b8" }}>BICO</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#ef4444" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.nozzle_temp || 0}°C` : "--"}</div></div>
               <div><span style={{ fontSize: 10, color: "#94a3b8" }}>MESA</span><div style={{ fontSize: 13, fontWeight: 700, color: printerOnline ? "#f59e0b" : "#94a3b8" }}>{printerOnline ? `${activePrinter?.bed_temp || 0}°C` : "--"}</div></div>
-              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>SLOT EM USO</span><div style={{ fontSize: 13, fontWeight: 700, color: isPrinting ? "#38bdf8" : "#94a3b8" }}>{isPrinting ? `Slot ${(activePrinter?.active_slot_index || 0) + 1}` : "--"}</div></div>
+              <div><span style={{ fontSize: 10, color: "#94a3b8" }}>SLOT EM USO</span><div style={{ fontSize: 13, fontWeight: 700, color: isPrinting && activePrinter?.active_slot_index !== null && activePrinter?.active_slot_index !== undefined && activePrinter?.active_slot_index !== 255 ? "#38bdf8" : "#94a3b8" }}>{formatActiveSlotDisplay(activePrinter?.active_slot_index, isPrinting)}</div></div>
             </div>
           </div>
 
@@ -790,8 +790,8 @@ export default function App() {
                 return (
                   <div key={slotIdx} style={{ background: "#0f172a", borderRadius: 8, padding: 12, border: isScanningThisSlot ? "1px solid #38bdf8" : "1px solid #334155", minHeight: 120 }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>SLOT {slotIdx + 1}</span>
-                      <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? getSpoolSwatchColor(spool) : "#334155", display: "inline-block" }} />
+                       <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>SLOT {slotIdx + 1}</span>
+                       <span style={{ width: 14, height: 14, borderRadius: "50%", backgroundColor: spool ? getSpoolSwatchColor(spool) : "#334155", display: "inline-block", border: "1px solid rgba(255, 255, 255, 0.25)", boxShadow: "0 0 0 1px rgba(0,0,0,0.5)" }} />
                     </div>
                     {spool ? (
                       <div style={{ marginTop: 6 }}>
@@ -1258,7 +1258,7 @@ export default function App() {
                   <div>
                     <label style={{ fontSize: 11, color: "#64748b" }}>Cor</label>
                     <div style={{ padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#cbd5e1", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: getSpoolSwatchColor(writerSpool), display: "inline-block", flexShrink: 0 }} />
+                      <span style={{ width: 12, height: 12, borderRadius: "50%", background: getSpoolSwatchColor(writerSpool), display: "inline-block", flexShrink: 0, border: "1px solid rgba(255, 255, 255, 0.25)", boxShadow: "0 0 0 1px rgba(0,0,0,0.5)" }} />
                       {getSpoolDisplayName(writerSpool)}
                     </div>
                   </div>

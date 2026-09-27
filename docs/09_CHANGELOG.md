@@ -1,5 +1,129 @@
 # 09 — Changelog Técnico
 
+## 27/09/2026 — Correção de Regressão MQTT: Remoção de Assinatura em /request
+
+- **Causa Raiz Identificada:** O broker MQTT local da Bambu Lab A1 fecha sumariamente conexões que tentem assinar o tópico `device/${PRINTER_SERIAL}/request` (reservado apenas para comandos enviados à impressora).
+- **Correção em `desktop-agent/src/index.ts`:** Removida a linha `client.subscribe(device/${PRINTER_SERIAL}/request)`. Mantida a assinatura exclusiva em `device/${PRINTER_SERIAL}/report`.
+- **Validação de `ams_mapping`:** O payload regular do tópico `/report` fornece `print.ams_mapping`, garantindo captura do mapeamento multicolor sem instabilidade de rede.
+- **Testes:** 173 unitários e 13 de integração PASS (186/186 PASS). Teste live de 15s com a impressora física comprovou 0 reconnects e 0 disconnects.
+- **Hashes da Release:** Agent `D15909F2EA548642D75C9BDA6BFCBC4390CABC9E8892D050CCB35431962824B2`, Instalador `4524F89973C6AE95886ADB98E4CE875AB5F3BB9A6E1500200D44903290BE49E2`.
+
+## 27/09/2026 — Gate 1: Mapeamento Multicolor Autorizado e Telemetria tray_now
+
+Correção da causa raiz do desvio de mapeamento em impressões multicolor e do congelamento do "Slot em Uso" na telemetria, conforme aprovado no Gate 1 e emendas arquiteturais autoritativas.
+
+### G1.1 — Mapeamento Multicolor e Precedência Determinística (`ftpsParser.ts` e `consumption.ts`)
+- **Parser do .3MF (`ftpsParser.ts`):** `FilamentSliceInfo` estendido com `logicalIndex`, `filamentId`, `material` e `trayInfoIdx`. O mapeamento anterior assumia `trayId = parsed - 1`, o que sobrepunha indevidamente índices lógicos em slots físicos contíguos, ignorando slots intermediários vazios na AMS.
+- **Precedência de Mapeamento de 4 Níveis (`resolveFilamentSliceToAmsSlots`):**
+  - **Prioridade 1:** `ams_mapping` do MQTT (array ex: `[0, 2, 3]`). Cada filamento lógico `i` é atribuído ao slot físico `ams_mapping[i]`.
+  - **Prioridade 2:** Slot físico AMS derivado do mapeamento.
+  - **Prioridade 3:** Reconciliação dos carretéis físicos nos slots (`ams_slots`).
+  - **Prioridade 4:** Carretel físico associado ao slot.
+- **Regra Autoritativa de Ambiguidade:**
+  - Se `ams_mapping` estiver ausente e houver exatamente 1 candidato compatível por cor/material: resolve automaticamente.
+  - Se houver 2 ou mais candidatos: NÃO ADIVINHA; status = `AMBIGUOUS`; NÃO debita estoque (`spool_id = null`); NÃO marca `needs_weighing` por punição de ambiguidade; solicita identificação física.
+  - Proibido qualquer fallback sequencial por slots ocupados.
+- **Fixture do Incidente Validada:** Slices 0 (2.77g), 1 (2.83g), 2 (0.76g) com `ams_mapping = [0, 2, 3]` mapeiam com exatidão para os slots 0 (Preto Velvet: 2.8g), 2 (Vermelho Ultra Silk: 2.8g) e 3 (Branco PETG: 0.8g), resultando em exatamente zero logs órfãos e slot 1 (vazio) não tocado.
+
+### G1.2 — Telemetria de Slot em Uso (`jobStateMachine.ts`)
+- **Causa Raiz Resolvida:** O Agent lia `print.ams?.ams?.[0]?.tray_tar`. Na telemetria real da Bambu Lab A1 / AMS Lite, a propriedade reportada é `print.ams.tray_now`. Como era `undefined`, `activeSlotIndex` permanecia permanentemente congelado em 0 (Slot 1).
+- **Tratamento do Valor 255:** O valor `255` emitido durante retração e troca de filamento é tratado estritamente como transição: nunca é convertido para 0 e nunca entra no array `usedSlots`.
+- **Acúmulo de Slots Usados:** Sequência de troca de slots (0 -> 2 -> 3) validada com `usedSlots = [0, 2, 3]`.
+
+### G1.3 — Captura e Persistência de `ams_mapping` (`index.ts`)
+- Subscrição dos tópicos `device/${PRINTER_SERIAL}/report` e `device/${PRINTER_SERIAL}/request` no broker MQTT.
+- Captura de `ams_mapping` no início do trabalho e persistência no estado do agente em `%APPDATA%\Filamap\agent-state.json`.
+
+### G1.4 — Suíte de Testes
+- 172/172 unitários (+9 novos testes específicos de Gate 1) PASS.
+- 13/13 testes de integração PASS.
+- Total: 185/185 PASS (0 falhas, 0 regressões).
+
+## 26/09/2026 — Correção de Localização AMS & Auditoria de Contagem Real (30 vs 29)
+
+Implementação da rotina única e idempotente de projeção de slots da AMS, isolamento da contagem física real na interface Web e auditoria detalhada do inventário físico (30x29).
+
+### AMS.1 — Projeção e Reconciliação Automática da AMS (`desktop-agent/src/amsProjection.ts`)
+- **Autoridade Física Local:** Estabelecido que o MQTT local (porta 8883) é a única fonte autoritativa de presença/ocupação física da impressora. A nuvem Bambu é tratada como fonte secundária sujeita a cache stale.
+- **Parser de Telemetria (`parseMqttAmsStatus`):** Normaliza o array `tray` e a máscara `tray_exist_bits` (ex.: `"d"` = `0b1101` -> slots 0, 2, 3 ocupados; slot 1 vazio), extraindo tipos de material e cores normalizadas em `#RRGGBB`.
+- **Reconciliação Determinística (`reconcileAmsState`):**
+  - Ocupação estrita orientada pelo hardware local.
+  - Validação de material incompatível: descarta atribuições fantasmas ou stale da nuvem Bambu.
+  - No Slot 4: a Bambu Cloud reportava erroneamente `PLA Lite AMARELO` (PLA), mas o hardware MQTT reportava `PETG Branco` (`FFFFFFFF`). O conflito foi resolvido a favor do hardware: `PLA Lite AMARELO` foi desvinculado do slot mantendo 100% de seus dados e 950g intactos no inventário; `MasterPrint PETG Branco` foi vinculado ao Slot 4.
+  - Sincronização executada em 3 gatilhos automáticos: conexão MQTT (`pushall`), alteração de estado `print.ams`/`tray_exist_bits`, e após cada ciclo de Cloud Spool Sync (sem depender de finalização de print jobs).
+- **Validação ao Vivo e Idempotência:**
+  - Projeção executada com sucesso contra o Supabase de produção: Slot 1 -> Preto Velvet, Slot 2 -> Vazio, Slot 3 -> Vermelho Ultra Silk, Slot 4 -> MasterPrint PETG Branco.
+  - Segunda execução imediata gerou `slotsUpdated: 0, spoolsUpdated: 0, conflictsCount: 0` (idempotência perfeita).
+- **Testes Unitários:** 8 novos testes adicionados em `amsProjection.test.ts` cobrindo todos os cenários de conflito, desvinculação limpa, compatibilidade e falhas parciais.
+
+### AMS.2 — Interface Web: Total Físico Isolado de Filtros (`web-app`)
+- **Problema:** Ao aplicar filtros de material (ex.: filtrar por PLA) ou pesquisa textual, a seção "Na Impressora Agora" ocultava os carretéis que não batiam com o filtro e reduzia o número exibido, criando a falsa impressão de que havia menos carretéis instalados no hardware.
+- **Correção:** Implementada função `getInPrinterCountDisplay(visibleCount, totalCount)` em `web-app/src/utils/inventory.ts` com testes em `inventory.test.ts`. A seção "Na Impressora Agora" agora calcula `totalInPrinterCount` a partir do inventário não-filtrado e renderiza `📍 Na Impressora Agora (3)` quando todos estão visíveis, ou `(X de 3)` quando há filtros ativos.
+- Adicionada mensagem informativa caso todos os carretéis instalados sejam filtrados pelo usuário.
+
+### AMS.3 — Auditoria e Consolidação Definitiva do Inventário Físico em 29 Carretéis
+- **Constatação e Fato Físico do Cliente:** O cliente confirmou formalmente que o inventário real da oficina possui exatamente 29 carretéis físicos.
+- **Correção dos Carretéis Vermelhos (Invalidação da Fusão):**
+  - O cliente comprovou que existem dois carretéis físicos vermelhos reais e distintos: `Voolt3D PLA Vermelho Velvet` (`ceff1f7e`, 52g, com NFC `FILA-PLA-VERMELHO-VELVET`) e `Voolt3D PLA Vermelho Ultra Silk` (`d2863713`, 830g, no Slot 3 da AMS).
+  - Ambos foram preservados como entidades independentes, com pesos originais intactos e sem qualquer fusão.
+- **Identificação do Verdadeiro 30º Excedente (Carretéis Pretos):**
+  - O cliente confirmou que existem no estoque apenas `Voolt3D PLA Preto Velvet` e `MasterPrint PETG Preto`. Não existe carretel físico `Voolt3D PETG Preto`.
+  - No banco existia `1e1e2428-5d99-48c0-a04d-e11dc508e8d0` (`Voolt3D PETG Preto`, NFC `53:2c:de:99:33:00:01`), criado como teste/leitura avulsa em 17/09.
+  - Auditoria técnica comprovou: 0 dependências em `ams_slots`, 0 em `print_logs`, `bambu_spool_id: null`, `bambu_in_printer: false`.
+- **Execução Segura da Remoção:**
+  - Backup persistido em `backups/spool_1e1e2428_backup.json` e script de restauração criado (`scratch/rollback_candidate_30.js`).
+  - Registro excluído do Supabase (`DELETE FROM spools WHERE id = '1e1e2428-5d99-48c0-a04d-e11dc508e8d0'`).
+  - Contagem de `spools` verificada em exatamente 29 registros legítimos.
+- **Validação E2E Pós-Remoção:**
+  - Executado ciclo completo de `syncBambuCloudSpools`: `spoolsInserted: 0` e total permaneceu em 29 (prova de idempotência).
+  - Executada rotina `syncAmsProjection`: todos os 4 slots atribuídos corretamente (Slot 1: Preto Velvet 900g, Slot 2: Vazio, Slot 3: Vermelho Ultra Silk 830g, Slot 4: MasterPrint PETG Branco 450g).
+  - Integridade dos pesos verificada: Vermelho Velvet 52g intacto, Vermelho Ultra Silk 830g intacto, MasterPrint PETG Preto 1000g intacto, PLA Lite Amarelo 950g intacto no estoque (fora da AMS).
+
+### AMS.4 — Compilação e Releases
+- Desktop Agent: 163/163 unitários PASS, 13/13 integração PASS.
+- Web App: 62/62 unitários PASS, build de produção PASS.
+- Binários gerados:
+  - Agent Executable: `filamap-agent.exe` (SHA256: `ABB40E10DB188F1AF6B0F071EF62154DDCA900D9565B81CABA366C2CDE2CACEA`).
+  - Bridge: `filamap-bambu-bridge.exe` (SHA256: `116B144218D7726F45E72F55B22DF81BFCE72A6F99E30149A713097862DEE9B3`).
+  - Installer Setup: `FilamapAgentSetup.exe` (SHA256: `28018F2ADF626D94CA96ED3238E0BF3D0EDFAEBEDCEE008090DD916C0E13739D`).
+
+## 26/09/2026 — Fase F: Resolução de Identidade Física e Deduplicação
+
+Resolução definitiva da duplicação de carretéis entre ecossistema Bambu e NFC, consolidação física de inventário e prevenção de regressão de estoque.
+
+### F.1 — Deduplicação e Fusão de Carretéis Físicos
+- **Diagnóstico:** Tabela `spools` possuía 42 registros (28 carretéis físicos originais com NFC e peso confirmado + 14 registros sincronizados via Bambu Cloud). Destes 14, apenas 1 era fisicamente novo (`PLA Lite AMARELO`, Bambu Lab com RFID no slot 3) e 13 representavam "gêmeos digitais" concorrentes de carretéis de terceiros existentes.
+- **Fusão e Sobrevivência:** Executadas 10 fusões onde o carretel original cadastrado sobreviveu (mantendo seu `nfc_uid`, peso inicial/tara, peso confirmado e histórico de consumo), recebendo `bambu_spool_id`, `bambu_in_printer`, `bambu_slot_id` e metadados.
+- **Aliases Secundários:** 2 duplicatas secundárias da nuvem Bambu (`15788790` - Off White Velvet e `15306058` - Rosa Choque) foram removidas da tabela `spools` e registradas em `bambu_source_metadata.secondary_bambu_spool_ids` no carretel sobrevivente.
+- **Carretéis Legítimos Independentes:** O carretel `d2863713` (Voolt3D PLA Vermelho Ultra Silk, 830g) foi preservado como carretel físico independente (distinto de Vermelho Velvet, 52g), evitando corrupção de peso real.
+- **Integridade Relacional:** Todas as 12 linhas em `print_logs` e slots em `ams_slots` foram migradas para os sobreviventes antes da exclusão das duplicatas. Zero órfãos resultantes.
+- **Estoque Consolidado:** Inventário final fixado em exatamente 30 carretéis físicos reais no Supabase (28 originais com NFC + 1 Bambu Lab Amarelo + 1 Voolt3D Ultra Silk). Script de migração (`desktop-agent/scripts/migrate-fusion.js`) e rollback (`desktop-agent/scripts/rollback-fusion.js`) criados.
+
+### F.2 — Reconciliação Inteligente no Cloud Sync (`desktop-agent/src/bambuCloudSpoolSync.ts`)
+- Implementada função `findStrongReconciliationCandidate` e `isStrongCandidateMatch`:
+  - Compatibilidade rígida de material (PLA com PLA, PETG com PETG).
+  - Comparação de descritor de cor e remoção de prefixos técnicos.
+  - Regra de segurança física: só reconcilia se houver correspondência ÚNICA. Havendo ambiguidade (mais de 1 candidato compatível desvinculado), retorna `null` para evitar débitos incorretos às cegas.
+- Suporte a `secondary_bambu_spool_ids`: atualiza localização de carretéis com IDs secundários da Bambu sem duplicar linhas.
+- Implementada função `resolveSpoolBrand`: separa rigorosamente Marca real de Origem do dado (identifica Bambu Lab apenas via RFID; detecta marcas como Voolt3D, MasterPrint, Easy Print, Fusion no nome; recorre a "Genérico" caso contrário).
+- **Validação ao Vivo:** Teste de sincronização executado contra o Supabase de produção comprovou idempotência total (`totalRecords: 15, skippedRecords: 1, profilesUpserted: 12, spoolsInserted: 0, spoolsUpdated: 12`). O estoque permaneceu estritamente em 30 carretéis.
+- 7 novos testes unitários adicionados em `bambuCloudSpoolSync.test.ts`.
+
+### F.3 — Distinção de Marca vs Origem na Interface Web (`web-app`)
+- Adicionada função `getSpoolBrandDisplay(brand, material)` em `web-app/src/utils/inventory.ts` com testes em `inventory.test.ts`: normaliza brands idênticos ao material ou marcadores para "Genérico", sem confundir origem com marca.
+- Interface Web (`App.tsx`):
+  - Badge alterado de `🌐 Bambu` para `🌐 Sincronizado` com tooltip: `"Origem do registro: sincronizado via ecossistema Bambu (Cloud Spool Sync)"`.
+  - Texto da modal de pesagem atualizado para `"Este carretel foi sincronizado via ecossistema Bambu e ainda não foi pesado no Filamap..."`.
+
+### F.4 — Builds e Release
+- Testes Unitários Agent: 155/155 PASS.
+- Testes de Integração Agent: 13/13 PASS.
+- Testes Unitários Web: 60/60 PASS.
+- Build de Produção Web: PASS.
+- Executável empacotado: `filamap-agent.exe` (SHA256: `2F51816ABE9E7BFE0376E7A0CBE00B75CE83836F812A1AAC4E3D7354C52DEEB0`).
+- Bambu Bridge: `filamap-bambu-bridge.exe` (SHA256: `116B144218D7726F45E72F55B22DF81BFCE72A6F99E30149A713097862DEE9B3`).
+- Instalador Inno Setup gerado: `FilamapAgentSetup.exe` (SHA256: `C3424700506853F7B0AAE75ED68AA53E883ECBAD2DA315E20ABFFA0CDC223256`).
+
 ## 26/09/2026 — Fase F0: Resoluções Operacionais e Empacotamento de Release
 
 Investigação e resolução dos problemas de telemetria stale e exibição de carretéis identificados no início da Fase F0.

@@ -1,4 +1,5 @@
-﻿import type { FilamentSliceInfo } from "./ftpsParser";
+import type { FilamentSliceInfo } from "./ftpsParser";
+import { isMaterialCompatible, isColorCompatible, cleanText } from "./amsProjection";
 
 export type ConsumptionQuality =
   | "exact"
@@ -18,6 +19,112 @@ export interface SlotConsumption {
   grams: number;
   quality: ConsumptionQuality;
   weightDiscount: number;
+  ambiguous?: boolean;
+}
+
+export interface AmsSlotPhysicalCandidate {
+  slotIndex: number;
+  material?: string | null;
+  colorHex?: string | null;
+  trayInfoIdx?: string | null;
+}
+
+export interface FilamentSliceSlotMapping {
+  slice: FilamentSliceInfo;
+  physicalSlotIndex: number | null;
+  ambiguous: boolean;
+  source: "ams_mapping" | "exact_match" | "ambiguous" | "unmapped";
+  candidateSlotIndexes?: number[];
+}
+
+export function resolveFilamentSliceToAmsSlots(
+  slices: FilamentSliceInfo[],
+  amsMapping?: number[],
+  availableSlots?: AmsSlotPhysicalCandidate[]
+): FilamentSliceSlotMapping[] {
+  const mappings: FilamentSliceSlotMapping[] = [];
+
+  for (let i = 0; i < slices.length; i++) {
+    const slice = slices[i];
+    const logicalIdx = slice.logicalIndex !== undefined ? slice.logicalIndex : i;
+
+    // Prioridade 1: ams_mapping real da Bambu Lab
+    if (amsMapping && amsMapping.length > 0) {
+      const mappedSlot = logicalIdx < amsMapping.length ? amsMapping[logicalIdx] : undefined;
+      if (mappedSlot !== undefined && mappedSlot >= 0 && mappedSlot <= 15 && mappedSlot !== 255) {
+        mappings.push({
+          slice,
+          physicalSlotIndex: mappedSlot,
+          ambiguous: false,
+          source: "ams_mapping",
+        });
+        continue;
+      }
+    }
+
+    // Prioridade 2 / Fallback determinístico por cor + material (quando sem ams_mapping)
+    if (availableSlots && availableSlots.length > 0) {
+      const matchingCandidates = availableSlots.filter((slot) => {
+        // Material
+        if (slice.material && !isMaterialCompatible(slot.material, slice.material)) {
+          return false;
+        }
+        // Cor
+        if (slice.color && !isColorCompatible(slot.colorHex, slice.color)) {
+          return false;
+        }
+        // Se ambos têm tray_info_idx, devem coincidir
+        if (slice.trayInfoIdx && slot.trayInfoIdx) {
+          if (cleanText(slice.trayInfoIdx) !== cleanText(slot.trayInfoIdx)) {
+            return false;
+          }
+        }
+        return true;
+      });
+
+      if (matchingCandidates.length === 1) {
+        mappings.push({
+          slice,
+          physicalSlotIndex: matchingCandidates[0].slotIndex,
+          ambiguous: false,
+          source: "exact_match",
+        });
+        continue;
+      }
+
+      if (matchingCandidates.length >= 2) {
+        // AMBÍGUO: 2 ou mais candidatos fisicamente compatíveis.
+        // NÃO ADIVINHAR; NÃO debitar estoque; status = AMBIGUOUS
+        mappings.push({
+          slice,
+          physicalSlotIndex: null,
+          ambiguous: true,
+          source: "ambiguous",
+          candidateSlotIndexes: matchingCandidates.map((c) => c.slotIndex),
+        });
+        continue;
+      }
+
+      // 0 candidatos encontrados nos slots disponíveis
+      mappings.push({
+        slice,
+        physicalSlotIndex: null,
+        ambiguous: false,
+        source: "unmapped",
+      });
+      continue;
+    }
+
+    // Prioridade 3 / Fallback simples sem dados de slots
+    mappings.push({
+      slice,
+      physicalSlotIndex: slice.trayId !== undefined && slice.trayId >= 0 ? slice.trayId : logicalIdx,
+      ambiguous: false,
+      source: "exact_match",
+    });
+  }
+
+  return mappings;
 }
 
 // Cascata de 4 níveis:
@@ -29,7 +136,9 @@ export function computeConsumptionPerSlot(
   usedSlots: number[],
   filamentSliceInfo: FilamentSliceInfo[] | undefined,
   filenameGrams: number,
-  durationMinutes: number
+  durationMinutes: number,
+  amsMapping?: number[],
+  availableSlots?: AmsSlotPhysicalCandidate[]
 ): Map<number, SlotConsumption> {
   const perSlot = new Map<number, SlotConsumption>();
 
@@ -38,18 +147,49 @@ export function computeConsumptionPerSlot(
   );
 
   if (exactSlices.length > 0) {
-    for (const f of exactSlices) {
-      perSlot.set(f.trayId, {
-        grams: f.totalGrams,
-        quality: "exact",
-        weightDiscount: f.weightDiscount || 0,
-      });
+    const mappings = resolveFilamentSliceToAmsSlots(exactSlices, amsMapping, availableSlots);
+
+    for (const mapping of mappings) {
+      if (mapping.ambiguous) {
+        // Ambiguidade: identifica slot de referência para registro forense, mas marca ambiguous: true
+        const targetSlot =
+          mapping.candidateSlotIndexes && mapping.candidateSlotIndexes[0] !== undefined
+            ? mapping.candidateSlotIndexes[0]
+            : (mapping.slice.trayId ?? 0);
+
+        const existing = perSlot.get(targetSlot);
+        if (existing) {
+          existing.grams = Math.round((existing.grams + mapping.slice.totalGrams) * 100) / 100;
+          existing.weightDiscount += mapping.slice.weightDiscount || 0;
+          existing.ambiguous = true;
+        } else {
+          perSlot.set(targetSlot, {
+            grams: mapping.slice.totalGrams,
+            quality: "exact",
+            weightDiscount: mapping.slice.weightDiscount || 0,
+            ambiguous: true,
+          });
+        }
+      } else if (mapping.physicalSlotIndex !== null) {
+        const slot = mapping.physicalSlotIndex;
+        const existing = perSlot.get(slot);
+        if (existing) {
+          existing.grams = Math.round((existing.grams + mapping.slice.totalGrams) * 100) / 100;
+          existing.weightDiscount += mapping.slice.weightDiscount || 0;
+        } else {
+          perSlot.set(slot, {
+            grams: mapping.slice.totalGrams,
+            quality: "exact",
+            weightDiscount: mapping.slice.weightDiscount || 0,
+          });
+        }
+      }
     }
 
-    // Slot reportado pela AMS mas ausente no slicer:
+    // Slot reportado pela AMS mas ausente no fatiador:
     // não inventamos consumo.
     for (const slot of usedSlots) {
-      if (!perSlot.has(slot)) {
+      if (slot >= 0 && slot !== 255 && !perSlot.has(slot)) {
         perSlot.set(slot, {
           grams: 0,
           quality: "unknown",
@@ -72,7 +212,8 @@ export function computeConsumptionPerSlot(
     quality = "estimated_duration";
   }
 
-  const slots = usedSlots.length > 0 ? usedSlots : [0];
+  const validSlots = usedSlots.filter((s) => s >= 0 && s !== 255);
+  const slots = validSlots.length > 0 ? validSlots : [0];
 
   if (quality === "unknown" || totalGrams <= 0) {
     for (const slot of slots) {
@@ -375,8 +516,9 @@ export function buildJobConsumptionItems(
 ): JobConsumptionItem[] {
   const items: JobConsumptionItem[] = [];
 
-  for (const [slotIdx, { grams, quality, weightDiscount }] of perSlot) {
-    const spoolId = spoolBySlot.get(slotIdx) ?? null;
+  for (const [slotIdx, { grams, quality, weightDiscount, ambiguous }] of perSlot) {
+    // Ambiguidade: NÃO debitar estoque de nenhum carretel e NÃO marcar needs_weighing apenas por ambiguidade
+    const spoolId = ambiguous ? null : (spoolBySlot.get(slotIdx) ?? null);
 
     const finalGrams = computeFinalGrams(
       grams,

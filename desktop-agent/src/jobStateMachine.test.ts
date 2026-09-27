@@ -337,3 +337,127 @@ test("K: Idempotência: mesmo jobId e finalização produzem chave única", () =
     assert.equal(actions[0].job.jobId, jobId);
   }
 });
+
+test("Gate 1: lê print.ams.tray_now (A1/AMS Lite) na sequência 0 -> 2 -> 3 acumulando usedSlots", () => {
+  const sm = new JobStateMachine();
+
+  // Início no Slot 0
+  sm.processPrintPayload({
+    gcode_state: "RUNNING",
+    subtask_name: "multicolor_real",
+    mc_percent: 5,
+    ams: { tray_now: 0 },
+  });
+
+  assert.equal(sm.getActiveSlotIndex(), 0);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [0]);
+  assert.equal(sm.getCurrentJob()?.activeSlot, 0);
+
+  // Troca para Slot 2 (Slot 1 vazio pulado)
+  sm.processPrintPayload({
+    mc_percent: 25,
+    ams: { tray_now: 2 },
+  });
+
+  assert.equal(sm.getActiveSlotIndex(), 2);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [0, 2]);
+  assert.equal(sm.getCurrentJob()?.activeSlot, 2);
+
+  // Troca para Slot 3
+  sm.processPrintPayload({
+    mc_percent: 60,
+    ams: { tray_now: 3 },
+  });
+
+  assert.equal(sm.getActiveSlotIndex(), 3);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [0, 2, 3]);
+  assert.equal(sm.getCurrentJob()?.activeSlot, 3);
+});
+
+test("Gate 1: valor 255 (retração/transição) nunca vira 0 e nunca entra em usedSlots", () => {
+  const sm = new JobStateMachine({ initialSlotIndex: 2 });
+
+  sm.processPrintPayload({
+    gcode_state: "RUNNING",
+    subtask_name: "job_com_troca",
+    mc_percent: 10,
+    ams: { tray_now: 2 },
+  });
+
+  assert.equal(sm.getActiveSlotIndex(), 2);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [2]);
+
+  // Transição / filamento recolhido: tray_now = 255
+  sm.processPrintPayload({
+    mc_percent: 15,
+    ams: { tray_now: 255 },
+  });
+
+  // activeSlotIndex vai para -1 (retorna null via getActiveSlotIndex()), NÃO 0 nem 255, usedSlots permanece [2]
+  assert.equal(sm.getActiveSlotIndex(), null);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [2]);
+  assert.equal(sm.getCurrentJob()?.activeSlot, 2);
+
+  // Engata novo slot 3
+  sm.processPrintPayload({
+    mc_percent: 20,
+    ams: { tray_now: 3 },
+  });
+
+  assert.equal(sm.getActiveSlotIndex(), 3);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, [2, 3]);
+  assert.equal(sm.getCurrentJob()?.usedSlots.includes(255), false);
+});
+
+test("Gate 1: captura ams_mapping via MQTT e persiste no currentJob", () => {
+  const sm = new JobStateMachine();
+
+  // Recebe ams_mapping antes ou durante o job
+  sm.processPrintPayload({
+    gcode_state: "RUNNING",
+    subtask_name: "peca_multicolor",
+    mc_percent: 2,
+    ams_mapping: [0, 2, 3],
+    ams: { tray_now: 0 },
+  });
+
+  assert.deepEqual(sm.getCurrentJob()?.amsMapping, [0, 2, 3]);
+
+  // Ou via método attachAmsMapping
+  sm.attachAmsMapping([0, 2, 3]);
+  assert.deepEqual(sm.getCurrentJob()?.amsMapping, [0, 2, 3]);
+});
+
+test("Blindagem: inicialização sem slot físico resulta em getActiveSlotIndex() === null", () => {
+  const sm = new JobStateMachine();
+  assert.equal(sm.getActiveSlotIndex(), null);
+
+  sm.processPrintPayload({
+    gcode_state: "RUNNING",
+    subtask_name: "teste_slot_indefinido",
+    mc_percent: 5,
+  });
+
+  // Sem evidência de tray_now, activeSlotIndex permanece -1
+  assert.equal(sm.getActiveSlotIndex(), null);
+  assert.deepEqual(sm.getCurrentJob()?.usedSlots, []);
+});
+
+test("Blindagem: attachAmsMapping rejeita mapeamento conflitante posterior para o mesmo job", () => {
+  const sm = new JobStateMachine();
+  sm.processPrintPayload({
+    gcode_state: "RUNNING",
+    subtask_name: "job_multicolor_mapping",
+    mc_percent: 1,
+    ams_mapping: [0, 2, 3],
+  });
+
+  assert.deepEqual(sm.getCurrentJob()?.amsMapping, [0, 2, 3]);
+
+  // Tentativa de sobrescrever com mapping conflitante no mesmo job
+  sm.attachAmsMapping([1, 1, 1]);
+
+  // Preserva o mapeamento original [0, 2, 3]
+  assert.deepEqual(sm.getCurrentJob()?.amsMapping, [0, 2, 3]);
+});
+

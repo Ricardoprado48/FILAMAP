@@ -7,6 +7,7 @@ import {
   filterInventory,
   groupInventoryByMaterial,
   getInPrinterCountDisplay,
+  formatActiveSlotDisplay,
 } from "./inventory";
 import type { Spool } from "../types";
 
@@ -211,6 +212,30 @@ describe("inventory utils", () => {
       expect(getInPrinterCountDisplay(2, 3)).toBe("(2 de 3)");
       expect(getInPrinterCountDisplay(1, 3)).toBe("(1 de 3)");
       expect(getInPrinterCountDisplay(0, 3)).toBe("(0 de 3)");
+    });
+  });
+
+  describe("formatActiveSlotDisplay", () => {
+    it("returns '--' when isPrinting is false regardless of slot index", () => {
+      expect(formatActiveSlotDisplay(0, false)).toBe("--");
+      expect(formatActiveSlotDisplay(2, false)).toBe("--");
+      expect(formatActiveSlotDisplay(null, false)).toBe("--");
+      expect(formatActiveSlotDisplay(undefined, false)).toBe("--");
+    });
+
+    it("returns '--' when slot index is invalid, null, undefined, negative, or sentinel 255", () => {
+      expect(formatActiveSlotDisplay(null, true)).toBe("--");
+      expect(formatActiveSlotDisplay(undefined, true)).toBe("--");
+      expect(formatActiveSlotDisplay(-1, true)).toBe("--");
+      expect(formatActiveSlotDisplay(255, true)).toBe("--");
+      expect(formatActiveSlotDisplay(NaN, true)).toBe("--");
+    });
+
+    it("returns 1-based 'Slot X' when valid 0-based slot index is provided during printing", () => {
+      expect(formatActiveSlotDisplay(0, true)).toBe("Slot 1");
+      expect(formatActiveSlotDisplay(1, true)).toBe("Slot 2");
+      expect(formatActiveSlotDisplay(2, true)).toBe("Slot 3");
+      expect(formatActiveSlotDisplay(3, true)).toBe("Slot 4");
     });
   });
 });

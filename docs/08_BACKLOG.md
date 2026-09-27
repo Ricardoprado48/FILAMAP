@@ -1,19 +1,28 @@
-# BACKLOG VIGENTE — 26/09/2026 — FASE F0 CONCLUÍDA TECNICAMENTE
+# BACKLOG VIGENTE — 27/09/2026 — GATE 1 CONCLUÍDO & REGRESSÃO MQTT RESOLVIDA
 
-Status do núcleo operacional após a Fase F0:
-- [x] **E1 — Phantom Job / MQTT**: máquina de estados pura implementada, tolerante a deltas parciais, descarte de jobs órfãos a 0%, preservação de jobId e finalização única (`9bc9785`).
-- [x] **E2 — Autenticação no Boot**: persistência robusta do refresh token, retentativa com backoff para erros transitórios de rede/DNS, token só é revogado com prova explícita (`invalid_grant`), preservação do Access Code (`744300f`).
-- [x] **E3 — FTPS / .3MF / slice_info.config**: conexão FTPS com TLS Implícito comprovada na porta 990, caminhos remotos normalizados sem `/sdcard/`, extração precisa de `used_g` e mapeamento de IDs de filamento para slots (`e1ef6d5`).
-- [x] **F0.A — Auth / RLS / Telemetria Stale**: preservação da instância Supabase autenticada em `bootstrapRuntimeConfig`/`startAgent`; validação de impressora online na Web (`isPrinterLivePrinting`) eliminando "impressão ao vivo" stale (`8f2226f`, `02a1b03`).
-- [x] **F0.B — Resolução de Cores HEX e Nomes**: separação estrita de `color_hex` e `color_name` no sync e exibição Web com auto-cura e backfill no Supabase (`c556ba1`).
-- [x] **F0.C — Release e Empacotador**: empacotamento determinístico via `@yao-pkg/pkg` otimizado (`cd0a4b7`) e instalador Inno Setup gerado com sucesso.
+Status do núcleo operacional após a sessão atual:
+- [x] **Gate 1 — Mapeamento Multicolor (`ams_mapping`) & Slot em Uso**:
+  - Resolução por 4 níveis de precedência: `ams_mapping` do MQTT (`[0, 2, 3]`), slot derivado, `ams_slots` reconciliado, carretel físico;
+  - Regra de ambiguidade: sem `ams_mapping` e >= 2 candidatos fisicamente compatíveis -> status AMBIGUOUS, `spool_id = null`, ZERO estoque debitado, `needs_weighing` não marcado por punição;
+  - Leitura de `tray_now` corrigida no payload MQTT da A1/AMS Lite, ignorando valor transitório `255` sem converter para 0 e sem poluir `usedSlots`;
+  - Captura e persistência de `ams_mapping` em `%APPDATA%\Filamap\agent-state.json`;
+  - 173/173 unitários e 13/13 integração PASS.
+- [x] **Correção da Regressão MQTT**:
+  - Removida subscrição indevida em `device/${PRINTER_SERIAL}/request`, que provocava fechamento imediato do socket TCP pelo broker da Bambu A1;
+  - Mantida subscrição exclusiva em `/report`; telemetria `print.ams_mapping` capturada normalmente;
+  - Estabilidade de 15 segundos comprovada em hardware real com 0 reconnects e 0 disconnects.
+- [x] **Saneamento Cirúrgico do Estoque do Incidente Multicolor**:
+  - Vermelho Ultra Silk ajustado para 890.20g (-2.00g);
+  - MasterPrint PETG Branco ajustado para 353.20g (-0.80g);
+  - Preto Velvet mantido em 742.20g;
+  - Total no banco: 29 spools, 17 catalog_items, 3 print_logs (preservados intactos).
+- [x] **Nova Release Gerada**:
+  - Agent SHA256: `D15909F2EA548642D75C9BDA6BFCBC4390CABC9E8892D050CCB35431962824B2`;
+  - Instalador SHA256: `4524F89973C6AE95886ADB98E4CE875AB5F3BB9A6E1500200D44903290BE49E2`.
 
 Próximos passos operacionais:
-- [ ] Executar instalador `FilamapAgentSetup.exe` com elevação de Administrador (UAC);
-- [ ] Validar auditoria pós-instalação no host (processo único, tarefa agendada, telemetria viva);
-- [ ] Executar Golden Test E2E de uma cor com pesagem antes e depois (Fase F1);
-- [ ] Executar Golden Test E2E multicolor (Fase F2);
-- [ ] Homologar em hardware real a resolução de spool físico Bambu Cloud × NFC.
+- [ ] Cliente executar o instalador `desktop-agent/installer/output/FilamapAgentSetup.exe` com privilégios de Administrador (UAC);
+- [ ] Retomada da homologação física / Golden Test multicolor.
 
 > Itens históricos abaixo são preservados para rastreabilidade. Quando houver
 > conflito de status, esta seção de 26/09/2026 prevalece.

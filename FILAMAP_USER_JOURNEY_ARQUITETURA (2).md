@@ -1,7 +1,7 @@
 # FILAMAP
 ## Jornada do Utilizador e Funcionamento Técnico
 
-**Versão:** 1.6  
+**Versão:** 1.7  
 **Tipo de documento:** Product Journey + Technical Architecture — **fonte oficial de estado do projeto** (ver Seção 62)  
 **Produto:** Filamap  
 **Categoria:** SaaS / IoT / Automação para impressão 3D  
@@ -10,6 +10,12 @@
 ---
 
 ## Log de atualizações
+
+**v1.7** — 27/09/2026 — Correção da Regressão MQTT pós-Gate 1 & Saneamento Cirúrgico do Estoque.
+1. Removida a subscrição indevida do canal `/request` em `desktop-agent/src/index.ts`, cuja rejeição pelo broker local da Bambu A1 provocava loop contínuo de reconexão. Mantida subscrição exclusiva em `/report`.
+2. Captura de `ams_mapping` confirmada via telemetria `/report`. Estabilidade de rede comprovada em teste físico de 15 segundos (0 reconnects, 0 disconnects).
+3. Saneamento cirúrgico do estoque do incidente: Vermelho Ultra Silk corrigido para 890.20g (-2.00g) e Branco PETG para 353.20g (-0.80g). Preto mantido em 742.20g. Banco íntegro (spools=29, catalog_items=17, print_logs=3).
+4. Hashes da release: Agent `D15909F2EA548642D75C9BDA6BFCBC4390CABC9E8892D050CCB35431962824B2`, Instalador `4524F89973C6AE95886ADB98E4CE875AB5F3BB9A6E1500200D44903290BE49E2`.
 
 **v1.6** — 26/09/2026 — Conclusão Técnica e Correções Operacionais da Fase F0.
 Identificadas e resolvidas duas anomalias operacionais críticas pós-instalação:
@@ -1888,36 +1894,74 @@ Retirar bobina
 
 ---
 
-# 62. Estado Real de Implementação (v1.6 — fonte oficial de estado)
+# 62. Estado Real de Implementação (v1.10 — fonte oficial de estado)
 
-> **📌 Snapshot vigente — 26/09/2026 / Conclusão Técnica da Fase F0.**
-> Testes e builds passaram com 100% de sucesso: Agent 148/148 unitários +
-> 13/13 integração; Web 58/58 unitários + build produção.
+> **📌 Snapshot vigente — 27/09/2026 / Correção da Regressão MQTT pós-Gate 1 & Estabilidade de Rede.**
+> Testes e builds passaram com 100% de sucesso: Agent 173/173 unitários (+1 de regressão) +
+> 13/13 integração; Web 62/62 unitários + build produção.
 >
 > **Correções críticas implementadas e validadas nesta sessão:**
-> 1. **Auth / RLS / Telemetria Stale (Problema A):**
->    - `bootstrapRuntimeConfig()` não sobrescreve mais a instância Supabase
->      autenticada por uma cliente anônimo.
->    - `authenticateAgentSession` e `startAgent` operam sob a mesma sessão.
->    - `web-app` agora avalia `isPrinterLivePrinting` (`online && (RUNNING || PAUSE)`),
->      ocultando "Impressão ao Vivo" quando a impressora está offline.
-> 2. **Separação de Cor HEX e Nome do Carretel (Problema B):**
->    - `bambuCloudSpoolSync` normaliza HEX para `color_hex` e resolve nomes
->      legíveis para `color_name` (ex.: "PLA", "PETG VERDE"), sem poluir com HEX.
->    - Backfill executado com sucesso nos 14 spools remotos do Supabase.
->    - Web UI atualizada com utilitários `getSpoolDisplayName` e `getSpoolSwatchColor`.
-> 3. **Empacotador e Release:**
->    - `@yao-pkg/pkg` configurado com `--public --public-packages "*"` evitando
->      deadlocks no bytecode cache do Windows.
->    - Agent SHA256: `C6ECAAC0E21F7202ADD98AD0553A3F7E90330519998BE0E1AB1B3F679FA1A05D`.
+> 1. **Correção de Regressão no Broker MQTT da Bambu Lab A1 (`index.ts`):**
+>    - **Causa Raiz Identificada e Comprovada:** O broker MQTT embarcado na Bambu Lab A1 encerrava imediatamente o socket com `Connection closed` ao receber a subscrição no canal `/request` (canal reservado exclusivamente a envio de comandos).
+>    - **Correção:** Removida a linha `client.subscribe("device/${PRINTER_SERIAL}/request")`. Mantida assinatura única em `device/${PRINTER_SERIAL}/report`.
+>    - **Captura de `ams_mapping`:** Comprovado que o payload regular de telemetria emitido em `/report` contém `print.ams_mapping`, garantindo captura do mapeamento multicolor com total estabilidade de rede.
+>    - **Estabilidade Física Comprovada:** Teste live de 15 segundos conectado à impressora física A1 (192.168.15.15) registrou 7 mensagens de telemetria, rigorosamente **0 reconnects** e **0 connection closed**.
+> 2. **Saneamento Cirúrgico do Estoque do Incidente Multicolor:**
+>    - Preto Velvet (Slot 1): mantido em 742.20g (correto, débito anterior exato).
+>    - Vermelho Ultra Silk (Slot 3): ajustado de 892.20g para 890.20g (-2.00g).
+>    - Branco PETG (Slot 4): ajustado de 354.00g para 353.20g (-0.80g).
+>    - Banco íntegro: `spools = 29`, `catalog_items = 17`, `print_logs = 3` (preservados intactos).
+>    - Snapshot e script de rollback gerados em `backups/`.
+> 3. **Artefatos e Hashes da Release:**
+>    - Agent SHA256: `D15909F2EA548642D75C9BDA6BFCBC4390CABC9E8892D050CCB35431962824B2`.
+>    - Instalador Inno Setup: `desktop-agent/installer/output/FilamapAgentSetup.exe`
+>      (SHA256: `4524F89973C6AE95886ADB98E4CE875AB5F3BB9A6E1500200D44903290BE49E2`).
+>
+> ---
+>
+> **📌 Snapshot anterior — 27/09/2026 / Gate 1: Mapeamento Multicolor (`ams_mapping`), Ambiguidade Sem Punição e Telemetria de Slot em Uso (`tray_now`).**
+> Testes e builds passaram com 100% de sucesso: Agent 172/172 unitários (+9 novos) +
+> 13/13 integração; Web 62/62 unitários + build produção.
+>
+> **📌 Snapshot anterior — 26/09/2026 / Correção de Localização AMS & Auditoria de Contagem Real (30 vs 29).**
+> Testes e builds passaram com 100% de sucesso: Agent 163/163 unitários (+8 novos) +
+> 13/13 integração; Web 62/62 unitários (+2 novos) + build produção.
+>
+> **Correções críticas implementadas e validadas nesta sessão:**
+> 1. **Projeção e Reconciliação Automática da AMS (`amsProjection.ts`):**
+>    - MQTT local (porta 8883) é agora a fonte autoritativa de presença/ocupação física dos slots da AMS.
+>    - Sincronização executada em 3 momentos: conexão MQTT (`pushall`), mudanças de estado de `print.ams` ou `tray_exist_bits`, e após cada ciclo de Cloud Spool Sync (sem depender de print job ou finalizeJob).
+>    - Reconciliação com descarte de cache stale da nuvem Bambu: no Slot 4, a nuvem Bambu mantinha incorretamente `PLA Lite AMARELO`, mas o MQTT reporta `PETG Branco` (`FFFFFFFF`). O sistema desvinculou o PLA Lite Amarelo (mantendo-o 100% intacto no estoque com seus 950g) e vinculou o `MasterPrint PETG Branco`.
+>    - Idempotência testada e comprovada em produção com a impressora parada:
+>      - Slot 1 (idx 0): `Voolt3D PLA Preto Velvet` (`7bf0de9e-d6bd-4d18-937b-e3a0c4b3d886`)
+>      - Slot 2 (idx 1): `null` (vazio)
+>      - Slot 3 (idx 2): `Voolt3D PLA Vermelho Ultra Silk` (`d2863713-e98c-4cba-92a5-b0fe48756d8c`)
+>      - Slot 4 (idx 3): `MasterPrint PETG Branco` (`5f14df68-2113-4f31-9af4-195b7d77f96f`)
+> 2. **Web UI — "Na Impressora Agora" e Isolamento de Filtros (`web-app`):**
+>    - Implementada função pura `getInPrinterCountDisplay`: a contagem física real na máquina (`totalInPrinterCount`) nunca é alterada por filtros de material ou buscas textuais.
+>    - Exibe `📍 Na Impressora Agora (3)` quando todos os carretéis estão visíveis, ou `(X de 3)` quando filtros de visualização ocultam parte deles, informando claramente o total físico instalado.
+> 3. **Consolidação do Inventário Físico Real em Exatamente 29 Carretéis:**
+>    - O cliente confirmou o inventário real da oficina com exatamente 29 carretéis físicos.
+>    - **Fato Físico dos Carretéis Vermelhos:** Comprovado que existem dois carretéis físicos vermelhos reais e distintos: `Voolt3D PLA Vermelho Velvet` (`ceff1f7e-649b-4a7c-8d51-4615f51630ea`, 52g, NFC `FILA-PLA-VERMELHO-VELVET`) e `Voolt3D PLA Vermelho Ultra Silk` (`d2863713-e98c-4cba-92a5-b0fe48756d8c`, 830g, no Slot 3 da AMS). Nenhuma fusão ou alteração de peso foi feita entre eles.
+>    - **Identificação e Remoção do Verdadeiro 30º Excedente:** O carretel físico `Voolt3D PETG Preto` NÃO existe no mundo real. No banco de dados existia `1e1e2428-5d99-48c0-a04d-e11dc508e8d0` (`Voolt3D PETG Preto`, NFC `53:2c:de:99:33:00:01`), criado por teste/leitura NFC avulsa em 17/09.
+>    - Auditoria de dependências comprovou 0 referências em `ams_slots`, 0 em `print_logs`, `bambu_spool_id: null` e `bambu_in_printer: false`.
+>    - Realizado backup JSON (`backups/spool_1e1e2428_backup.json`) e script de rollback.
+>    - Registro excluído com sucesso. A tabela `spools` passou de 30 para exatamente 29 registros físicos legítimos.
+>    - **Verificação de Idempotência do Cloud Sync:** Executado ciclo completo de sincronização (`syncBambuCloudSpools`), resultando em `spoolsInserted: 0` e o total permanecendo em exatamente 29 carretéis.
+>    - **Verificação da Projeção AMS:** Reconciliação executada com sucesso com slots:
+>      - Slot 1: `Voolt3D PLA Preto Velvet` (900g)
+>      - Slot 2: `null` (vazio)
+>      - Slot 3: `Voolt3D PLA Vermelho Ultra Silk` (830g)
+>      - Slot 4: `MasterPrint PETG Branco` (450g)
+>      - `Vermelho Velvet` (52g), `MasterPrint PETG Preto` (1000g) e `Bambu Lab PLA Lite AMARELO` (950g) preservados intactos no inventário.
+> 4. **Empacotador e Release:**
+>    - Agent SHA256: `ABB40E10DB188F1AF6B0F071EF62154DDCA900D9565B81CABA366C2CDE2CACEA`.
 >    - Bridge SHA256: `116B144218D7726F45E72F55B22DF81BFCE72A6F99E30149A713097862DEE9B3`.
 >    - Instalador Inno Setup: `desktop-agent/installer/output/FilamapAgentSetup.exe`
->      (SHA256: `23EC10CF65C8D6E8B920F0278CE53D16BB7B5B8700BBC79A4B8295DB218E4028`).
+>      (SHA256: `28018F2ADF626D94CA96ED3238E0BF3D0EDFAEBEDCEE008090DD916C0E13739D`).
 >
-> **Ponto de Controle / UAC Gate:**
-> A instalação em `C:\Program Files\Filamap Agent` requer privilégios de Administrador
-> (`PrivilegesRequired=admin`). Conforme protocolo estrito, o agente pausou e preparou
-> o instalador para execução pelo usuário com elevação manual.
+> **Ponto de Controle / Bloqueios:**
+> Gate 1 IMPLEMENTADO E VALIDADO com 100% de testes PASS (172/172 unitários, 13/13 integração). Pronto para a FASE H (Correção de Saldo e Retomada da Homologação).
 
 
 > **📌 Aviso v1.3 (19/09/2026) — este documento é a fonte oficial do

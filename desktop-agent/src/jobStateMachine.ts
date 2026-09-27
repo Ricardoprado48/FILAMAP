@@ -13,6 +13,7 @@ export interface ActiveJobState {
   totalCostTime: number;
   filamentGrams: number;
   filamentSliceInfo?: FilamentSliceInfo[];
+  amsMapping?: number[];
 }
 
 export type StateMachineAction =
@@ -45,12 +46,38 @@ export interface MqttPrintPayload {
   mc_percent?: number | string;
   mc_total_cost_time?: number | string;
   calc_remaining_time?: number | string;
+  ams_mapping?: Array<number | string> | string;
+  tray_now?: number | string;
+  tray_tar?: number | string;
   ams?: {
+    tray_now?: number | string;
+    tray_tar?: number | string;
+    ams_mapping?: Array<number | string> | string;
     ams?: Array<{
+      tray_now?: number | string;
       tray_tar?: number | string;
     }>;
   };
   [key: string]: unknown;
+}
+
+export function parseAmsMapping(raw: unknown): number[] | undefined {
+  if (Array.isArray(raw)) {
+    const parsed = raw.map(Number).filter((n) => !isNaN(n) && ((n >= 0 && n <= 15) || n === 255));
+    if (parsed.length > 0) return parsed;
+  } else if (typeof raw === "string" && raw.trim()) {
+    try {
+      const json = JSON.parse(raw);
+      if (Array.isArray(json)) {
+        const parsed = json.map(Number).filter((n) => !isNaN(n) && ((n >= 0 && n <= 15) || n === 255));
+        if (parsed.length > 0) return parsed;
+      }
+    } catch {
+      const parts = raw.split(",").map((s) => Number(s.trim())).filter((n) => !isNaN(n) && ((n >= 0 && n <= 15) || n === 255));
+      if (parts.length > 0) return parts;
+    }
+  }
+  return undefined;
 }
 
 export function extractGramsFromName(taskName: string): number | null {
@@ -90,6 +117,7 @@ export class JobStateMachine {
   private activeSlotIndex: number;
   private lastKnownSubtaskName: string;
   private lastKnownGcodeFile: string;
+  private lastKnownAmsMapping?: number[];
 
   constructor(options: JobStateMachineOptions = {}) {
     this.currentJob = options.initialJob ? { ...options.initialJob } : null;
@@ -97,6 +125,9 @@ export class JobStateMachine {
     this.activeSlotIndex = options.initialSlotIndex ?? 0;
     this.lastKnownSubtaskName = this.currentJob?.subtaskName ?? "";
     this.lastKnownGcodeFile = this.currentJob?.gcodeFile ?? "";
+    if (this.currentJob?.amsMapping) {
+      this.lastKnownAmsMapping = this.currentJob.amsMapping;
+    }
   }
 
   public getCurrentJob(): ActiveJobState | null {
@@ -118,11 +149,42 @@ export class JobStateMachine {
   public processPrintPayload(print: MqttPrintPayload): StateMachineAction[] {
     const actions: StateMachineAction[] = [];
 
-    // 1. Atualiza slot ativo se presente no payload
-    if (print.ams?.ams?.[0]?.tray_tar !== undefined) {
-      const slotVal = Number(print.ams.ams[0].tray_tar);
-      if (!isNaN(slotVal) && slotVal >= 0) {
+    // 1. Atualiza slot ativo se presente no payload (prioriza tray_now sobre tray_tar)
+    const rawSlot =
+      print.ams?.tray_now !== undefined
+        ? print.ams.tray_now
+        : print.ams?.tray_tar !== undefined
+        ? print.ams.tray_tar
+        : print.ams?.ams?.[0]?.tray_now !== undefined
+        ? print.ams.ams[0].tray_now
+        : print.ams?.ams?.[0]?.tray_tar !== undefined
+        ? print.ams.ams[0].tray_tar
+        : print.tray_now !== undefined
+        ? print.tray_now
+        : print.tray_tar;
+
+    if (rawSlot !== undefined) {
+      const slotVal = Number(rawSlot);
+      // Valor 255 é transição/retração -- nunca converte para 0 e nunca adiciona a usedSlots
+      if (!isNaN(slotVal) && slotVal >= 0 && slotVal !== 255) {
         this.activeSlotIndex = slotVal;
+      }
+    }
+
+    // Extrai ams_mapping se presente no payload
+    const rawMapping =
+      print.ams_mapping ??
+      print.ams?.ams_mapping ??
+      (print as any).mapping ??
+      (print as any).subtask_mapping;
+
+    if (rawMapping !== undefined) {
+      const parsedMapping = parseAmsMapping(rawMapping);
+      if (parsedMapping && parsedMapping.length > 0) {
+        this.lastKnownAmsMapping = parsedMapping;
+        if (this.currentJob) {
+          this.currentJob.amsMapping = parsedMapping;
+        }
       }
     }
 
@@ -154,6 +216,7 @@ export class JobStateMachine {
         const extractedGrams = extractGramsFromName(effectiveName);
         const remoteFilePath = resolveRemote3mfPath(effectiveGcodeFile, effectiveName);
 
+        const validUsedSlots = this.activeSlotIndex >= 0 && this.activeSlotIndex !== 255 ? [this.activeSlotIndex] : [];
         const newJob: ActiveJobState = {
           jobId: randomUUID(),
           subtaskName: effectiveName,
@@ -161,11 +224,12 @@ export class JobStateMachine {
           maxProgressPercent: validProgress ?? 0,
           lastProgressPercent: validProgress ?? 0,
           activeSlot: this.activeSlotIndex,
-          usedSlots: [this.activeSlotIndex],
+          usedSlots: validUsedSlots,
           startTime: Date.now(),
           totalCostTime,
           filamentGrams: extractedGrams || 0,
           filamentSliceInfo: [],
+          ...(this.lastKnownAmsMapping ? { amsMapping: this.lastKnownAmsMapping } : {}),
         };
 
         this.currentJob = newJob;
@@ -205,6 +269,7 @@ export class JobStateMachine {
           const extractedGrams = extractGramsFromName(effectiveName);
           const remoteFilePath = resolveRemote3mfPath(effectiveGcodeFile, effectiveName);
 
+          const validUsedSlots = this.activeSlotIndex >= 0 && this.activeSlotIndex !== 255 ? [this.activeSlotIndex] : [];
           const newJob: ActiveJobState = {
             jobId: randomUUID(),
             subtaskName: effectiveName,
@@ -212,11 +277,12 @@ export class JobStateMachine {
             maxProgressPercent: validProgress ?? 0,
             lastProgressPercent: validProgress ?? 0,
             activeSlot: this.activeSlotIndex,
-            usedSlots: [this.activeSlotIndex],
+            usedSlots: validUsedSlots,
             startTime: Date.now(),
             totalCostTime,
             filamentGrams: extractedGrams || 0,
             filamentSliceInfo: [],
+            ...(this.lastKnownAmsMapping ? { amsMapping: this.lastKnownAmsMapping } : {}),
           };
 
           this.currentJob = newJob;
@@ -261,19 +327,21 @@ export class JobStateMachine {
           }
 
           // Rastreamento de novos slots AMS (multicolor)
-          if (!this.currentJob.usedSlots.includes(this.activeSlotIndex)) {
-            this.currentJob.usedSlots.push(this.activeSlotIndex);
-            this.currentJob.activeSlot = this.activeSlotIndex;
-            if (!updated) {
-              actions.push({
-                type: "update_job",
-                job: this.currentJob,
-                reason: "slot_added",
-              });
-              updated = true;
+          if (this.activeSlotIndex >= 0 && this.activeSlotIndex !== 255) {
+            if (!this.currentJob.usedSlots.includes(this.activeSlotIndex)) {
+              this.currentJob.usedSlots.push(this.activeSlotIndex);
+              this.currentJob.activeSlot = this.activeSlotIndex;
+              if (!updated) {
+                actions.push({
+                  type: "update_job",
+                  job: this.currentJob,
+                  reason: "slot_added",
+                });
+                updated = true;
+              }
+            } else if (this.currentJob.activeSlot !== this.activeSlotIndex) {
+              this.currentJob.activeSlot = this.activeSlotIndex;
             }
-          } else if (this.currentJob.activeSlot !== this.activeSlotIndex) {
-            this.currentJob.activeSlot = this.activeSlotIndex;
           }
         }
       }
@@ -288,6 +356,7 @@ export class JobStateMachine {
         finishStatus: "COMPLETED",
       });
       this.currentJob = null;
+      this.lastKnownAmsMapping = undefined;
     }
 
     // 5. Interrupção/Falha em FAILED / STOP / PAUSE_STOP
@@ -303,6 +372,7 @@ export class JobStateMachine {
         finishStatus: currentState,
       });
       this.currentJob = null;
+      this.lastKnownAmsMapping = undefined;
     }
 
     // 6. Transição para IDLE (ou impressora já parada em IDLE)
@@ -315,6 +385,7 @@ export class JobStateMachine {
           reason: "idle_zero_progress",
         });
         this.currentJob = null;
+        this.lastKnownAmsMapping = undefined;
       } else if (this.lastGcodeState === "RUNNING" || this.lastGcodeState === "PAUSE") {
         // Interrompido e voltou para IDLE sem evento explícito de STOP
         actions.push({
@@ -324,11 +395,20 @@ export class JobStateMachine {
           finishStatus: "STOP",
         });
         this.currentJob = null;
+        this.lastKnownAmsMapping = undefined;
       }
     }
 
     this.lastGcodeState = currentState;
     return actions;
+  }
+
+  /** Permite anexar o ams_mapping capturado via MQTT ao job ativo */
+  public attachAmsMapping(mapping: number[]): void {
+    this.lastKnownAmsMapping = mapping;
+    if (this.currentJob) {
+      this.currentJob.amsMapping = mapping;
+    }
   }
 
   /** Permite anexar os dados do slice_info.config baixados via FTPS ao job ativo */

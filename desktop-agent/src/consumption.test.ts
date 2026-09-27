@@ -1,4 +1,4 @@
-﻿import test from "node:test";
+import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -10,9 +10,16 @@ import {
   resolvePhysicalSpoolsForJob,
   groupBambuCandidatesBySlot,
   computeAmsSlotSelfHeals,
+  resolveFilamentSliceToAmsSlots,
 } from "./consumption";
 import type { FilamentSliceInfo } from "./ftpsParser";
-import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow, SlotResolution } from "./consumption";
+import type {
+  JobConsumptionItem,
+  SpoolPhysicalInfo,
+  BambuSyncedSpoolRow,
+  SlotResolution,
+  AmsSlotPhysicalCandidate,
+} from "./consumption";
 
 function slice(
   trayId: number,
@@ -21,6 +28,7 @@ function slice(
 ): FilamentSliceInfo {
   return {
     trayId,
+    logicalIndex: trayId,
     modelGrams: totalGrams,
     supportGrams: 0,
     flushGrams: 0,
@@ -663,5 +671,268 @@ test("self-heal: reprocessar o mesmo job após o heal não gera novo heal (idemp
   const secondRun = new Map([[0, resolution({ spoolId: "spool-a", amsSlotSpoolId: "spool-a" })]]);
   const secondHeals = computeAmsSlotSelfHeals(secondRun);
   assert.equal(secondHeals.length, 0);
+});
+
+test("Gate 1: resolveFilamentSliceToAmsSlots mapeia [0, 2, 3] com slot intermediário vazio", () => {
+  const slices: FilamentSliceInfo[] = [
+    {
+      trayId: 0,
+      logicalIndex: 0,
+      filamentId: 1,
+      material: "PLA",
+      color: "#161616",
+      modelGrams: 2.77,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 2.77,
+      weightDiscount: 0,
+    },
+    {
+      trayId: 1,
+      logicalIndex: 1,
+      filamentId: 2,
+      material: "PLA",
+      color: "#F72323",
+      modelGrams: 2.83,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 2.83,
+      weightDiscount: 0,
+    },
+    {
+      trayId: 2,
+      logicalIndex: 2,
+      filamentId: 3,
+      material: "PETG",
+      color: "#FFFFFF",
+      modelGrams: 0.76,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 0.76,
+      weightDiscount: 0,
+    },
+  ];
+
+  const amsMapping = [0, 2, 3];
+  const mappings = resolveFilamentSliceToAmsSlots(slices, amsMapping);
+
+  assert.equal(mappings.length, 3);
+  assert.equal(mappings[0].physicalSlotIndex, 0);
+  assert.equal(mappings[0].source, "ams_mapping");
+  assert.equal(mappings[0].ambiguous, false);
+
+  assert.equal(mappings[1].physicalSlotIndex, 2);
+  assert.equal(mappings[1].source, "ams_mapping");
+  assert.equal(mappings[1].ambiguous, false);
+
+  assert.equal(mappings[2].physicalSlotIndex, 3);
+  assert.equal(mappings[2].source, "ams_mapping");
+  assert.equal(mappings[2].ambiguous, false);
+});
+
+test("Gate 1: sem ams_mapping, 2 ou mais candidatos fisicamente compatíveis resultam em AMBIGUOUS", () => {
+  const slices: FilamentSliceInfo[] = [
+    {
+      trayId: 0,
+      logicalIndex: 0,
+      material: "PLA",
+      color: "#F72323",
+      modelGrams: 5.0,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 5.0,
+      weightDiscount: 0,
+    },
+  ];
+
+  // Dois slots físicos contêm PLA Vermelho (#F72323)
+  const availableSlots: AmsSlotPhysicalCandidate[] = [
+    { slotIndex: 1, material: "PLA", colorHex: "#F72323" },
+    { slotIndex: 3, material: "PLA", colorHex: "#F72323" },
+  ];
+
+  const mappings = resolveFilamentSliceToAmsSlots(slices, undefined, availableSlots);
+
+  assert.equal(mappings.length, 1);
+  assert.equal(mappings[0].ambiguous, true);
+  assert.equal(mappings[0].physicalSlotIndex, null);
+  assert.equal(mappings[0].source, "ambiguous");
+  assert.deepEqual(mappings[0].candidateSlotIndexes, [1, 3]);
+});
+
+test("Gate 1: sem ams_mapping, exatamente 1 candidato compatível resolve automaticamente", () => {
+  const slices: FilamentSliceInfo[] = [
+    {
+      trayId: 0,
+      logicalIndex: 0,
+      material: "PETG",
+      color: "#FFFFFF",
+      modelGrams: 8.0,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 8.0,
+      weightDiscount: 0,
+    },
+  ];
+
+  const availableSlots: AmsSlotPhysicalCandidate[] = [
+    { slotIndex: 0, material: "PLA", colorHex: "#161616" },
+    { slotIndex: 2, material: "PLA", colorHex: "#F72323" },
+    { slotIndex: 3, material: "PETG", colorHex: "#FFFFFF" },
+  ];
+
+  const mappings = resolveFilamentSliceToAmsSlots(slices, undefined, availableSlots);
+
+  assert.equal(mappings.length, 1);
+  assert.equal(mappings[0].ambiguous, false);
+  assert.equal(mappings[0].physicalSlotIndex, 3);
+  assert.equal(mappings[0].source, "exact_match");
+});
+
+test("Gate 1: buildJobConsumptionItems com ambiguidade não debita estoque (spool_id = null)", () => {
+  const perSlot = new Map([
+    [
+      1,
+      {
+        grams: 10.0,
+        quality: "exact" as const,
+        weightDiscount: 0,
+        ambiguous: true,
+      },
+    ],
+  ]);
+
+  const spoolBySlot = new Map([[1, "spool-possivel-1"]]);
+  const items = buildJobConsumptionItems(perSlot, spoolBySlot, 100);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].slot_index, 1);
+  assert.equal(items[0].spool_id, null); // NENHUM carretel debitado!
+  assert.equal(items[0].orphan_slot, true);
+  assert.equal(items[0].consumption_quality, "exact");
+  assert.equal(items[0].grams, 10.0);
+});
+
+test("Gate 1: fixture real do incidente multicolor sem nenhum órfão (zero orphans)", () => {
+  const slices: FilamentSliceInfo[] = [
+    {
+      trayId: 0,
+      logicalIndex: 0,
+      filamentId: 1,
+      material: "PLA",
+      color: "#161616",
+      modelGrams: 2.77,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 2.77,
+      weightDiscount: 0,
+    },
+    {
+      trayId: 1,
+      logicalIndex: 1,
+      filamentId: 2,
+      material: "PLA",
+      color: "#F72323",
+      modelGrams: 2.83,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 2.83,
+      weightDiscount: 0,
+    },
+    {
+      trayId: 2,
+      logicalIndex: 2,
+      filamentId: 3,
+      material: "PETG",
+      color: "#FFFFFF",
+      modelGrams: 0.76,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 0.76,
+      weightDiscount: 0,
+    },
+  ];
+
+  const amsMapping = [0, 2, 3];
+  const usedSlots = [0, 2, 3];
+
+  const availableSlots: AmsSlotPhysicalCandidate[] = [
+    { slotIndex: 0, material: "PLA", colorHex: "#161616" },
+    { slotIndex: 2, material: "PLA", colorHex: "#F72323" },
+    { slotIndex: 3, material: "PETG", colorHex: "#FFFFFF" },
+  ];
+
+  const perSlot = computeConsumptionPerSlot(
+    usedSlots,
+    slices,
+    0,
+    15,
+    amsMapping,
+    availableSlots
+  );
+
+  // Slot 1 (vazio) não deve existir no perSlot
+  assert.equal(perSlot.has(1), false);
+  assert.equal(perSlot.size, 3);
+
+  // Mapeamento dos carretéis físicos reconciliados
+  const spoolBySlot = new Map<number, string | null>([
+    [0, "spool-preto-velvet"],
+    [2, "spool-vermelho-ultra-silk"],
+    [3, "spool-branco-petg"],
+  ]);
+
+  const items = buildJobConsumptionItems(perSlot, spoolBySlot, 100);
+
+  assert.equal(items.length, 3);
+
+  const itemSlot0 = items.find((it) => it.slot_index === 0);
+  const itemSlot2 = items.find((it) => it.slot_index === 2);
+  const itemSlot3 = items.find((it) => it.slot_index === 3);
+
+  assert.ok(itemSlot0);
+  assert.equal(itemSlot0.spool_id, "spool-preto-velvet");
+  assert.equal(itemSlot0.grams, 2.8); // 2.77 arredondado para 2.8g
+  assert.equal(itemSlot0.orphan_slot, false);
+
+  assert.ok(itemSlot2);
+  assert.equal(itemSlot2.spool_id, "spool-vermelho-ultra-silk");
+  assert.equal(itemSlot2.grams, 2.8); // 2.83 arredondado para 2.8g
+  assert.equal(itemSlot2.orphan_slot, false);
+
+  assert.ok(itemSlot3);
+  assert.equal(itemSlot3.spool_id, "spool-branco-petg");
+  assert.equal(itemSlot3.grams, 0.8); // 0.76 arredondado para 0.8g
+  assert.equal(itemSlot3.orphan_slot, false);
+
+  // ZERO órfãos!
+  const orphans = items.filter((it) => it.orphan_slot);
+  assert.equal(orphans.length, 0);
+});
+
+test("Gate 1: regressão monocolor opera normalmente com ou sem ams_mapping", () => {
+  const singleSlice: FilamentSliceInfo[] = [
+    {
+      trayId: 0,
+      logicalIndex: 0,
+      material: "PLA",
+      color: "#161616",
+      modelGrams: 15.5,
+      supportGrams: 0,
+      flushGrams: 0,
+      totalGrams: 15.5,
+      weightDiscount: 0,
+    },
+  ];
+
+  // Caso A: sem ams_mapping
+  const perSlotA = computeConsumptionPerSlot([0], singleSlice, 0, 30);
+  assert.equal(perSlotA.size, 1);
+  assert.equal(perSlotA.get(0)?.grams, 15.5);
+
+  // Caso B: com ams_mapping [0]
+  const perSlotB = computeConsumptionPerSlot([0], singleSlice, 0, 30, [0]);
+  assert.equal(perSlotB.size, 1);
+  assert.equal(perSlotB.get(0)?.grams, 15.5);
 });
 

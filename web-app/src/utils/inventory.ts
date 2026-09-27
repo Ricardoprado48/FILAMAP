@@ -109,3 +109,22 @@ export function getInPrinterCountDisplay(
   }
   return `(${visibleCount} de ${totalCount})`;
 }
+
+export function formatActiveSlotDisplay(
+  slotIndex: number | null | undefined,
+  isPrinting: boolean
+): string {
+  if (!isPrinting) return "--";
+  if (
+    slotIndex === null ||
+    slotIndex === undefined ||
+    typeof slotIndex !== "number" ||
+    !Number.isInteger(slotIndex) ||
+    slotIndex < 0 ||
+    slotIndex === 255
+  ) {
+    return "--";
+  }
+  return `Slot ${slotIndex + 1}`;
+}
+

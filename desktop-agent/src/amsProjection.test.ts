@@ -1,0 +1,437 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  parseMqttAmsStatus,
+  reconcileAmsState,
+  isMaterialCompatible,
+  isColorCompatible,
+  syncAmsProjection,
+  type ReconcileAmsInputSpool,
+  type ReconcileAmsInputAmsSlot,
+} from "./amsProjection";
+
+test("parseMqttAmsStatus: parse payload real da Bambu com tray_exist_bits 'd'", () => {
+  const payload = {
+    print: {
+      ams: {
+        ams: [
+          {
+            id: "0",
+            tray: [
+              {
+                id: "0",
+                tray_type: "PLA",
+                tray_color: "161616FF",
+                tag_uid: "0000000000000000",
+                tray_info_idx: "Paaadef6",
+              },
+              { id: "1" },
+              {
+                id: "2",
+                tray_type: "PLA",
+                tray_color: "F72323FF",
+                tag_uid: "0000000000000000",
+                tray_info_idx: "P790d873",
+              },
+              {
+                id: "3",
+                tray_type: "PETG",
+                tray_color: "FFFFFFFF",
+                tag_uid: "0000000000000000",
+                tray_info_idx: "P5881e45",
+              },
+            ],
+          },
+        ],
+        tray_exist_bits: "d",
+      },
+    },
+  };
+
+  const trays = parseMqttAmsStatus(payload);
+  assert.equal(trays.length, 4);
+
+  // Slot 0 (ocupado PLA Preto)
+  assert.equal(trays[0].slotIndex, 0);
+  assert.equal(trays[0].occupied, true);
+  assert.equal(trays[0].trayType, "PLA");
+  assert.equal(trays[0].trayColorHex, "#161616");
+
+  // Slot 1 (vazio)
+  assert.equal(trays[1].slotIndex, 1);
+  assert.equal(trays[1].occupied, false);
+  assert.equal(trays[1].trayType, null);
+  assert.equal(trays[1].trayColorHex, null);
+
+  // Slot 2 (ocupado PLA Vermelho)
+  assert.equal(trays[2].slotIndex, 2);
+  assert.equal(trays[2].occupied, true);
+  assert.equal(trays[2].trayType, "PLA");
+  assert.equal(trays[2].trayColorHex, "#F72323");
+
+  // Slot 3 (ocupado PETG Branco)
+  assert.equal(trays[3].slotIndex, 3);
+  assert.equal(trays[3].occupied, true);
+  assert.equal(trays[3].trayType, "PETG");
+  assert.equal(trays[3].trayColorHex, "#FFFFFF");
+});
+
+test("parseMqttAmsStatus: tolera payload sem ams ou nulo", () => {
+  assert.deepEqual(parseMqttAmsStatus(null), []);
+  assert.deepEqual(parseMqttAmsStatus({}), []);
+  assert.deepEqual(parseMqttAmsStatus({ print: {} }), []);
+  assert.deepEqual(parseMqttAmsStatus({ print: { ams: null } }), []);
+});
+
+test("isMaterialCompatible: valida estritamente materiais", () => {
+  assert.equal(isMaterialCompatible("PLA", "PLA"), true);
+  assert.equal(isMaterialCompatible("PLA Lite", "PLA"), true);
+  assert.equal(isMaterialCompatible("PETG", "PETG"), true);
+  assert.equal(isMaterialCompatible("PLA", "PETG"), false);
+  assert.equal(isMaterialCompatible("ABS", "PLA"), false);
+  assert.equal(isMaterialCompatible(null, "PLA"), false);
+  assert.equal(isMaterialCompatible("PLA", null), true);
+});
+
+test("isColorCompatible: normaliza e compara cores hexadecimais", () => {
+  assert.equal(isColorCompatible("#ffffff", "#FFFFFF"), true);
+  assert.equal(isColorCompatible("#FFFFFF88", "#FFFFFF"), true);
+  assert.equal(isColorCompatible("#161616", "#161616FF"), true);
+  assert.equal(isColorCompatible("#161616", "#FFFFFF"), false);
+  assert.equal(isColorCompatible(null, "#FFFFFF"), true);
+});
+
+test("reconcileAmsState: resolve caso real com conflito no Slot 4 (PLA Lite Amarelo vs PETG Branco)", () => {
+  const printerSerial = "01P00A123456789";
+
+  const mqttTrays = [
+    {
+      slotIndex: 0,
+      occupied: true,
+      trayType: "PLA",
+      trayColorHex: "#161616",
+      tagUid: "0000000000000000",
+      trayInfoIdx: "Paaadef6",
+      traySubBrands: null,
+    },
+    {
+      slotIndex: 1,
+      occupied: false,
+      trayType: null,
+      trayColorHex: null,
+      tagUid: null,
+      trayInfoIdx: null,
+      traySubBrands: null,
+    },
+    {
+      slotIndex: 2,
+      occupied: true,
+      trayType: "PLA",
+      trayColorHex: "#F72323",
+      tagUid: "0000000000000000",
+      trayInfoIdx: "P790d873",
+      traySubBrands: null,
+    },
+    {
+      slotIndex: 3,
+      occupied: true,
+      trayType: "PETG",
+      trayColorHex: "#FFFFFF",
+      tagUid: "0000000000000000",
+      trayInfoIdx: "P5881e45",
+      traySubBrands: null,
+    },
+  ];
+
+  const spools: ReconcileAmsInputSpool[] = [
+    {
+      id: "spool-preto-velvet",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Preto Velvet",
+      color_hex: "#111827",
+      nfc_uid: "FILA-PLA-PRETO",
+      bambu_spool_id: "14479573",
+      bambu_dev_id: printerSerial,
+      bambu_slot_id: "0",
+      bambu_in_printer: true,
+    },
+    {
+      id: "spool-vermelho-ultra-silk",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Vermelho Ultra Silk",
+      color_hex: "#F72323",
+      nfc_uid: null,
+      bambu_spool_id: "15582983",
+      bambu_dev_id: printerSerial,
+      bambu_slot_id: "2",
+      bambu_in_printer: true,
+    },
+    {
+      id: "spool-pla-lite-amarelo",
+      brand: "Bambu Lab",
+      material: "PLA",
+      color_name: "PLA Lite AMARELO",
+      color_hex: "#FFB549",
+      nfc_uid: null,
+      bambu_spool_id: "8594733",
+      bambu_dev_id: printerSerial,
+      bambu_slot_id: "3", // STALE Bambu Cloud entry!
+      bambu_in_printer: true,
+    },
+    {
+      id: "spool-petg-branco",
+      brand: "MasterPrint",
+      material: "PETG",
+      color_name: "Branco",
+      color_hex: "#FFFFFF",
+      nfc_uid: "FILA-PETG-BRANCO",
+      bambu_spool_id: "15628399",
+      bambu_dev_id: printerSerial,
+      bambu_slot_id: "3",
+      bambu_in_printer: true,
+    },
+    {
+      id: "spool-estoque-avulso",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Azul Céu",
+      color_hex: "#0000FF",
+      nfc_uid: "FILA-PLA-AZUL",
+      bambu_spool_id: null,
+      bambu_dev_id: null,
+      bambu_slot_id: null,
+      bambu_in_printer: false,
+    },
+  ];
+
+  const currentAmsSlots: ReconcileAmsInputAmsSlot[] = [
+    { slot_index: 0, spool_id: "spool-preto-velvet" },
+    { slot_index: 1, spool_id: null },
+    { slot_index: 2, spool_id: null },
+    { slot_index: 3, spool_id: null },
+  ];
+
+  const result = reconcileAmsState({
+    printerSerial,
+    mqttTrays,
+    spools,
+    currentAmsSlots,
+  });
+
+  // 1. Verificação de slots atribuídos
+  assert.equal(result.slotAssignments.get(0), "spool-preto-velvet");
+  assert.equal(result.slotAssignments.get(1), null);
+  assert.equal(result.slotAssignments.get(2), "spool-vermelho-ultra-silk");
+  assert.equal(result.slotAssignments.get(3), "spool-petg-branco");
+
+  // 2. Conflito registrado para o slot 3
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.conflicts[0].slotIndex, 3);
+  assert.match(result.conflicts[0].description, /Bambu Cloud apontava carretel "PLA Lite AMARELO"/);
+
+  // 3. PLA Lite Amarelo é desvinculado da impressora
+  const plaLiteUpdate = result.spoolLocationUpdates.find((u) => u.id === "spool-pla-lite-amarelo");
+  assert.ok(plaLiteUpdate, "PLA Lite Amarelo deve ter atualização de localização");
+  assert.equal(plaLiteUpdate.bambu_in_printer, false);
+  assert.equal(plaLiteUpdate.bambu_slot_id, null);
+  assert.equal(plaLiteUpdate.bambu_dev_id, null);
+
+  // 4. Carretel avulso do estoque permanece intocado
+  const avulsoUpdate = result.spoolLocationUpdates.find((u) => u.id === "spool-estoque-avulso");
+  assert.equal(avulsoUpdate, undefined);
+});
+
+test("reconcileAmsState: reconhece carretel por RFID Bambu Lab", () => {
+  const printerSerial = "01P00A123456789";
+
+  const mqttTrays = [
+    {
+      slotIndex: 0,
+      occupied: true,
+      trayType: "PLA",
+      trayColorHex: "#FFB549",
+      tagUid: "7AB5A3DC12345678",
+      trayInfoIdx: "P001",
+      traySubBrands: null,
+    },
+    { slotIndex: 1, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+    { slotIndex: 2, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+    { slotIndex: 3, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+  ];
+
+  const spools: ReconcileAmsInputSpool[] = [
+    {
+      id: "spool-bambu-rfid",
+      brand: "Bambu Lab",
+      material: "PLA",
+      color_name: "PLA Lite Amarelo",
+      color_hex: "#FFB549",
+      nfc_uid: null,
+      bambu_spool_id: "8594733",
+      bambu_dev_id: null,
+      bambu_slot_id: null,
+      bambu_in_printer: false,
+      bambu_source_metadata: { rfid: "7AB5A3DC12345678" },
+    },
+  ];
+
+  const result = reconcileAmsState({
+    printerSerial,
+    mqttTrays,
+    spools,
+    currentAmsSlots: [],
+  });
+
+  assert.equal(result.slotAssignments.get(0), "spool-bambu-rfid");
+  const update = result.spoolLocationUpdates.find((u) => u.id === "spool-bambu-rfid");
+  assert.ok(update);
+  assert.equal(update.bambu_in_printer, true);
+  assert.equal(update.bambu_slot_id, "0");
+});
+
+test("reconcileAmsState: desvincula carretel quando slot é esvaziado fisicamente", () => {
+  const printerSerial = "01P00A123456789";
+
+  const mqttTrays = [
+    { slotIndex: 0, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+    { slotIndex: 1, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+    { slotIndex: 2, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+    { slotIndex: 3, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null },
+  ];
+
+  const spools: ReconcileAmsInputSpool[] = [
+    {
+      id: "spool-removido",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Preto Velvet",
+      color_hex: "#111827",
+      nfc_uid: "FILA-001",
+      bambu_spool_id: "14479573",
+      bambu_dev_id: printerSerial,
+      bambu_slot_id: "0",
+      bambu_in_printer: true,
+    },
+  ];
+
+  const result = reconcileAmsState({
+    printerSerial,
+    mqttTrays,
+    spools,
+    currentAmsSlots: [{ slot_index: 0, spool_id: "spool-removido" }],
+  });
+
+  assert.equal(result.slotAssignments.get(0), null);
+  const update = result.spoolLocationUpdates.find((u) => u.id === "spool-removido");
+  assert.ok(update);
+  assert.equal(update.bambu_in_printer, false);
+  assert.equal(update.bambu_slot_id, null);
+});
+
+test("syncAmsProjection: idempotência e persistência no banco simulado", async () => {
+  const upsertedAmsSlots: any[] = [];
+  const updatedSpools: any[] = [];
+
+  const mockSupabase: any = {
+    from(table: string) {
+      if (table === "ams_slots") {
+        return {
+          select() {
+            return {
+              eq() {
+                return Promise.resolve({
+                  data: [
+                    { slot_index: 0, spool_id: "spool-0" },
+                    { slot_index: 1, spool_id: null },
+                    { slot_index: 2, spool_id: null },
+                    { slot_index: 3, spool_id: null },
+                  ],
+                  error: null,
+                });
+              },
+            };
+          },
+          upsert(record: any) {
+            upsertedAmsSlots.push(record);
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
+      if (table === "spools") {
+        return {
+          select() {
+            return Promise.resolve({
+              data: [
+                {
+                  id: "spool-0",
+                  brand: "Voolt3D",
+                  material: "PLA",
+                  color_name: "Preto",
+                  color_hex: "#161616",
+                  bambu_dev_id: "PRINTER1",
+                  bambu_slot_id: "0",
+                  bambu_in_printer: true,
+                },
+                {
+                  id: "spool-2",
+                  brand: "Voolt3D",
+                  material: "PLA",
+                  color_name: "Vermelho",
+                  color_hex: "#F72323",
+                  bambu_dev_id: null,
+                  bambu_slot_id: null,
+                  bambu_in_printer: false,
+                },
+              ],
+              error: null,
+            });
+          },
+          update(payload: any) {
+            return {
+              eq(col: string, val: string) {
+                updatedSpools.push({ id: val, payload });
+                return Promise.resolve({ error: null });
+              },
+            };
+          },
+        };
+      }
+      throw new Error(`Tabela não mockada: ${table}`);
+    },
+  };
+
+  const payload = {
+    print: {
+      ams: {
+        ams: [
+          {
+            id: "0",
+            tray: [
+              { id: "0", tray_type: "PLA", tray_color: "161616FF" },
+              { id: "1" },
+              { id: "2", tray_type: "PLA", tray_color: "F72323FF" },
+              { id: "3" },
+            ],
+          },
+        ],
+        tray_exist_bits: "5", // 1 e 4 ocupados (slots 0 e 2)
+      },
+    },
+  };
+
+  const counts = await syncAmsProjection(mockSupabase, "printer-uuid", "PRINTER1", payload);
+
+  // Slot 0 já tinha spool-0, portanto só o slot 2 precisava ser gravado
+  assert.equal(counts.slotsUpdated, 1);
+  assert.equal(upsertedAmsSlots.length, 1);
+  assert.equal(upsertedAmsSlots[0].slot_index, 2);
+  assert.equal(upsertedAmsSlots[0].spool_id, "spool-2");
+
+  // spool-2 foi vinculado à impressora
+  assert.equal(counts.spoolsUpdated, 1);
+  assert.equal(updatedSpools[0].id, "spool-2");
+  assert.equal(updatedSpools[0].payload.bambu_in_printer, true);
+  assert.equal(updatedSpools[0].payload.bambu_slot_id, "2");
+});

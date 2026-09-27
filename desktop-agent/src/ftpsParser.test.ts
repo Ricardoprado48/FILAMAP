@@ -55,6 +55,10 @@ test("parseSliceInfoXml: extrai filamento único com used_g e id 1-based (Cubo.3
   assert.equal(result.length, 1);
   assert.deepEqual(result[0], {
     trayId: 0, // id="1" no slicer mapeia para slot 0 (0-based)
+    logicalIndex: 0,
+    filamentId: 1,
+    material: "PETG",
+    trayInfoIdx: "Pc5a93aa",
     modelGrams: 18.98,
     supportGrams: 0,
     flushGrams: 0,
@@ -80,6 +84,9 @@ test("parseSliceInfoXml: extrai multicolor 3 cores (3DBenchy_3color)", () => {
 
   assert.deepEqual(result[0], {
     trayId: 0,
+    logicalIndex: 0,
+    filamentId: 1,
+    material: "PLA",
     modelGrams: 7.98,
     supportGrams: 0,
     flushGrams: 0,
@@ -90,6 +97,9 @@ test("parseSliceInfoXml: extrai multicolor 3 cores (3DBenchy_3color)", () => {
 
   assert.deepEqual(result[1], {
     trayId: 1,
+    logicalIndex: 1,
+    filamentId: 2,
+    material: "PLA",
     modelGrams: 4.45,
     supportGrams: 0,
     flushGrams: 0,
@@ -100,6 +110,9 @@ test("parseSliceInfoXml: extrai multicolor 3 cores (3DBenchy_3color)", () => {
 
   assert.deepEqual(result[2], {
     trayId: 2,
+    logicalIndex: 2,
+    filamentId: 3,
+    material: "PLA",
     modelGrams: 3.34,
     supportGrams: 0,
     flushGrams: 0,
@@ -127,10 +140,14 @@ test("parseSliceInfoXml: extrai slots descontínuos com auxílio de plate_1.json
   assert.equal(result.length, 2);
 
   assert.equal(result[0].trayId, 0);
+  assert.equal(result[0].logicalIndex, 0);
+  assert.equal(result[0].filamentId, 1);
   assert.equal(result[0].totalGrams, 1.66);
   assert.equal(result[0].color, "#FFFFFF");
 
   assert.equal(result[1].trayId, 7);
+  assert.equal(result[1].logicalIndex, 7);
+  assert.equal(result[1].filamentId, 8);
   assert.equal(result[1].totalGrams, 0.45);
   assert.equal(result[1].color, "#F72323");
 });
@@ -147,6 +164,8 @@ test("parseSliceInfoXml: suporta campos legados model_g, support_g, flush_g e we
   assert.equal(result.length, 1);
   assert.deepEqual(result[0], {
     trayId: 1, // id="2" -> slot 1
+    logicalIndex: 1,
+    filamentId: 2,
     modelGrams: 20.5,
     supportGrams: 3.0,
     flushGrams: 1.5,

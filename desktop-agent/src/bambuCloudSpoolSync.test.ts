@@ -13,6 +13,10 @@ import {
   normalizeColorHex,
   resolveSpoolColorName,
   buildSpoolInsertRow,
+  findStrongReconciliationCandidate,
+  isStrongCandidateMatch,
+  resolveSpoolBrand,
+  type ReconciliationCandidate,
   type BridgeRunResult,
   type ParsedBambuCloudSpool,
 } from "./bambuCloudSpoolSync";
@@ -652,3 +656,215 @@ test("syncBambuCloudSpoolsFromParsed auto-corrige registros legados com color_na
     assert.equal(updated.current_weight, 900, "peso deve ser estritamente preservado");
   });
 });
+
+test("findStrongReconciliationCandidate reconcilia carretel único desvinculado por compatibilidade de material e nome", () => {
+  const spool = silkSpool({
+    bambuSpoolId: "14479573",
+    filamentName: "PLA PRETO VELVET",
+    filamentType: "PLA",
+  });
+
+  const unlinked: ReconciliationCandidate[] = [
+    {
+      id: "spool-1",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Preto Velvet",
+      bambu_spool_id: null,
+    },
+    {
+      id: "spool-2",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Dourado",
+      bambu_spool_id: null,
+    },
+  ];
+
+  const match = findStrongReconciliationCandidate(spool, null, unlinked);
+  assert.ok(match);
+  assert.equal(match?.id, "spool-1");
+});
+
+test("findStrongReconciliationCandidate rejeita quando há ambiguidade física (mais de 1 candidato compatível)", () => {
+  const spool = silkSpool({
+    bambuSpoolId: "14479573",
+    filamentName: "PLA PRETO VELVET",
+    filamentType: "PLA",
+  });
+
+  const unlinked: ReconciliationCandidate[] = [
+    {
+      id: "spool-1",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Preto Velvet",
+      bambu_spool_id: null,
+    },
+    {
+      id: "spool-2",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Preto Velvet",
+      bambu_spool_id: null,
+    },
+  ];
+
+  const match = findStrongReconciliationCandidate(spool, null, unlinked);
+  assert.equal(match, null, "deve retornar null diante de múltiplos candidatos para não debitar às cegas");
+});
+
+test("findStrongReconciliationCandidate rejeita quando material é incompatível", () => {
+  const spool = silkSpool({
+    bambuSpoolId: "14479573",
+    filamentName: "PLA PRETO VELVET",
+    filamentType: "PLA",
+  });
+
+  const unlinked: ReconciliationCandidate[] = [
+    {
+      id: "spool-petg",
+      brand: "Voolt3D",
+      material: "PETG",
+      color_name: "Preto Velvet",
+      bambu_spool_id: null,
+    },
+  ];
+
+  const match = findStrongReconciliationCandidate(spool, null, unlinked);
+  assert.equal(match, null);
+});
+
+test("findStrongReconciliationCandidate não funde Velvet e Ultra Silk (preservando carretéis físicos distintos)", () => {
+  const spool = silkSpool({
+    bambuSpoolId: "15582983",
+    filamentName: "PLA VERMELHO_ULTRA_SILK",
+    filamentType: "PLA",
+  });
+
+  const unlinked: ReconciliationCandidate[] = [
+    {
+      id: "spool-velvet",
+      brand: "Voolt3D",
+      material: "PLA",
+      color_name: "Vermelho Velvet",
+      bambu_spool_id: null,
+    },
+  ];
+
+  const match = findStrongReconciliationCandidate(spool, null, unlinked);
+  assert.equal(match, null, "Ultra Silk e Velvet são carretéis físicos diferentes e nunca devem se fundir");
+});
+
+test("resolveSpoolBrand identifica fabricante correto", () => {
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: "BAMBU-RFID-123" })),
+    "Bambu Lab"
+  );
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: null, filamentName: "VOOLT3D PLA PRETO VELVET" })),
+    "Voolt3D"
+  );
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: null, filamentName: "MasterPrint PETG Branco" })),
+    "MasterPrint"
+  );
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: null, filamentName: "Easy Print PETG Prata" })),
+    "Easy Print"
+  );
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: null, filamentName: "Fusion PETG Amarelo" })),
+    "Fusion"
+  );
+  assert.equal(
+    resolveSpoolBrand(silkSpool({ rfid: null, filamentName: "PLA Básico", filamentVendor: "+" })),
+    "Genérico"
+  );
+});
+
+test("syncBambuCloudSpoolsFromParsed reconcilia carretel desvinculado e preserva dados físicos locais", async () => {
+  const unlinkedId = randomUUID();
+  const now = new Date().toISOString();
+
+  const client = new FakeSupabaseClient({
+    spools: [
+      {
+        id: unlinkedId,
+        user_id: USER_ID,
+        bambu_spool_id: null,
+        brand: "Voolt3D",
+        material: "PLA",
+        color_name: "Preto Velvet",
+        nfc_uid: "NFC-PRETO-VELVET",
+        current_weight: 900,
+        initial_weight: 1000,
+        price_paid: 110,
+        bambu_source_metadata: {},
+        updated_at: now,
+      },
+    ],
+  });
+
+  const cloudSpool = silkSpool({
+    bambuSpoolId: "14479573",
+    filamentName: "PLA PRETO VELVET",
+    filamentType: "PLA",
+    inPrinter: true,
+    slotId: "0",
+  });
+
+  const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [cloudSpool]);
+
+  assert.equal(result.spoolsInserted, 0, "deve reconciliar sem inserir nova linha");
+  assert.equal(result.spoolsUpdated, 1);
+  assert.equal(client.tables.spools.length, 1);
+
+  const spool = client.tables.spools[0];
+  assert.equal(spool.id, unlinkedId);
+  assert.equal(spool.bambu_spool_id, "14479573");
+  assert.equal(spool.nfc_uid, "NFC-PRETO-VELVET", "NFC deve ser estritamente preservado");
+  assert.equal(spool.current_weight, 900, "peso real deve ser preservado");
+  assert.equal(spool.price_paid, 110);
+  assert.equal(spool.bambu_in_printer, true);
+  assert.equal(spool.bambu_slot_id, "0");
+});
+
+test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e não insere nova linha", async () => {
+  const survivingId = randomUUID();
+  const now = new Date().toISOString();
+
+  const client = new FakeSupabaseClient({
+    spools: [
+      {
+        id: survivingId,
+        user_id: USER_ID,
+        bambu_spool_id: "15147446",
+        brand: "Voolt3D",
+        material: "PLA",
+        color_name: "Branco Off White Velvet",
+        bambu_source_metadata: {
+          secondary_bambu_spool_ids: ["15788790"],
+        },
+        current_weight: 338,
+        updated_at: now,
+      },
+    ],
+  });
+
+  const secondaryCloudSpool = silkSpool({
+    bambuSpoolId: "15788790",
+    filamentName: "PLA OFFWHITE VELVET",
+    filamentType: "PLA",
+    inPrinter: false,
+  });
+
+  const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [secondaryCloudSpool]);
+
+  assert.equal(result.spoolsInserted, 0, "não deve inserir linha duplicada para ID secundário");
+  assert.equal(client.tables.spools.length, 1);
+  assert.equal(client.tables.spools[0].id, survivingId);
+  assert.equal(client.tables.spools[0].bambu_spool_id, "15147446", "deve manter o ID primário");
+  assert.equal(client.tables.spools[0].current_weight, 338);
+});
+

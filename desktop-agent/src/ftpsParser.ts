@@ -8,6 +8,10 @@ import { XMLParser } from "fast-xml-parser";
 
 export interface FilamentSliceInfo {
   trayId: number;
+  logicalIndex: number;
+  filamentId?: number;
+  material?: string;
+  trayInfoIdx?: string;
   modelGrams: number;
   supportGrams: number;
   flushGrams: number;
@@ -87,24 +91,38 @@ export function parseSliceInfoXml(
     const nodes = Array.isArray(node) ? node : [node];
     for (const f of nodes) {
       let trayId: number;
+      let rawId: number | undefined;
+
+      if (f.id !== undefined) {
+        const parsed = parseInt(String(f.id), 10);
+        if (!isNaN(parsed)) {
+          rawId = parsed;
+        }
+      }
 
       if (f.tray_id !== undefined) {
         trayId = parseInt(String(f.tray_id), 10);
       } else if (f.tray_idx !== undefined) {
         trayId = parseInt(String(f.tray_idx), 10);
-      } else if (f.id !== undefined) {
-        const parsed = parseInt(String(f.id), 10);
+      } else if (rawId !== undefined) {
         // No Bambu Studio / slicer XML, filament id é 1-based (id="1" -> slot 0, id="8" -> slot 7)
-        if (plateFilamentIds && parsed > 0 && parsed <= plateFilamentIds.length) {
-          trayId = plateFilamentIds[parsed - 1];
+        if (plateFilamentIds && rawId > 0 && rawId <= plateFilamentIds.length) {
+          trayId = plateFilamentIds[rawId - 1];
         } else {
-          trayId = parsed > 0 ? parsed - 1 : 0;
+          trayId = rawId > 0 ? rawId - 1 : 0;
         }
       } else {
         continue;
       }
 
       if (isNaN(trayId) || trayId < 0) continue;
+
+      const logicalIndex =
+        rawId !== undefined && rawId > 0
+          ? rawId - 1
+          : trayId >= 0
+          ? trayId
+          : 0;
 
       const color = f.color ?? f.color_name ?? "unknown";
       const modelGrams = parseFloat(f.model_g ?? f.model_grams ?? "0");
@@ -116,9 +134,19 @@ export function parseSliceInfoXml(
       const effectiveModelGrams = modelGrams > 0 ? modelGrams : Math.max(0, totalGrams - supportGrams - flushGrams);
       const weightDiscount = parseFloat(f.weight_discount ?? "0") || 0;
 
-      const existingIdx = filaments.findIndex((item) => item.trayId === trayId);
+      const rawMaterial = f.type ?? f.material ?? f.tray_type;
+      const material = typeof rawMaterial === "string" && rawMaterial.trim() ? rawMaterial.trim() : undefined;
+
+      const rawTrayInfoIdx = f.tray_info_idx ?? f.trayInfoIdx;
+      const trayInfoIdx = typeof rawTrayInfoIdx === "string" && rawTrayInfoIdx.trim() ? rawTrayInfoIdx.trim() : undefined;
+
+      const existingIdx = filaments.findIndex((item) => item.logicalIndex === logicalIndex);
       const infoObj: FilamentSliceInfo = {
         trayId,
+        logicalIndex,
+        ...(rawId !== undefined ? { filamentId: rawId } : {}),
+        ...(material ? { material } : {}),
+        ...(trayInfoIdx ? { trayInfoIdx } : {}),
         modelGrams: Math.round(effectiveModelGrams * 100) / 100,
         supportGrams: Math.round(supportGrams * 100) / 100,
         flushGrams: Math.round(flushGrams * 100) / 100,
@@ -231,7 +259,7 @@ export async function fetchAndParseSliceInfo(
     console.log(`📊 Filamentos lidos do slice_info.config (${filaments.length} encontrados):`);
     for (const f of filaments) {
       console.log(
-        `  - Tray ${f.trayId} (${f.color}): total=${f.totalGrams}g (Model=${f.modelGrams}g, Support=${f.supportGrams}g, Flush=${f.flushGrams}g) Discount=${f.weightDiscount}g`
+        `  - Logical ${f.logicalIndex} / Tray ${f.trayId} (${f.material || "unknown"}, ${f.color}): total=${f.totalGrams}g (Model=${f.modelGrams}g, Support=${f.supportGrams}g, Flush=${f.flushGrams}g) Discount=${f.weightDiscount}g`
       );
     }
 

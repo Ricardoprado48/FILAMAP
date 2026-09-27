@@ -6,6 +6,7 @@ dist/
 *.log
 *.exe
 desktop-agent/agent-state.json
+desktop-agent/agent-state.json.tmp
 
 supabase/remote_database.types.ts
 supabase/remote_public_schema.sql

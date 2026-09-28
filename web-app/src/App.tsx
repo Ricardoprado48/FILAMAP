@@ -3,6 +3,7 @@ import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 import { FilamapLogo, FilamapIcon } from "./components/Brand";
+import { AgentDevicesPanel } from "./components/AgentDevicesPanel";
 
 import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
@@ -47,6 +48,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "calc" | "writer">("ams");
+  const [showDevices, setShowDevices] = useState(false);
   const [calcSubTab, setCalcSubTab] = useState<"catalog" | "calculator">("catalog");
   const [catalogViewMode, setCatalogViewMode] = useState<"list" | "grid">("list");
 
@@ -772,6 +774,9 @@ export default function App() {
               <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: printerBadge.dotColor }} />
               {printerBadge.label}
             </span>
+            <button onClick={() => setShowDevices((v) => !v)} title="Computadores conectados" style={{ background: showDevices ? "#0284c7" : "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              💻 Computadores
+            </button>
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
@@ -794,6 +799,8 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {showDevices && <AgentDevicesPanel onClose={() => setShowDevices(false)} />}
 
       {feedbackMsg && (
         <div style={{ marginBottom: 16, padding: 10, background: "rgba(52, 211, 153, 0.12)", border: "1px solid #059669", borderRadius: 8, color: "#34d399", fontSize: 13, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>

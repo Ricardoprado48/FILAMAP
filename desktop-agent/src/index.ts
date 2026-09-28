@@ -22,6 +22,8 @@ import { discoverPrinterIp } from "./printerDiscovery";
 import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow, AmsSlotPhysicalCandidate } from "./consumption";
 import { getConfigDir } from "./config/configStore";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
+import { mergeNonSecretConfig } from "./config/configStore";
+import { pairAgentDevice, PairingError } from "./config/devicePairing";
 import { authenticateAgentSession } from "./config/sessionManager";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
@@ -158,6 +160,18 @@ function saveJobState(state: ActiveJobState | null) {
   }
 }
 
+// Manter igual a "version" do package.json (aparece em "Computadores conectados").
+const AGENT_VERSION = "1.1.0";
+
+function pairWithServer(code: string) {
+  return pairAgentDevice({
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY,
+    code,
+    agentVersion: AGENT_VERSION,
+  });
+}
+
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
@@ -176,6 +190,7 @@ async function startAgent() {
       promptLogin: async () => {
         return bootstrapRuntimeConfig();
       },
+      pairDevice: (code) => pairWithServer(code),
     });
   } catch (error: any) {
     console.error("❌ Falha na autenticação do agente:", error?.message || error);
@@ -191,22 +206,47 @@ async function startAgent() {
 
   const authenticatedUserId = authResult.userId;
 
+  // No pareamento o usuário não digita e-mail: guarda o que o servidor
+  // devolveu (só para logs/diagnóstico; nada de senha).
+  if (authResult.email && authResult.email !== AGENT_EMAIL) {
+    AGENT_EMAIL = authResult.email;
+    try {
+      mergeNonSecretConfig({ agentEmail: AGENT_EMAIL });
+    } catch {}
+  }
+
   const sessionSupervisor = new SessionSupervisor({
     auth: supabase.auth,
     expectedUserId: authenticatedUserId,
     initialSession: authResult.session ?? null,
-    getAgentEmail: () => AGENT_EMAIL,
     persistRefreshToken: (refreshToken) =>
       persistSessionSecrets(activeSecretStore, refreshToken, PRINTER_ACCESS_CODE),
-    askPassword: async () => {
+    // Computador desconectado na Web (ou sessão perdida de vez): pede um
+    // novo código de pareamento. Nunca pede a senha da conta.
+    reauthenticate: async () => {
+      let code: string;
       if (process.platform === "win32") {
         resetGuiPrompts();
-        return createGuiPrompts().askPassword();
+        code = await createGuiPrompts().askPairingCode();
+      } else {
+        try {
+          code = await createCliPrompts().askPairingCode();
+        } finally {
+          closeCliPrompts();
+        }
       }
       try {
-        return await createCliPrompts().askPassword();
-      } finally {
-        closeCliPrompts();
+        const paired = await pairWithServer(code);
+        const { data, error } = await supabase.auth.setSession({
+          access_token: paired.accessToken,
+          refresh_token: paired.refreshToken,
+        });
+        return { session: data.session, error };
+      } catch (e: any) {
+        if (e instanceof PairingError && e.kind === "network") {
+          return { session: null, error: { name: "NetworkError", message: e.message } };
+        }
+        return { session: null, error: e };
       }
     },
     onRecovered: () => void finalizeOutbox.flush(),
@@ -231,6 +271,20 @@ async function startAgent() {
   }
   void finalizeOutbox.flush();
   setInterval(() => void finalizeOutbox.flush(), 60000);
+
+  // Presença deste computador em "Computadores conectados" (Web). Sessões
+  // antigas por senha não têm dispositivo: a RPC devolve false e nada muda.
+  let deviceTouchWarned = false;
+  async function touchAgentDevice() {
+    if (!sessionSupervisor.isHealthy()) return;
+    const { error } = await supabase.rpc("touch_agent_device", { p_agent_version: AGENT_VERSION });
+    if (error && !deviceTouchWarned) {
+      deviceTouchWarned = true;
+      console.warn("⚠️ Não foi possível registrar presença do computador:", error.message);
+    }
+  }
+  void touchAgentDevice();
+  setInterval(() => void touchAgentDevice(), 60000);
 
   // Sincroniza os presets pessoais do Bambu Studio mesmo quando
   // a impressora estiver desligada. filament_id é a identidade estável.

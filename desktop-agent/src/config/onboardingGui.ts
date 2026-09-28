@@ -2,12 +2,12 @@ import { spawn } from "node:child_process";
 import type { OnboardingPrompts, MissingField } from "./onboarding";
 
 export interface SetupGuiResult {
-  email: string;
-  password: string;
+  pairingCode: string;
   accessCode: string;
 }
 
 let cachedResult: SetupGuiResult | null = null;
+let needsFullForm = false;
 
 function runWindowsSetupGui(): Promise<SetupGuiResult> {
   return new Promise((resolve, reject) => {
@@ -60,32 +60,23 @@ function Add-Label($text, $x, $y) {
     $form.Controls.Add($label)
 }
 
-Add-Label "E-mail da conta Filamap" 35 115
+Add-Label "Código de pareamento" 35 115
 
-$email = New-Object System.Windows.Forms.TextBox
-$email.Location = New-Object System.Drawing.Point(35,140)
-$email.Size = New-Object System.Drawing.Size(430,30)
-$email.Font = New-Object System.Drawing.Font("Segoe UI",11)
-$form.Controls.Add($email)
+$pairing = New-Object System.Windows.Forms.TextBox
+$pairing.Location = New-Object System.Drawing.Point(35,140)
+$pairing.Size = New-Object System.Drawing.Size(430,30)
+$pairing.Font = New-Object System.Drawing.Font("Consolas",14)
+$pairing.CharacterCasing = "Upper"
+$pairing.MaxLength = 13
+$form.Controls.Add($pairing)
 
-Add-Label "Senha" 35 185
-
-$password = New-Object System.Windows.Forms.TextBox
-$password.Location = New-Object System.Drawing.Point(35,210)
-$password.Size = New-Object System.Drawing.Size(350,30)
-$password.Font = New-Object System.Drawing.Font("Segoe UI",11)
-$password.UseSystemPasswordChar = $true
-$form.Controls.Add($password)
-
-$showPassword = New-Object System.Windows.Forms.CheckBox
-$showPassword.Text = "Mostrar"
-$showPassword.ForeColor = [System.Drawing.Color]::White
-$showPassword.Location = New-Object System.Drawing.Point(395,212)
-$showPassword.AutoSize = $true
-$showPassword.Add_CheckedChanged({
-    $password.UseSystemPasswordChar = -not $showPassword.Checked
-})
-$form.Controls.Add($showPassword)
+$pairingHelp = New-Object System.Windows.Forms.Label
+$pairingHelp.Text = "Na Web do Filamap, abra " + [char]0x201C + "Computadores conectados" + [char]0x201D + " e clique em " + [char]0x201C + "Conectar computador" + [char]0x201D + ". O código vale por 10 minutos. Sua senha não é pedida aqui."
+$pairingHelp.ForeColor = [System.Drawing.Color]::LightGray
+$pairingHelp.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$pairingHelp.Location = New-Object System.Drawing.Point(35,185)
+$pairingHelp.Size = New-Object System.Drawing.Size(430,60)
+$form.Controls.Add($pairingHelp)
 
 $printerGroup = New-Object System.Windows.Forms.GroupBox
 $printerGroup.Text = "Impressora Bambu Lab"
@@ -131,17 +122,9 @@ $button.FlatStyle = "Flat"
 
 $button.Add_Click({
 
-    if ([string]::IsNullOrWhiteSpace($email.Text)) {
+    if ([string]::IsNullOrWhiteSpace($pairing.Text)) {
         [System.Windows.Forms.MessageBox]::Show(
-            "Informe o e-mail da sua conta Filamap.",
-            "Filamap"
-        )
-        return
-    }
-
-    if ([string]::IsNullOrWhiteSpace($password.Text)) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "Informe a senha da sua conta Filamap.",
+            "Informe o código de pareamento gerado na Web do Filamap.",
             "Filamap"
         )
         return
@@ -156,8 +139,7 @@ $button.Add_Click({
     }
 
     $result = @{
-        email = $email.Text.Trim()
-        password = $password.Text
+        pairingCode = $pairing.Text.Trim()
         accessCode = $access.Text.Trim()
     }
 
@@ -398,7 +380,7 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
     });
   });
 }
-function runWindowsPasswordGui(): Promise<string> {
+function runWindowsPairingCodeGui(): Promise<string> {
   return new Promise((resolve, reject) => {
     const script = String.raw`
 Add-Type -AssemblyName System.Windows.Forms
@@ -418,7 +400,7 @@ $form.ShowInTaskbar = $true
 $form.TopMost = $true
 
 $title = New-Object System.Windows.Forms.Label
-$title.Text = "Entre novamente no Filamap"
+$title.Text = "Conecte este computador"
 $title.Font = New-Object System.Drawing.Font("Segoe UI",16,[System.Drawing.FontStyle]::Bold)
 $title.ForeColor = [System.Drawing.Color]::White
 $title.AutoSize = $true
@@ -426,7 +408,7 @@ $title.Location = New-Object System.Drawing.Point(30,25)
 $form.Controls.Add($title)
 
 $info = New-Object System.Windows.Forms.Label
-$info.Text = "Sua sessão expirou. Informe sua senha para continuar."
+$info.Text = "O acesso deste computador expirou ou foi desconectado." + [Environment]::NewLine + "Gere um código em 'Computadores conectados' na Web do Filamap."
 $info.Font = New-Object System.Drawing.Font("Segoe UI",10)
 $info.ForeColor = [System.Drawing.Color]::LightGray
 $info.AutoSize = $true
@@ -434,7 +416,7 @@ $info.Location = New-Object System.Drawing.Point(33,70)
 $form.Controls.Add($info)
 
 $label = New-Object System.Windows.Forms.Label
-$label.Text = "Senha"
+$label.Text = "Código de pareamento"
 $label.Font = New-Object System.Drawing.Font("Segoe UI",10)
 $label.ForeColor = [System.Drawing.Color]::White
 $label.AutoSize = $true
@@ -443,20 +425,11 @@ $form.Controls.Add($label)
 
 $password = New-Object System.Windows.Forms.TextBox
 $password.Location = New-Object System.Drawing.Point(35,140)
-$password.Size = New-Object System.Drawing.Size(340,30)
-$password.Font = New-Object System.Drawing.Font("Segoe UI",11)
-$password.UseSystemPasswordChar = $true
+$password.Size = New-Object System.Drawing.Size(410,30)
+$password.Font = New-Object System.Drawing.Font("Consolas",14)
+$password.CharacterCasing = "Upper"
+$password.MaxLength = 13
 $form.Controls.Add($password)
-
-$showPassword = New-Object System.Windows.Forms.CheckBox
-$showPassword.Text = "Mostrar"
-$showPassword.ForeColor = [System.Drawing.Color]::White
-$showPassword.Location = New-Object System.Drawing.Point(385,142)
-$showPassword.AutoSize = $true
-$showPassword.Add_CheckedChanged({
-    $password.UseSystemPasswordChar = -not $showPassword.Checked
-})
-$form.Controls.Add($showPassword)
 
 $button = New-Object System.Windows.Forms.Button
 $button.Text = "CONTINUAR"
@@ -470,7 +443,7 @@ $button.FlatStyle = "Flat"
 $button.Add_Click({
     if ([string]::IsNullOrWhiteSpace($password.Text)) {
         [System.Windows.Forms.MessageBox]::Show(
-            "Informe sua senha.",
+            "Informe o código de pareamento.",
             "Filamap"
         )
         $password.Focus()
@@ -478,7 +451,7 @@ $button.Add_Click({
     }
 
     $json = $password.Text | ConvertTo-Json -Compress
-    [Console]::Out.WriteLine("FILAMAP_PASSWORD:" + $json)
+    [Console]::Out.WriteLine("FILAMAP_PAIRING:" + $json)
 
     $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.Close()
@@ -530,7 +503,7 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
     ps.on("error", reject);
 
     ps.on("close", () => {
-      const marker = "FILAMAP_PASSWORD:";
+      const marker = "FILAMAP_PAIRING:";
 
       const line = stdout
         .split(/\r?\n/)
@@ -540,27 +513,27 @@ if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
         reject(
           new Error(
             stderr.trim() ||
-              "Login do Filamap foi cancelado."
+              "Pareamento do Filamap foi cancelado."
           )
         );
         return;
       }
 
       try {
-        const password = JSON.parse(
+        const code = JSON.parse(
           line.slice(marker.length)
         ) as string;
 
-        if (!password) {
-          reject(new Error("Senha é obrigatória."));
+        if (!code) {
+          reject(new Error("Código de pareamento é obrigatório."));
           return;
         }
 
-        resolve(password);
+        resolve(code);
       } catch {
         reject(
           new Error(
-            "Não foi possível interpretar a senha informada."
+            "Não foi possível interpretar o código informado."
           )
         );
       }
@@ -582,17 +555,24 @@ export function createGuiPrompts(): OnboardingPrompts {
       console.log(message);
     },
 
-    async askEmail() {
-      const result = await ensureGuiResult();
-      return result.email;
+    prepare(missing: MissingField[]) {
+      needsFullForm = missing.includes("printerAccessCode");
     },
 
-    async askPassword() {
-      if (cachedResult) {
-        return cachedResult.password;
+    // E-mail não é mais perguntado na tela (o pareamento identifica a
+    // conta); só existe para o modo dev com senha no .env.
+    async askEmail() {
+      return "";
+    },
+
+    // Primeira execução: vem do formulário completo. Sessão perdida depois
+    // (computador desconectado na Web): diálogo só com o código.
+    async askPairingCode() {
+      if (cachedResult || needsFullForm) {
+        return (await ensureGuiResult()).pairingCode;
       }
 
-      return runWindowsPasswordGui();
+      return runWindowsPairingCodeGui();
     },
 
     async askPrinterSerial() {
@@ -614,5 +594,6 @@ export function createGuiPrompts(): OnboardingPrompts {
 
 export function resetGuiPrompts(): void {
   cachedResult = null;
+  needsFullForm = false;
 }
 

@@ -6,6 +6,7 @@ import {
 } from "@supabase/supabase-js";
 import { AuthStrategy, persistSessionSecrets } from "./onboarding";
 import { SecretStore } from "./secretStore";
+import { PairingError, PairingResult } from "./devicePairing";
 
 export interface AuthenticateSessionOptions {
   supabase: SupabaseClient;
@@ -16,6 +17,9 @@ export interface AuthenticateSessionOptions {
   getPrinterAccessCode?: () => string;
   secretStore: SecretStore;
   promptLogin?: () => Promise<AuthStrategy>;
+  // Troca código de pareamento por sessão própria do computador
+  // (devicePairing.pairAgentDevice já ligado a URL/anon key).
+  pairDevice?: (code: string) => Promise<PairingResult>;
   maxTransitoryRetries?: number;
   retryDelayMs?: (attempt: number) => number;
   sleep?: (ms: number) => Promise<void>;
@@ -26,7 +30,9 @@ export interface AuthenticateSessionOptions {
 export interface AuthenticatedSessionResult {
   session: Session;
   userId: string;
-  source: "refresh_token" | "password";
+  source: "refresh_token" | "password" | "pairing";
+  // Preenchido no pareamento (o usuário não digita mais o e-mail).
+  email?: string;
 }
 
 /**
@@ -205,7 +211,46 @@ export async function authenticateAgentSession(
     }
   }
 
-  // 2. Caminho de autenticação por e-mail/senha
+  // 2. Caminho de produção: código de pareamento -> sessão própria deste
+  //    computador. Código errado/expirado pergunta de novo (até 5 vezes).
+  if (currentAuth.type === "pairing_code") {
+    const accessCodeToUse = options.getPrinterAccessCode ? options.getPrinterAccessCode() : printerAccessCode;
+    for (let tries = 1; currentAuth.type === "pairing_code"; tries++) {
+      if (!options.pairDevice) {
+        throw new Error("Pareamento de computador indisponível nesta build.");
+      }
+      try {
+        const paired = await options.pairDevice(currentAuth.code);
+        const { data, error } = await supabase.auth.setSession({
+          access_token: paired.accessToken,
+          refresh_token: paired.refreshToken,
+        });
+        if (error || !data.session) {
+          throw error || new Error("Sessão devolvida pelo pareamento é inválida.");
+        }
+        await persistSessionSecrets(
+          secretStore,
+          data.session.refresh_token ?? paired.refreshToken,
+          accessCodeToUse
+        );
+        logInfo("✅ Computador pareado com a conta Filamap. Sessão própria deste computador salva.");
+        return {
+          session: data.session,
+          userId: data.session.user.id,
+          source: "pairing",
+          email: paired.email || data.session.user.email,
+        };
+      } catch (e) {
+        const retryable =
+          e instanceof PairingError && (e.kind === "invalid_code" || e.kind === "invalid_format");
+        if (!retryable || !options.promptLogin || tries >= 5) throw e;
+        logWarn(`⚠️ ${(e as Error).message}`);
+        currentAuth = await options.promptLogin();
+      }
+    }
+  }
+
+  // 3. Caminho de autenticação por e-mail/senha (modo dev/CI via .env)
   if (currentAuth.type === "password") {
     const emailToUse = options.getAgentEmail ? options.getAgentEmail() : agentEmail;
     const accessCodeToUse = options.getPrinterAccessCode ? options.getPrinterAccessCode() : printerAccessCode;

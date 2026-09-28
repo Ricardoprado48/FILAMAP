@@ -48,7 +48,7 @@ class FakePrompts implements OnboardingPrompts {
   constructor(
     private answers: {
       email?: string;
-      password?: string;
+      pairingCode?: string;
       serial?: string;
       accessCode?: string;
     } = {}
@@ -63,9 +63,9 @@ class FakePrompts implements OnboardingPrompts {
     return this.answers.email ?? "";
   }
 
-  async askPassword(): Promise<string> {
-    this.calls.push("askPassword");
-    return this.answers.password ?? "";
+  async askPairingCode(): Promise<string> {
+    this.calls.push("askPairingCode");
+    return this.answers.pairingCode ?? "";
   }
 
   async askPrinterSerial(): Promise<string> {
@@ -204,7 +204,8 @@ test("resolveAgentRuntimeConfig: sem terminal interativo e config incompleta aci
     /CANNOT_PROMPT/
   );
 
-  assert.ok(prompts.cannotPromptCalledWith?.includes("agentEmail"));
+  assert.ok(prompts.cannotPromptCalledWith?.includes("agentAuth"));
+  assert.ok(!prompts.cannotPromptCalledWith?.includes("agentEmail"), "pareamento não exige e-mail");
   assert.ok(prompts.cannotPromptCalledWith?.includes("printerAccessCode"));
 });
 
@@ -217,8 +218,7 @@ test("resolveAgentRuntimeConfig: rejeita serial vazio quando descoberta automát
   });
 
   const prompts = new FakePrompts({
-    email: "user@test.com",
-    password: "senha",
+    pairingCode: "ABCDE-FGHJK",
     serial: "   ",
     accessCode: "12345678",
   });
@@ -273,7 +273,7 @@ test("resolveAgentRuntimeConfig: SecretStore que não persiste avisa e segue mes
     { supabaseRefreshToken: null, printerAccessCode: null },
     /* persists */ false
   );
-  const prompts = new FakePrompts({ password: "senha-temp", accessCode: "11112222" });
+  const prompts = new FakePrompts({ pairingCode: "ABCDE-FGHJK", accessCode: "11112222" });
   const discovery = fakeDiscovery({ ip: "", serial: "" });
 
   const result = await resolveAgentRuntimeConfig(secretStore, prompts, {
@@ -282,8 +282,44 @@ test("resolveAgentRuntimeConfig: SecretStore que não persiste avisa e segue mes
     discovery,
   });
 
-  assert.deepEqual(result.auth, { type: "password", password: "senha-temp" });
+  assert.deepEqual(result.auth, { type: "pairing_code", code: "ABCDE-FGHJK" });
   assert.equal(result.printerAccessCode, "11112222");
   assert.equal(secretStore.saved.length, 0);
   assert.ok(prompts.notifications.some((n) => n.includes("não será lembrado")));
+});
+
+test("resolveAgentRuntimeConfig: primeira execução sem sessão pede só código de pareamento e Access Code (sem e-mail/senha)", async (t) => {
+  useTempConfigDir(t);
+
+  const secretStore = new FakeSecretStore({ supabaseRefreshToken: null, printerAccessCode: null });
+  const prompts = new FakePrompts({ pairingCode: "abcde-fghjk", accessCode: "12345678" });
+  const discovery = fakeDiscovery({ ip: "192.168.1.50", serial: "01P00A000000009" });
+
+  const result = await resolveAgentRuntimeConfig(secretStore, prompts, {
+    env: {} as NodeJS.ProcessEnv,
+    isTTY: true,
+    discovery,
+  });
+
+  assert.deepEqual(result.auth, { type: "pairing_code", code: "abcde-fghjk" });
+  assert.deepEqual(prompts.calls, ["askPairingCode", "askPrinterAccessCode"]);
+});
+
+test("computeMissingFields: e-mail só é exigido no login por senha do .env", () => {
+  const base = {
+    nonSecret: {
+      formatVersion: 1 as const,
+      agentEmail: "",
+      printerSerial: "01P00A0",
+      lastKnownPrinterIp: "",
+      onboardingCompletedAt: null,
+      updatedAt: "",
+    },
+    secrets: { supabaseRefreshToken: "rt-1", printerAccessCode: "12345678" },
+  };
+  assert.deepEqual(computeMissingFields({ ...base, env: readEnvOverrides({} as NodeJS.ProcessEnv) }), []);
+  assert.deepEqual(
+    computeMissingFields({ ...base, env: readEnvOverrides({ AGENT_PASSWORD: "pw" } as NodeJS.ProcessEnv) }),
+    ["agentEmail"]
+  );
 });

@@ -7,6 +7,7 @@ import {
   isTokenRevokedAuthError,
 } from "./sessionManager";
 import { AgentSecrets, SecretStore } from "./secretStore";
+import { PairingError } from "./devicePairing";
 
 class MemorySecretStore implements SecretStore {
   readonly kind = "memory";
@@ -491,3 +492,89 @@ test("I: token revogado -> promptLogin fornece nova senha -> cliente autentica e
   assert.equal(secrets.printerAccessCode, "NEW_ACCESS_CODE");
 });
 
+
+test("P1: código de pareamento válido -> sessão própria do computador, refresh salvo, e-mail vindo do servidor", async () => {
+  const secretStore = new MemorySecretStore({ supabaseRefreshToken: null, printerAccessCode: "ACCESS123" });
+  const setSessionCalls: any[] = [];
+  const fakeSupabase = {
+    auth: {
+      setSession: async (tokens: any) => {
+        setSessionCalls.push(tokens);
+        return { data: { session: { refresh_token: tokens.refresh_token, user: { id: "user-789", email: "u@x.com" } } }, error: null };
+      },
+      signInWithPassword: async () => { throw new Error("não deve usar senha"); },
+    },
+  } as unknown as SupabaseClient;
+
+  const result = await authenticateAgentSession({
+    supabase: fakeSupabase,
+    auth: { type: "pairing_code", code: "ABCDE-FGHJK" },
+    agentEmail: "",
+    printerAccessCode: "ACCESS123",
+    secretStore,
+    pairDevice: async (code) => {
+      assert.equal(code, "ABCDE-FGHJK");
+      return { deviceId: "d1", userId: "user-789", email: "u@x.com", accessToken: "at", refreshToken: "rt-device" };
+    },
+    logInfo: () => {},
+  });
+
+  assert.equal(result.source, "pairing");
+  assert.equal(result.userId, "user-789");
+  assert.equal(result.email, "u@x.com");
+  assert.deepEqual(setSessionCalls, [{ access_token: "at", refresh_token: "rt-device" }]);
+  const saved = await secretStore.load();
+  assert.equal(saved.supabaseRefreshToken, "rt-device");
+  assert.equal(saved.printerAccessCode, "ACCESS123");
+});
+
+test("P2: código errado pergunta de novo; código certo na segunda tentativa entra", async () => {
+
+  const secretStore = new MemorySecretStore({ supabaseRefreshToken: null, printerAccessCode: "ACCESS123" });
+  const fakeSupabase = {
+    auth: {
+      setSession: async (tokens: any) => ({ data: { session: { refresh_token: tokens.refresh_token, user: { id: "u1" } } }, error: null }),
+    },
+  } as unknown as SupabaseClient;
+  const codes: string[] = [];
+  let prompts = 0;
+
+  const result = await authenticateAgentSession({
+    supabase: fakeSupabase,
+    auth: { type: "pairing_code", code: "ERRAD-OOOOO" },
+    agentEmail: "",
+    printerAccessCode: "ACCESS123",
+    secretStore,
+    pairDevice: async (code) => {
+      codes.push(code);
+      if (code !== "CERTO-22222") throw new PairingError("invalid_code", "Código inválido");
+      return { deviceId: "d1", userId: "u1", email: "", accessToken: "at", refreshToken: "rt-ok" };
+    },
+    promptLogin: async () => { prompts++; return { type: "pairing_code", code: "CERTO-22222" }; },
+    logInfo: () => {},
+    logWarn: () => {},
+  });
+
+  assert.equal(result.userId, "u1");
+  assert.equal(prompts, 1);
+  assert.deepEqual(codes, ["ERRAD-OOOOO", "CERTO-22222"]);
+});
+
+test("P3: falha de rede no pareamento NÃO reabre o diálogo (propaga para o chamador)", async () => {
+
+  let prompts = 0;
+  await assert.rejects(
+    () =>
+      authenticateAgentSession({
+        supabase: { auth: {} } as unknown as SupabaseClient,
+        auth: { type: "pairing_code", code: "ABCDE-FGHJK" },
+        agentEmail: "",
+        printerAccessCode: "",
+        secretStore: new MemorySecretStore(),
+        pairDevice: async () => { throw new PairingError("network", "Sem conexão"); },
+        promptLogin: async () => { prompts++; return { type: "pairing_code", code: "X" }; },
+      }),
+    /Sem conexão/
+  );
+  assert.equal(prompts, 0);
+});

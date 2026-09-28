@@ -49,7 +49,9 @@ import {
   unlinkSpoolNfc,
   updateSpoolLocation,
   createSpool,
+  assignSpoolToSlot,
 } from "./services/spoolService";
+import { SlotSpoolPicker } from "./components/SlotSpoolPicker";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -58,6 +60,9 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "calc" | "writer">("ams");
+  // Slot do AMS com a lista "escolher do estoque" aberta (sem tag NFC).
+  const [pickingSlot, setPickingSlot] = useState<number | null>(null);
+  const [savingSlotPick, setSavingSlotPick] = useState(false);
   const [calcSubTab, setCalcSubTab] = useState<"catalog" | "calculator">("catalog");
   const [catalogViewMode, setCatalogViewMode] = useState<"list" | "grid">("list");
 
@@ -454,9 +459,7 @@ export default function App() {
       isNewSpool = true;
     }
     if (spool) {
-      await supabase.from("ams_slots").upsert({
-        printer_id: printers[0].id, slot_index: slotIdx, spool_id: spool.id, updated_at: new Date().toISOString(),
-      }, { onConflict: "printer_id,slot_index" });
+      await assignSpoolToSlot(printers[0].id, slotIdx, spool.id);
       setNfcUid(null);
       await loadData();
       // Tag desconhecida: o carretel foi criado com placeholders (marca/material/cor/
@@ -466,6 +469,22 @@ export default function App() {
         openEditModal(spool);
       }
     }
+  }
+
+  // Escolha pela lista do estoque: mesmo efeito da tag NFC, sem precisar dela.
+  async function handlePickSpoolForSlot(spool: Spool) {
+    if (pickingSlot === null || printers.length === 0) return;
+    const slotIdx = pickingSlot;
+    setSavingSlotPick(true);
+    const { error } = await assignSpoolToSlot(printers[0].id, slotIdx, spool.id);
+    setSavingSlotPick(false);
+    if (error) {
+      alert("Não foi possível colocar o carretel no slot: " + error.message);
+      return;
+    }
+    setPickingSlot(null);
+    await loadData();
+    setFeedbackMsg(`✅ "${getSpoolDisplayName(spool)}" agora está no slot ${slotIdx + 1}.`);
   }
 
   async function handleEjectSlot(e: React.MouseEvent, slotIdx: number) {
@@ -961,6 +980,17 @@ export default function App() {
         </div>
       </header>
 
+      {pickingSlot !== null && (
+        <SlotSpoolPicker
+          slotIndex={pickingSlot}
+          inventory={inventory}
+          activeSlots={activeSlots}
+          saving={savingSlotPick}
+          onPick={handlePickSpoolForSlot}
+          onClose={() => setPickingSlot(null)}
+        />
+      )}
+
       {feedbackMsg && (
         <div style={{ marginBottom: 16, padding: 10, background: "rgba(52, 211, 153, 0.12)", border: "1px solid #059669", borderRadius: 8, color: "#34d399", fontSize: 13, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
           <span>{feedbackMsg}</span>
@@ -1032,7 +1062,10 @@ export default function App() {
                         <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</div>
                         <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.material}</div>
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
-                        <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ marginTop: 8, width: "100%", padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
+                        <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+                          <button onClick={() => setPickingSlot(slotIdx)} style={{ flex: 1, padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>🔄 Trocar</button>
+                          <button onClick={(e) => handleEjectSlot(e, slotIdx)} style={{ flex: 1, padding: 3, background: "#334155", color: "#cbd5e1", border: "none", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>⏏️ Ejetar</button>
+                        </div>
                       </div>
                     ) : isScanningThisSlot ? (
                       <div style={{ marginTop: 6 }}>
@@ -1056,6 +1089,9 @@ export default function App() {
                           <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>Aproximar tag NFC</div>
                           <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>Toque para ler</div>
                         </div>
+                        <button onClick={() => setPickingSlot(slotIdx)} style={{ width: "100%", padding: "5px 4px", background: "#1e293b", color: "#38bdf8", border: "1px solid #334155", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                          📋 Escolher do estoque
+                        </button>
                       </div>
                     )}
                   </div>

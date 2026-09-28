@@ -435,3 +435,114 @@ test("syncAmsProjection: idempotência e persistência no banco simulado", async
   assert.equal(updatedSpools[0].payload.bambu_in_printer, true);
   assert.equal(updatedSpools[0].payload.bambu_slot_id, "2");
 });
+
+// ---------------------------------------------------------------------------
+// Escolha manual na Web (assigned_by = 'user')
+// ---------------------------------------------------------------------------
+
+const EMPTY_TRAY = (slotIndex: number) => ({ slotIndex, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null });
+const PETG_TRAY = { slotIndex: 0, occupied: true, trayType: "PETG", trayColorHex: "#FFFFFF", tagUid: "0000000000000000", trayInfoIdx: null, traySubBrands: null };
+
+function spool(id: string, material: string, extra: Partial<ReconcileAmsInputSpool> = {}): ReconcileAmsInputSpool {
+  return {
+    id, brand: "X", material, color_name: id, color_hex: null, nfc_uid: null,
+    bambu_spool_id: null, bambu_dev_id: null, bambu_slot_id: null, bambu_in_printer: false, ...extra,
+  };
+}
+
+test("reconcileAmsState: escolha do usuário na Web vence a nuvem Bambu", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PETG_TRAY, EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("escolhido", "PETG"),
+      spool("nuvem-diz", "PETG", { bambu_dev_id: "P1", bambu_slot_id: "0", bambu_in_printer: true }),
+    ],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido", assigned_by: "user" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "escolhido");
+});
+
+test("reconcileAmsState: sem marca 'user' (vínculo antigo/automático) a nuvem continua valendo", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PETG_TRAY, EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("anterior", "PETG"),
+      spool("nuvem-diz", "PETG", { bambu_dev_id: "P1", bambu_slot_id: "0", bambu_in_printer: true }),
+    ],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "anterior", assigned_by: "agent" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "nuvem-diz");
+});
+
+test("reconcileAmsState: RFID Bambu (prova física) vence a escolha do usuário", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [{ ...PETG_TRAY, tagUid: "AABBCCDDEEFF0011" }, EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [spool("escolhido", "PETG"), spool("com-rfid", "PETG", { bambu_source_metadata: { rfid: "AABBCCDDEEFF0011" } })],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido", assigned_by: "user" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "com-rfid");
+});
+
+test("reconcileAmsState: material no AMS mudou -> escolha do usuário cai e é registrada como conflito", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PETG_TRAY, EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [spool("escolhido-pla", "PLA")],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido-pla", assigned_by: "user" }],
+  });
+  assert.equal(result.slotAssignments.get(0), null);
+  assert.ok(result.conflicts.some((c) => c.description.includes("Escolha descartada")));
+});
+
+test("reconcileAmsState: slot esvaziado fisicamente limpa a escolha do usuário", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [EMPTY_TRAY(0), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [spool("escolhido", "PETG")],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido", assigned_by: "user" }],
+  });
+  assert.equal(result.slotAssignments.get(0), null);
+});
+
+test("syncAmsProjection: banco sem a coluna assigned_by (antes da migration) continua funcionando", async () => {
+  const upserts: any[] = [];
+  const selects: string[] = [];
+  const missing = { code: "42703", message: "column ams_slots.assigned_by does not exist" };
+  const mockSupabase: any = {
+    from(table: string) {
+      if (table === "ams_slots") {
+        return {
+          select(cols: string) {
+            selects.push(cols);
+            return {
+              eq() {
+                if (cols.includes("assigned_by")) return Promise.resolve({ data: null, error: missing });
+                return Promise.resolve({ data: [], error: null });
+              },
+            };
+          },
+          upsert(record: any) {
+            upserts.push(record);
+            return Promise.resolve({ error: "assigned_by" in record ? { code: "PGRST204", message: "Could not find the 'assigned_at' column" } : null });
+          },
+        };
+      }
+      return {
+        select() { return Promise.resolve({ data: [spool("s1", "PETG")], error: null }); },
+        update() { return { eq() { return Promise.resolve({ error: null }); } }; },
+      };
+    },
+  };
+  const payload = { print: { ams: { ams: [{ id: "0", tray: [{ id: "0", tray_type: "PETG", tray_color: "FFFFFFFF", tag_uid: "0000000000000000" }, { id: "1" }, { id: "2" }, { id: "3" }] }], tray_exist_bits: "1" } } };
+
+  const counts = await syncAmsProjection(mockSupabase, "printer-1", "P1", payload);
+  assert.equal(counts.slotsUpdated, 4);
+  assert.deepEqual(selects, ["slot_index, spool_id, assigned_by", "slot_index, spool_id"]);
+  const slot0 = upserts.filter((u) => u.slot_index === 0);
+  assert.equal(slot0.length, 2, "tenta com assigned_by e repete sem");
+  assert.equal(slot0[1].spool_id, "s1");
+  assert.ok(!("assigned_by" in slot0[1]));
+});

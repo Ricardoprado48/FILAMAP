@@ -28,6 +28,9 @@ export interface ReconcileAmsInputSpool {
 export interface ReconcileAmsInputAmsSlot {
   slot_index: number;
   spool_id: string | null;
+  // 'user' = escolhido na Web (tag NFC ou lista do estoque); 'agent' = esta
+  // projeção. Ausente em bancos sem a migration 20260929010000.
+  assigned_by?: string | null;
 }
 
 export interface AmsReconciliationInput {
@@ -182,8 +185,10 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
   const assignedSpoolIds = new Set<string>();
 
   const currentAmsMap = new Map<number, string | null>();
+  const userChosenSlots = new Set<number>();
   for (const s of currentAmsSlots) {
     currentAmsMap.set(s.slot_index, s.spool_id);
+    if (s.assigned_by === "user" && s.spool_id) userChosenSlots.add(s.slot_index);
   }
 
   for (let slotIdx = 0; slotIdx < 4; slotIdx++) {
@@ -207,6 +212,22 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
       });
       if (rfidCandidate) {
         matchedSpool = rfidCandidate;
+      }
+    }
+
+    // Prioridade 1b: escolha explícita do usuário na Web (tag ou lista do
+    // estoque). Vale mais que a nuvem Bambu (que costuma ficar desatualizada);
+    // só cai se o material no AMS mudou -- aí o carretel foi trocado.
+    if (!matchedSpool && userChosenSlots.has(slotIdx)) {
+      const chosenId = currentAmsMap.get(slotIdx);
+      const chosen = spools.find((s) => s.id === chosenId && !assignedSpoolIds.has(s.id));
+      if (chosen && isMaterialCompatible(chosen.material, tray.trayType)) {
+        matchedSpool = chosen;
+      } else if (chosen) {
+        conflicts.push({
+          slotIndex: slotIdx,
+          description: `Carretel escolhido na Web ("${chosen.color_name}", ${chosen.material}) não bate com o material que o AMS reporta (${tray.trayType}). Escolha descartada: o carretel foi trocado.`,
+        });
       }
     }
 
@@ -339,6 +360,12 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
   };
 }
 
+// Banco ainda sem a migration 20260929010000 (colunas assigned_by/assigned_at).
+export function isMissingAssignedByColumn(error: any): boolean {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`;
+  return /42703|PGRST204/.test(text) && /assigned_(by|at)/.test(text);
+}
+
 /**
  * Executa a projeção AMS contra o Supabase de forma totalmente idempotente.
  */
@@ -353,12 +380,24 @@ export async function syncAmsProjection(
     return { slotsUpdated: 0, spoolsUpdated: 0, conflictsCount: 0 };
   }
 
-  // 1. Busca ams_slots atuais
-  const { data: currentSlotsData, error: slotErr } = await supabase
-    .from("ams_slots")
-    .select("slot_index, spool_id")
-    .eq("printer_id", printerId);
-  if (slotErr) throw slotErr;
+  // 1. Busca ams_slots atuais (com quem decidiu o vínculo, se o banco já
+  //    tiver a coluna -- senão segue como antes).
+  let currentSlotsData: any[] | null = null;
+  {
+    const withSource = await supabase
+      .from("ams_slots")
+      .select("slot_index, spool_id, assigned_by")
+      .eq("printer_id", printerId);
+    if (withSource.error && isMissingAssignedByColumn(withSource.error)) {
+      const legacy = await supabase.from("ams_slots").select("slot_index, spool_id").eq("printer_id", printerId);
+      if (legacy.error) throw legacy.error;
+      currentSlotsData = legacy.data;
+    } else if (withSource.error) {
+      throw withSource.error;
+    } else {
+      currentSlotsData = withSource.data;
+    }
+  }
 
   // 2. Busca todos os carretéis do usuário
   const { data: spoolsData, error: spoolErr } = await supabase
@@ -385,15 +424,14 @@ export async function syncAmsProjection(
     const currentSpoolId = existingSlotMap.get(slotIdx) ?? null;
 
     if (targetSpoolId !== currentSpoolId || !existingSlotMap.has(slotIdx)) {
-      const { error: upsertErr } = await supabase.from("ams_slots").upsert(
-        {
-          printer_id: printerId,
-          slot_index: slotIdx,
-          spool_id: targetSpoolId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "printer_id,slot_index" }
-      );
+      const nowIso = new Date().toISOString();
+      const row = { printer_id: printerId, slot_index: slotIdx, spool_id: targetSpoolId, updated_at: nowIso };
+      let { error: upsertErr } = await supabase
+        .from("ams_slots")
+        .upsert({ ...row, assigned_by: "agent", assigned_at: nowIso }, { onConflict: "printer_id,slot_index" });
+      if (upsertErr && isMissingAssignedByColumn(upsertErr)) {
+        ({ error: upsertErr } = await supabase.from("ams_slots").upsert(row, { onConflict: "printer_id,slot_index" }));
+      }
       if (upsertErr) throw upsertErr;
       slotsUpdated++;
     }

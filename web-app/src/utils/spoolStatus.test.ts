@@ -9,7 +9,12 @@ import {
   suggestInitialWeightFromBambu,
   findConflictingSpool,
   buildNfcLinkUpdate,
+  validateSpotAssignment,
+  buildLocationUpdate,
+  buildUnlinkNfcUpdate,
+  parseProfileToSpoolForm,
 } from "./spoolStatus";
+import type { UserFilamentProfile } from "../types";
 
 function makeSpool(overrides: Partial<Spool> = {}): Spool {
   return {
@@ -189,3 +194,113 @@ describe("buildNfcLinkUpdate", () => {
     expect(buildNfcLinkUpdate("TAG-1")).toEqual({ nfc_uid: "TAG-1" });
   });
 });
+
+describe("validateSpotAssignment", () => {
+  it("retorna isOccupied: false para spot vazio, nulo ou indefinido", () => {
+    const spools = [makeSpool({ id: "s1", location: "Prateleira A1" })];
+    expect(validateSpotAssignment(spools, null, "")).toEqual({ isOccupied: false });
+    expect(validateSpotAssignment(spools, null, "   ")).toEqual({ isOccupied: false });
+    expect(validateSpotAssignment(spools, null, null)).toEqual({ isOccupied: false });
+    expect(validateSpotAssignment(spools, null, undefined)).toEqual({ isOccupied: false });
+  });
+
+  it("retorna isOccupied: false quando o spot está livre", () => {
+    const spools = [makeSpool({ id: "s1", location: "Prateleira A1" })];
+    expect(validateSpotAssignment(spools, null, "Prateleira A2")).toEqual({ isOccupied: false });
+  });
+
+  it("retorna isOccupied: true e o spool ocupante quando outro carretel já usa o spot (case-insensitive)", () => {
+    const s1 = makeSpool({ id: "s1", location: "Prateleira A1", color_name: "Preto" });
+    const spools = [s1];
+    const res = validateSpotAssignment(spools, null, "prateleira a1");
+    expect(res.isOccupied).toBe(true);
+    expect(res.occupyingSpool?.id).toBe("s1");
+  });
+
+  it("não considera conflito se o carretel que já ocupa o spot for o próprio sendo editado", () => {
+    const s1 = makeSpool({ id: "s1", location: "Prateleira A1" });
+    const spools = [s1];
+    expect(validateSpotAssignment(spools, "s1", "Prateleira A1")).toEqual({ isOccupied: false });
+  });
+});
+
+describe("buildLocationUpdate", () => {
+  it("retorna o spot com trim quando preenchido", () => {
+    expect(buildLocationUpdate("  Gaveta 2  ")).toEqual({ location: "Gaveta 2" });
+  });
+
+  it("retorna null para string vazia, whitespace ou null", () => {
+    expect(buildLocationUpdate("")).toEqual({ location: null });
+    expect(buildLocationUpdate("   ")).toEqual({ location: null });
+    expect(buildLocationUpdate(null)).toEqual({ location: null });
+    expect(buildLocationUpdate(undefined)).toEqual({ location: null });
+  });
+});
+
+describe("buildUnlinkNfcUpdate", () => {
+  it("define nfc_uid e nfc_written_at como null preservando todo o resto", () => {
+    const payload = buildUnlinkNfcUpdate();
+    expect(payload).toEqual({
+      nfc_uid: null,
+      nfc_written_at: null,
+    });
+    // Garante que não inclui peso, localização nem campos bambu
+    const keys = Object.keys(payload);
+    expect(keys).not.toContain("current_weight");
+    expect(keys).not.toContain("location");
+    expect(keys).not.toContain("bambu_spool_id");
+  });
+});
+
+describe("parseProfileToSpoolForm", () => {
+  it("extrai dados de formulário a partir de um UserFilamentProfile", () => {
+    const profile: UserFilamentProfile = {
+      id: "prof-1",
+      user_id: "user-1",
+      source: "bambu_studio",
+      source_key: "P6337f36",
+      source_profile_name: "My Custom PLA",
+      display_name: "PLA BRANCO ULTRA SILK VIDA BUENAS",
+      material: "PLA",
+      brand: "VIDA BUENAS",
+      source_metadata: {
+        filament_vendor: "VIDA BUENAS",
+        default_filament_colour: "#F5F5F5",
+        filament_density: "1.24",
+      },
+    };
+
+    const form = parseProfileToSpoolForm(profile);
+    expect(form).toEqual({
+      brand: "VIDA BUENAS",
+      material: "PLA",
+      color_name: "PLA BRANCO ULTRA SILK VIDA BUENAS",
+      color_hex: "#F5F5F5",
+      density: 1.24,
+      filament_profile_id: "P6337f36",
+      suggestedTare: 200,
+    });
+  });
+
+  it("trata defaults com robustez quando metadata é parcial", () => {
+    const profile: UserFilamentProfile = {
+      id: "prof-2",
+      user_id: "user-1",
+      source: "bambu_studio",
+      source_key: "P12345",
+      source_profile_name: "Generic PLA",
+      display_name: "Generic PLA",
+      material: "PETG",
+      source_metadata: {},
+    };
+
+    const form = parseProfileToSpoolForm(profile);
+    expect(form.brand).toBe("Genérico");
+    expect(form.material).toBe("PETG");
+    expect(form.color_name).toBe("Generic PLA");
+    expect(form.color_hex).toBe("#FFFFFF");
+    expect(form.density).toBeUndefined();
+    expect(form.filament_profile_id).toBe("P12345");
+  });
+});
+

@@ -2157,3 +2157,26 @@ válida como próximo passo, mas ainda não foi implementada.
 # 61. Princípio Orientador
 
 > **O utilizador administra a produção. O Filamap administra o filamento.**
+
+---
+
+# 62. Estado Real e Snapshot Operacional Consolidado (27/09/2026)
+
+## 62.1 Homologação Operacional do Núcleo Multicolor (Fase H)
+- **Status MQTT:** Estável em canal exclusivo `device/${PRINTER_SERIAL}/report` (sem `/request` na subscrição para evitar encerramento pela controladora Bambu).
+- **Mapeamento Multicolor:** Mapeamento `ams_mapping` capturado determinística e atomicamente via payload MQTT `/report`. Teste físico live multicolor homologado com 3 cores (`Preto Velvet`, `Vermelho Ultra Silk`, `Branco PETG`), acompanhamento correto de `tray_now` em tempo real e finalização com zero logs órfãos.
+- **Saldos do Estoque Físico:** Preservados e verificados:
+  - Slot 1 (Preto Velvet): 739.30g
+  - Slot 3 (Vermelho Ultra Silk): 888.40g
+  - Slot 4 (Branco): 352.50g
+- **Histórico e Catálogo:** 6 print_logs e 17 catalog_items intactos.
+
+## 62.2 Jornada de Entrada de Filamento + Localização Física (Fase I)
+- **Descoberta Multi-Fatiador:** Desktop Agent descobre automaticamente perfis em `BambuStudio`, `BambuStudioBeta` e `OrcaSlicer`, deduplicando por `filament_id` estável (`source_key`).
+- **Isolamento Rígido Perfil vs Spool:** Perfis são sincronizados exclusivamente para `user_filament_profiles` e NUNCA criam carretéis em `spools` de forma autônoma.
+- **Cadastro Assistido na Web:** Modal `➕ Novo Carretel` no Almoxarifado permite pré-preenchimento opcional a partir de perfis de fatiador, com conferência manual obrigatória de peso líquido e tara (default 200g).
+- **Localização / Spot Físico (`spools.location`):** Campo unificado de armazenamento fora da impressora com checagem de ocupação de spot, transferência assistida e visualização `📍 Spot: {spool.location}` nos cards.
+- **NFC Opcional e Desvinculação:** Suporte a `❌ Desvincular NFC` preservando integralmente saldo líquido, tara, histórico e localização física.
+- **Resiliência DDL:** Detecção de `PGRST204` com fallback transparente enquanto a migration `20260927200000_add_spools_location.sql` aguarda execução remota no Supabase.
+- **Suíte de Testes Geral:** 296 testes automatizados (177 unitários Agent + 13 integração Agent + 106 unitários Web) com 100% de aprovação. Builds de produção Web e Agent validadas.
+

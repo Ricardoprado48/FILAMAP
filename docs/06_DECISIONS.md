@@ -69,6 +69,16 @@ Este arquivo registra decisões duradouras identificadas no repositório. Novas 
    - `SEM COMUNICAÇÃO`: Agent Offline (ausência de observador confiável impede atestar se a impressora física está ligada/desligada).
    - `VERIFICANDO`: estado inicial de startup.
 
+## DEC-011 — Perfil de Fatiador ≠ Carretel Físico
+
+**Status:** implementada em 27/09/2026 (Fase I)  
+**Decisão:** Perfis de filamento de fatiadores (BambuStudio, BambuStudioBeta, OrcaSlicer) são receitas lógicas sincronizadas para `user_filament_profiles`. Elas auxiliam no preenchimento de cadastros de carretéis (marca, material, cor nominal, tom hex, densidade), mas carretéis físicos (`spools`) exigem conferência de peso líquido e tara e NUNCA são criados automaticamente por perfis de fatiador. Um perfil pode ter zero ou N carretéis físicos associados.
+
+## DEC-012 — Localização Física e NFC Desacoplados
+
+**Status:** implementada em 27/09/2026 (Fase I)  
+**Decisão:** A coluna `spools.location` é a fonte única da verdade para localização de carretéis armazenados fora da impressora (spots físicos). A tag NFC é uma identidade física opcional de conveniência/atalho. O vínculo ou desvinculação de NFC (`Desvincular NFC`) é estritamente isolado e preserva integralmente saldo líquido, tara, histórico de impressões e localização do carretel. Conflitos de spots ocupados exigem confirmação explícita de transferência de posse.
+
 ## Decisões ainda NÃO tomadas
 
 Os itens abaixo aparecem como visão ou necessidade, mas não devem ser tratados como arquitetura já aprovada em implementação:

@@ -148,3 +148,144 @@ export interface NfcLinkUpdatePayload {
 export function buildNfcLinkUpdate(nfcUid: string): NfcLinkUpdatePayload {
   return { nfc_uid: nfcUid };
 }
+
+export interface SpotValidationResult {
+  isOccupied: boolean;
+  occupyingSpool?: Spool;
+}
+
+/**
+ * Valida se um spot físico já está ocupado por outro carretel no estoque.
+ * Case-insensitive e ignora espaços em branco nas extremidades.
+ * targetSpoolId é o carretel sendo editado (ou null para criação).
+ */
+export function validateSpotAssignment(
+  spools: Spool[],
+  targetSpoolId: string | null,
+  spot: string | null | undefined
+): SpotValidationResult {
+  if (!spot || !spot.trim()) {
+    return { isOccupied: false };
+  }
+
+  const normalized = spot.trim().toLowerCase();
+  const occupying = spools.find(
+    (s) =>
+      s.id !== targetSpoolId &&
+      s.location &&
+      s.location.trim().toLowerCase() === normalized
+  );
+
+  if (occupying) {
+    return { isOccupied: true, occupyingSpool: occupying };
+  }
+
+  return { isOccupied: false };
+}
+
+export interface LocationUpdatePayload {
+  location: string | null;
+}
+
+/**
+ * Constrói payload de atualização de localização (spot).
+ * Converte string vazia ou apenas espaços em null.
+ */
+export function buildLocationUpdate(
+  location: string | null | undefined
+): LocationUpdatePayload {
+  if (!location || !location.trim()) {
+    return { location: null };
+  }
+  return { location: location.trim() };
+}
+
+export interface UnlinkNfcUpdatePayload {
+  nfc_uid: null;
+  nfc_written_at: null;
+}
+
+/**
+ * Constrói payload de desvinculação de NFC.
+ * Preserva estritamente saldo líquido, tara, histórico de impressões,
+ * localização e identidade do perfil/Bambu.
+ */
+export function buildUnlinkNfcUpdate(): UnlinkNfcUpdatePayload {
+  return {
+    nfc_uid: null,
+    nfc_written_at: null,
+  };
+}
+
+export interface ParsedProfileForm {
+  brand: string;
+  material: string;
+  color_name: string;
+  color_hex: string;
+  density?: number;
+  filament_profile_id: string;
+  suggestedTare: number;
+}
+
+/**
+ * Extrai campos de formulário para criação assistida de carretel a partir
+ * de um perfil de fatiador (Bambu Studio / Orca Slicer).
+ * Não cria carretel físico sozinho — serve apenas para pré-preenchimento
+ * da interface com confirmação obrigatória pelo usuário.
+ */
+export function parseProfileToSpoolForm(
+  profile: import("../types").UserFilamentProfile
+): ParsedProfileForm {
+  const metadata = profile.source_metadata as Record<string, unknown> | null;
+
+  // Marca
+  let brand = profile.brand?.trim() || "";
+  if (!brand && metadata?.filament_vendor) {
+    brand = String(metadata.filament_vendor).trim();
+  }
+  if (!brand) {
+    brand = "Genérico";
+  }
+
+  // Material
+  const material = profile.material?.trim() || "PLA";
+
+  // Cor Hex
+  let colorHex = "#FFFFFF";
+  const rawColor = metadata?.default_filament_colour;
+  if (typeof rawColor === "string" && rawColor.startsWith("#")) {
+    colorHex = rawColor;
+  } else if (
+    Array.isArray(rawColor) &&
+    typeof rawColor[0] === "string" &&
+    rawColor[0].startsWith("#")
+  ) {
+    colorHex = rawColor[0];
+  }
+
+  // Nome da Cor
+  let colorName = profile.color_name?.trim() || "";
+  if (!colorName) {
+    colorName = profile.display_name?.trim() || "Personalizado";
+  }
+
+  // Densidade
+  let density: number | undefined;
+  if (metadata?.filament_density) {
+    const parsed = parseFloat(String(metadata.filament_density));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      density = parsed;
+    }
+  }
+
+  return {
+    brand,
+    material,
+    color_name: colorName,
+    color_hex: colorHex,
+    density,
+    filament_profile_id: profile.source_key || profile.id,
+    suggestedTare: 200,
+  };
+}
+

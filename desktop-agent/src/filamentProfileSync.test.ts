@@ -132,3 +132,95 @@ test("readBambuStudioFilamentProfiles deduplica pelo filament_id", () => {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("getBambuStudioBaseDirectories descobre BambuStudio, BambuStudioBeta e OrcaSlicer", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-slicers-"));
+
+  try {
+    const stableBase = path.join(temp, "BambuStudio", "user", "100", "filament", "base");
+    const betaBase = path.join(temp, "BambuStudioBeta", "user", "200", "filament", "base");
+    // OrcaSlicer não criado (simula pasta ausente)
+
+    fs.mkdirSync(stableBase, { recursive: true });
+    fs.mkdirSync(betaBase, { recursive: true });
+
+    const dirs = getBambuStudioBaseDirectories(temp);
+
+    assert.equal(dirs.length, 2);
+    assert.ok(dirs.some((d) => d.includes("BambuStudio") && d.includes("100")));
+    assert.ok(dirs.some((d) => d.includes("BambuStudioBeta") && d.includes("200")));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("readBambuStudioFilamentProfiles descobre novo perfil em BambuStudioBeta e deduplica com Stable", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-sync-multi-"));
+
+  try {
+    const stableBase = path.join(temp, "BambuStudio", "user", "userA", "filament", "base");
+    const betaBase = path.join(temp, "BambuStudioBeta", "user", "userA", "filament", "base");
+
+    fs.mkdirSync(stableBase, { recursive: true });
+    fs.mkdirSync(betaBase, { recursive: true });
+
+    // Perfil compartilhado entre Stable e Beta (mesmo filament_id)
+    const sharedPreset = {
+      name: "+ PLA PRETO VELVET VOOLT3D @Bambu Lab A1 0.4 nozzle",
+      filament_id: ["Paaadef6"],
+      filament_type: ["PLA"],
+      filament_vendor: ["VOOLT3D"],
+    };
+
+    // Perfil novo exclusivo da versão Beta
+    const newBetaPreset = {
+      name: "+ PLA BRANCO ULTRA SILK VIDA BUENAS @Bambu Lab A1 0.4 nozzle",
+      filament_id: ["P6337f36"],
+      filament_type: ["PLA"],
+      filament_vendor: ["+"],
+    };
+
+    fs.writeFileSync(path.join(stableBase, "preto.json"), JSON.stringify(sharedPreset), "utf8");
+    fs.writeFileSync(path.join(betaBase, "preto_copy.json"), JSON.stringify(sharedPreset), "utf8");
+    fs.writeFileSync(path.join(betaBase, "novo_buenas.json"), JSON.stringify(newBetaPreset), "utf8");
+
+    const profiles = readBambuStudioFilamentProfiles(temp);
+
+    assert.equal(profiles.length, 2);
+    const keys = profiles.map((p) => p.source_key).sort();
+    assert.deepEqual(keys, ["P6337f36", "Paaadef6"]);
+
+    const buenas = profiles.find((p) => p.source_key === "P6337f36");
+    assert.ok(buenas);
+    assert.equal(buenas.display_name, "+ PLA BRANCO ULTRA SILK VIDA BUENAS");
+    assert.equal(buenas.material, "PLA");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("readBambuStudioFilamentProfiles ignora JSON inválido sem falhar o ciclo", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "filamap-corrupt-"));
+
+  try {
+    const base = path.join(temp, "BambuStudio", "user", "999", "filament", "base");
+    fs.mkdirSync(base, { recursive: true });
+
+    fs.writeFileSync(path.join(base, "corrupt.json"), "{ invalid json syntax !!", "utf8");
+    fs.writeFileSync(
+      path.join(base, "valid.json"),
+      JSON.stringify({
+        name: "Valido",
+        filament_id: ["Pvalid123"],
+        filament_type: ["PETG"],
+      }),
+      "utf8"
+    );
+
+    const profiles = readBambuStudioFilamentProfiles(temp);
+    assert.equal(profiles.length, 1);
+    assert.equal(profiles[0].source_key, "Pvalid123");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});

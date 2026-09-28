@@ -1,6 +1,35 @@
 # 09 — Changelog Técnico
 
-## 27/09/2026 — Fase H: Consolidação Operacional e UX Essencial
+## 27/09/2026 — Fase I: Jornada de Entrada de Filamento + Localização Física
+
+- **Descoberta Multi-Fatiador no Desktop Agent (`filamentProfileSync.ts`):**
+  - Adicionado suporte a `BambuStudio`, `BambuStudioBeta` e `OrcaSlicer` via `SUPPORTED_SLICER_DIRS`.
+  - Descoberta automática de perfis de usuário em `AppData/Roaming/<slicer>/user/<userId>/filament/base/`, ignorando `default`.
+  - Extração de `filament_id` estável como chave canônica (`source_key`) para UPSERT idempotente em `user_filament_profiles`.
+  - Tratamento resiliente de JSONs corrompidos sem interrupção do ciclo de sincronização.
+  - Perfil de teste `P6337f36` (`+ PLA BRANCO ULTRA SILK VIDA BUENAS`) descoberto e sincronizado com sucesso.
+- **Isolamento de Domínio: Perfil ≠ Spool Físico:**
+  - Garantido que a sincronização de perfis nunca insere linhas em `spools`.
+  - Estoque verificado e intacto com exatamente 29 spools antes e após a sincronização.
+- **Jornada Assistida de Cadastro de Carretel Físico (`App.tsx`, `spoolService.ts`, `spoolStatus.ts`):**
+  - Implementado modal `➕ Novo Carretel` no Almoxarifado / Estoque com opção de importação de perfis de fatiador.
+  - Pré-preenchimento inteligente de marca, material, cor, swatch hex e densidade nominal via `parseProfileToSpoolForm`.
+  - Exigência estrita de conferência manual de matéria física: peso líquido real e tara do carretel (sugestão default de 200g).
+- **Gestão de Localização Física / Spot (`spools.location`):**
+  - Migration idempotente criada: `20260927200000_add_spools_location.sql`.
+  - Suporte a edição manual de localização no card e no modal de edição (`editLocation`).
+  - Validação de ocupação de spot (`validateSpotAssignment`): detecção de conflitos case-insensitive e diálogo de transferência assistida liberando o spot do carretel anterior mediante confirmação.
+  - Visualização de spot físico fora da impressora nos cards de carretel: `📍 Spot: {spool.location}`.
+  - Resiliência a migration remota: detecção de `PGRST204` com fallback automático e alerta não impeditivo ao usuário.
+- **Desacoplamento e Desvinculação de NFC:**
+  - Botão e ação `❌ Desvincular NFC` implementados com diálogo de confirmação.
+  - Zera `nfc_uid` e `nfc_written_at` via `unlinkSpoolNfc`, preservando integralmente peso líquido, tara, histórico de impressões e spot físico.
+- **Bateria de Testes:**
+  - Web App: 106/106 testes unitários PASS (incluindo 14 novos testes herméticos para `validateSpotAssignment`, `buildLocationUpdate`, `buildUnlinkNfcUpdate`, `parseProfileToSpoolForm`, `unlinkSpoolNfc`, `updateSpoolLocation`, `createSpool`).
+  - Desktop Agent: 177/177 unitários PASS, 13/13 integração PASS.
+  - Total geral: 296 testes automatizados, 100% PASS.
+  - Compilação de produção Web (`tsc && vite build`) e Agent (`tsc`) aprovadas.
+
 
 - **Desacoplamento Semântico de Status no Header e Cards:**
   - Substituído o badge genérico "ONLINE / OFFLINE" por dois badges operacionais independentes:

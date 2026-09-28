@@ -1,16 +1,16 @@
-# BACKLOG VIGENTE — 27/09/2026 — FASE H CONCLUÍDA
+# BACKLOG VIGENTE — 27/09/2026 — FASE I CONCLUÍDA
 
 Status do núcleo operacional após a sessão atual:
-- [x] **Fase H — Consolidação Operacional e UX Essencial**:
-  - Desacoplamento semântico dos status de Agent (`last_seen_at` < 45s) e Impressora (`last_online`/`is_online` < 60s, com `SEM_COMUNICACAO` quando o Agent está Offline);
-  - Ticker reativo na UI (5s) para expirar visualmente os badges em tempo real;
-  - Card de status operacional humano ("Imprimindo", "Pausada", "Pronta para impressão", "Desconectada", "Aguardando Desktop Agent");
-  - "Slot em uso" estritamente semântico: `0` -> "Slot 1", `2` -> "Slot 3", `3` -> "Slot 4", e repouso/transição 255 -> `"--"`;
-  - Histórico de impressões multicolor agrupado fielmente por `job_id`, somando o consumo total e exibindo breakdown detalhado com swatches de alto contraste para carretéis escuros (Preto Velvet);
-  - Preservação estrita dos 6 logs existentes e dos saldos de estoque (Preto 739.30g, Vermelho 888.40g, Branco 352.50g);
-  - Testes herméticos: 92/92 Web PASS, 174/174 Agent unitários PASS, 13/13 Agent integração PASS;
-  - Deploy em produção Web homologado: `https://filamap.pages.dev`.
-- [ ] **Próximo Passo**: Fase I — Jornada Completa do Usuário.
+- [x] **Fase I — Jornada de Entrada de Filamento + Localização Física**:
+  - Detecção e sincronização automática multi-fatiador no Desktop Agent (`BambuStudio`, `BambuStudioBeta`, `OrcaSlicer`) com deduplicação por `filament_id`;
+  - Perfis sincronizados para `user_filament_profiles` sem jamais criar carretéis físicos em `spools`;
+  - Jornada assistida de cadastro de carretel físico na Web com pré-preenchimento opcional a partir de perfis de fatiador e conferência obrigatória de tara e peso líquido;
+  - Localização física de armazenamento (`spools.location`) como fonte única da verdade fora da impressora com validação e transferência assistida de spots ocupados;
+  - Desacoplamento total de NFC: NFC 100% opcional, suporte a `Desvincular NFC` preservando saldo, tara, histórico de impressões e localização física;
+  - Resiliência a migration pendente no Supabase remoto (`PGRST204`), permitindo operação ininterrupta enquanto migration `20260927200000_add_spools_location.sql` aguarda execução DDL no dashboard;
+  - Testes: 106/106 Web PASS, 177/177 Agent unitários PASS, 13/13 Agent integração PASS (296/296 PASS);
+  - Auditoria live: `spools = 29` (Preto: 739.30g, Vermelho: 888.40g, Branco: 352.50g), `catalog_items = 17`, `print_logs = 6`, `user_filament_profiles` contendo perfil `P6337f36` (`+ PLA BRANCO ULTRA SILK VIDA BUENAS`).
+- [ ] **Próximo Passo**: Fase J — Homologação de Operação Física e Ciclo de Vida Contínuo.
 
 > Itens históricos abaixo são preservados para rastreabilidade. Quando houver
 > conflito de status, esta seção de 26/09/2026 prevalece.

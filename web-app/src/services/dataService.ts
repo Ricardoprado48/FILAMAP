@@ -1,9 +1,10 @@
-﻿import { supabase } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
 import type {
   CatalogItem,
   Printer,
   PrintLog,
   Spool,
+  UserFilamentProfile,
 } from "../types";
 
 export async function fetchPrinters(): Promise<Printer[] | null> {
@@ -65,4 +66,18 @@ export async function fetchPrintLogs(): Promise<PrintLog[] | null> {
     .limit(10);
 
   return data as PrintLog[] | null;
+}
+
+export async function fetchUserFilamentProfiles(): Promise<UserFilamentProfile[]> {
+  const { data, error } = await supabase
+    .from("user_filament_profiles")
+    .select("*")
+    .order("display_name", { ascending: true });
+
+  if (error) {
+    console.warn("Falha ao buscar perfis do Bambu Studio:", error.message || error);
+    return [];
+  }
+
+  return (data as UserFilamentProfile[]) || [];
 }

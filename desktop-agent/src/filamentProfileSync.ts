@@ -90,20 +90,41 @@ export function parseBambuFilamentPreset(
   };
 }
 
+export const SUPPORTED_SLICER_DIRS = [
+  "BambuStudio",
+  "BambuStudioBeta",
+  "OrcaSlicer",
+] as const;
+
 export function getBambuStudioBaseDirectories(
   appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
 ): string[] {
-  const usersRoot = path.join(appData, "BambuStudio", "user");
+  const baseDirs: string[] = [];
 
-  if (!fs.existsSync(usersRoot)) {
-    return [];
+  for (const slicerDir of SUPPORTED_SLICER_DIRS) {
+    const usersRoot = path.join(appData, slicerDir, "user");
+
+    if (!fs.existsSync(usersRoot)) {
+      continue;
+    }
+
+    try {
+      const userBases = fs
+        .readdirSync(usersRoot, { withFileTypes: true })
+        .filter(
+          (entry) =>
+            entry.isDirectory() && entry.name.toLowerCase() !== "default"
+        )
+        .map((entry) => path.join(usersRoot, entry.name, "filament", "base"))
+        .filter((dir) => fs.existsSync(dir));
+
+      baseDirs.push(...userBases);
+    } catch {
+      // Ignora erro de acesso a diretório
+    }
   }
 
-  return fs
-    .readdirSync(usersRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.toLowerCase() !== "default")
-    .map((entry) => path.join(usersRoot, entry.name, "filament", "base"))
-    .filter((dir) => fs.existsSync(dir));
+  return baseDirs;
 }
 
 export function readBambuStudioFilamentProfiles(

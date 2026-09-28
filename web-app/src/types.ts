@@ -43,10 +43,30 @@ export interface Spool {
   bambu_slot_id?: string | null;
   bambu_synced_at?: string | null;
   filament_profile_id?: string | null;
+  // Localização física de armazenamento do carretel fora da impressora
+  // (ex.: Prateleira A1, Gaveta 2, Caixa Seca 01, Rack B).
+  location?: string | null;
   // Controlado pela Web: quando o usuário confirmou o peso real deste
   // carretel pela última vez (pesagem ou edição manual). NULL = ainda no
   // valor padrão/placeholder, nunca conferido.
   weight_confirmed_at?: string | null;
+}
+
+export interface UserFilamentProfile {
+  id: string;
+  user_id: string;
+  source: string;
+  source_key: string;
+  source_profile_name: string;
+  display_name: string;
+  material: string;
+  color_name?: string | null;
+  model_name?: string | null;
+  brand?: string | null;
+  source_metadata?: Record<string, unknown> | null;
+  last_seen_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CatalogItem {

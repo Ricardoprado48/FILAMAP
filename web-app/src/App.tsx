@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 import { FilamapLogo, FilamapIcon } from "./components/Brand";
 
-import type { Printer, Spool, CatalogItem, PrintLog } from "./types";
+import type { Printer, Spool, CatalogItem, PrintLog, UserFilamentProfile } from "./types";
 import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
 import {
   getAgentStatus,
@@ -26,6 +26,10 @@ import {
   suggestInitialWeightFromBambu,
   findConflictingSpool,
   buildNfcLinkUpdate,
+  validateSpotAssignment,
+  buildLocationUpdate,
+  buildUnlinkNfcUpdate,
+  parseProfileToSpoolForm,
 } from "./utils/spoolStatus";
 import {
   fetchPrinters,
@@ -33,12 +37,19 @@ import {
   fetchInventory,
   fetchCatalog,
   fetchPrintLogs,
+  fetchUserFilamentProfiles,
 } from "./services/dataService";
 import {
   createCatalogItem,
   deleteCatalogItem,
 } from "./services/catalogService";
-import { updateSpoolWeight, linkSpoolNfc } from "./services/spoolService";
+import {
+  updateSpoolWeight,
+  linkSpoolNfc,
+  unlinkSpoolNfc,
+  updateSpoolLocation,
+  createSpool,
+} from "./services/spoolService";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -83,6 +94,21 @@ export default function App() {
   const [editTare, setEditTare] = useState("");
   const [editWeight, setEditWeight] = useState("");
   const [editPrice, setEditPrice] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+
+  // Fase I: Perfis de fatiador e Cadastro Assistido de Novo Carretel
+  const [filamentProfiles, setFilamentProfiles] = useState<UserFilamentProfile[]>([]);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createSelectedProfileId, setCreateSelectedProfileId] = useState("");
+  const [createBrand, setCreateBrand] = useState("Voolt3D");
+  const [createMaterial, setCreateMaterial] = useState("PLA");
+  const [createColorName, setCreateColorName] = useState("");
+  const [createColorHex, setCreateColorHex] = useState("#FFFFFF");
+  const [createTare, setCreateTare] = useState("200");
+  const [createWeight, setCreateWeight] = useState("1000");
+  const [createPrice, setCreatePrice] = useState("85");
+  const [createLocation, setCreateLocation] = useState("");
+  const [createNfcUid, setCreateNfcUid] = useState("");
 
   // Gravação de Tags (vinculada a um carretel já cadastrado no estoque)
   const [writerSpoolId, setWriterSpoolId] = useState("");
@@ -174,6 +200,11 @@ export default function App() {
     const logsData = await fetchPrintLogs();
     if (logsData) {
       setPrintLogs(logsData);
+    }
+
+    const profsData = await fetchUserFilamentProfiles();
+    if (profsData) {
+      setFilamentProfiles(profsData);
     }
   }
   useEffect(() => {
@@ -498,18 +529,57 @@ export default function App() {
     setEditTare((spool.spool_tare_weight || 218).toString());
     setEditWeight(spool.current_weight.toString());
     setEditPrice((spool.price_paid || 85).toString());
+    setEditLocation(spool.location || "");
   }
 
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!editingSpool) return;
-    const { data, error } = await supabase.from("spools").update({
-      brand: editBrand, material: editMaterial, color_name: editColorName,
-      color_hex: editColorHex, spool_tare_weight: parseFloat(editTare) || 218,
+
+    const trimmedLoc = editLocation.trim();
+    const currentLoc = (editingSpool.location || "").trim();
+    if (trimmedLoc && trimmedLoc.toLowerCase() !== currentLoc.toLowerCase()) {
+      const spotCheck = validateSpotAssignment(inventory, editingSpool.id, trimmedLoc);
+      if (spotCheck.isOccupied && spotCheck.occupyingSpool) {
+        const confirmTransfer = window.confirm(
+          `O spot "${trimmedLoc}" já está ocupado pelo carretel "${getSpoolDisplayName(spotCheck.occupyingSpool)}".\n` +
+          `Deseja transferir este spot para este carretel (liberando o spot do carretel anterior)?`
+        );
+        if (!confirmTransfer) return;
+        await updateSpoolLocation(spotCheck.occupyingSpool.id, null);
+      }
+    }
+
+    const updatePayload: Record<string, any> = {
+      brand: editBrand,
+      material: editMaterial,
+      color_name: editColorName,
+      color_hex: editColorHex,
+      spool_tare_weight: parseFloat(editTare) || 218,
       current_weight: parseFloat(editWeight) || 0,
       price_paid: parseFloat(editPrice) || 85.00,
       weight_confirmed_at: new Date().toISOString(),
-    }).eq("id", editingSpool.id).select();
+      location: trimmedLoc || null,
+    };
+
+    let { data, error } = await supabase
+      .from("spools")
+      .update(updatePayload)
+      .eq("id", editingSpool.id)
+      .select();
+
+    let locationPending = false;
+    if (error && (error.code === "PGRST204" || error.message?.includes("'location'"))) {
+      delete updatePayload.location;
+      const retry = await supabase
+        .from("spools")
+        .update(updatePayload)
+        .eq("id", editingSpool.id)
+        .select();
+      data = retry.data;
+      error = retry.error;
+      locationPending = true;
+    }
 
     if (error) {
       alert("Erro ao salvar carretel: " + error.message);
@@ -523,7 +593,97 @@ export default function App() {
       return;
     }
 
+    if (locationPending) {
+      setFeedbackMsg(`⚠️ Dados salvos! Nota: o spot "${editLocation}" aguarda aplicação da migration no banco.`);
+    } else {
+      setFeedbackMsg(`✅ Carretel "${editColorName}" atualizado com sucesso!`);
+    }
+
     setEditingSpool(null);
+    await loadData();
+  }
+
+  function openCreateModal() {
+    setCreateSelectedProfileId("");
+    setCreateBrand("Voolt3D");
+    setCreateMaterial("PLA");
+    setCreateColorName("");
+    setCreateColorHex("#FFFFFF");
+    setCreateTare("200");
+    setCreateWeight("1000");
+    setCreatePrice("85");
+    setCreateLocation("");
+    setCreateNfcUid("");
+    setShowCreateModal(true);
+  }
+
+  function handleSelectProfileForCreate(profileId: string) {
+    setCreateSelectedProfileId(profileId);
+    if (!profileId) return;
+    const prof = filamentProfiles.find((p) => (p.source_key || p.id) === profileId);
+    if (prof) {
+      const parsed = parseProfileToSpoolForm(prof);
+      setCreateBrand(parsed.brand);
+      setCreateMaterial(parsed.material);
+      setCreateColorName(parsed.color_name);
+      setCreateColorHex(parsed.color_hex);
+      setCreateTare(parsed.suggestedTare.toString());
+    }
+  }
+
+  async function handleSaveCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!createColorName.trim()) {
+      alert("Por favor, informe a cor/nome do carretel.");
+      return;
+    }
+
+    if (createNfcUid.trim()) {
+      const conflict = findConflictingSpool(inventory, createNfcUid.trim(), "");
+      if (conflict) {
+        alert(`A tag NFC "${createNfcUid.trim()}" já está vinculada ao carretel "${getSpoolDisplayName(conflict)}" (${conflict.brand}).`);
+        return;
+      }
+    }
+
+    if (createLocation.trim()) {
+      const spotCheck = validateSpotAssignment(inventory, null, createLocation.trim());
+      if (spotCheck.isOccupied && spotCheck.occupyingSpool) {
+        const confirmTransfer = window.confirm(
+          `O spot "${createLocation.trim()}" já está ocupado pelo carretel "${getSpoolDisplayName(spotCheck.occupyingSpool)}".\n` +
+          `Deseja transferir este spot para o novo carretel (liberando o spot do carretel anterior)?`
+        );
+        if (!confirmTransfer) return;
+        await updateSpoolLocation(spotCheck.occupyingSpool.id, null);
+      }
+    }
+
+    const res = await createSpool({
+      brand: createBrand,
+      material: createMaterial,
+      color_name: createColorName.trim(),
+      color_hex: createColorHex,
+      current_weight: parseFloat(createWeight) || 0,
+      spool_tare_weight: parseFloat(createTare) || 200,
+      initial_weight: parseFloat(createWeight) || 1000,
+      price_paid: parseFloat(createPrice) || 85.0,
+      location: createLocation.trim() || null,
+      nfc_uid: createNfcUid.trim() || null,
+      filament_profile_id: createSelectedProfileId || null,
+    });
+
+    if (res.error && !res.locationPendingMigration) {
+      alert("Erro ao criar carretel: " + res.error.message);
+      return;
+    }
+
+    if (res.locationPendingMigration) {
+      setFeedbackMsg(`⚠️ Carretel criado! Nota: o spot "${createLocation}" aguarda aplicação da migration no banco.`);
+    } else {
+      setFeedbackMsg(`✅ Carretel "${createColorName.trim()}" cadastrado com sucesso no estoque!`);
+    }
+
+    setShowCreateModal(false);
     await loadData();
   }
 
@@ -655,9 +815,15 @@ export default function App() {
                 <span title="Peso ainda não foi conferido na balança pelo Filamap" style={{ background: "rgba(217, 119, 6, 0.18)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Precisa pesagem</span>
               )}
             </div>
-            {location && (
-              <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 2 }}>📍 {location}</div>
-            )}
+            {location ? (
+              <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 2 }}>
+                📍 {location} {spool.location ? `(Base: ${spool.location})` : ""}
+              </div>
+            ) : spool.location ? (
+              <div style={{ fontSize: 11, color: "#a78bfa", marginTop: 2 }}>
+                📍 Spot: {spool.location}
+              </div>
+            ) : null}
             {isLinkingThisSpool && (
               <div style={{ fontSize: 11, color: "#38bdf8", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
                 📡 Aproxime a tag...
@@ -974,7 +1140,26 @@ export default function App() {
               <h2 style={{ fontSize: 17, color: "#f8fafc", margin: 0 }}>Estoque de Carretéis</h2>
               <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Na impressora primeiro, demais separados por material</p>
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={openCreateModal}
+                style={{
+                  padding: "8px 14px",
+                  background: "#0284c7",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                ➕ Novo Carretel
+              </button>
               <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Buscar cor, marca..." style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }} />
               <select value={filterMaterial} onChange={(e) => setFilterMaterial(e.target.value)} style={{ padding: "8px 12px", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", fontSize: 12 }}>
                 <option value="TODOS">Todos os Materiais</option>
@@ -1465,7 +1650,45 @@ export default function App() {
                   <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
                 </div>
               </div>
-              {!editingSpool.nfc_uid && (
+              <div>
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Localização / Spot (fora da impressora)</label>
+                <input
+                  type="text"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  placeholder="Ex.: Prateleira A1, Gaveta 2, Caixa Seca 01"
+                  style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                />
+              </div>
+              {editingSpool.nfc_uid ? (
+                <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#94a3b8" }}>Tag NFC vinculada:</div>
+                    <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 700 }}>{editingSpool.nfc_uid}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const confirmed = window.confirm(
+                        `Desvincular a tag "${editingSpool.nfc_uid}" do carretel "${getSpoolDisplayName(editingSpool)}"?\n\n` +
+                        `O carretel continuará existindo normalmente no estoque com seu peso (${editingSpool.current_weight}g), localização e histórico de impressões.`
+                      );
+                      if (!confirmed) return;
+                      const { error } = await unlinkSpoolNfc(editingSpool.id);
+                      if (error) {
+                        alert("Erro ao desvincular tag: " + error.message);
+                        return;
+                      }
+                      setFeedbackMsg(`✅ Tag desvinculada do carretel "${getSpoolDisplayName(editingSpool)}"!`);
+                      setEditingSpool(null);
+                      await loadData();
+                    }}
+                    style={{ padding: "6px 10px", background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 4, fontSize: 11, cursor: "pointer", fontWeight: 600 }}
+                  >
+                    ❌ Desvincular NFC
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
                   onClick={() => {
@@ -1481,6 +1704,169 @@ export default function App() {
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" onClick={() => setEditingSpool(null)} style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6 }}>Cancelar</button>
                 <button type="submit" style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6 }}>Salvar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Cadastro de Novo Carretel (Fase I) */}
+      {showCreateModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
+          <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 420, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+            <h3 style={{ margin: "0 0 6px", color: "#fff" }}>➕ Novo Carretel (Estoque Físico)</h3>
+            <p style={{ margin: "0 0 14px", color: "#94a3b8", fontSize: 12 }}>
+              Cadastre um carretel físico. O perfil do fatiador auxilia no preenchimento, mas a matéria física (peso líquido e tara) é conferida por você.
+            </p>
+
+            <form onSubmit={handleSaveCreate} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Seletor de Perfil do Bambu Studio */}
+              <div>
+                <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>
+                  Usar perfil do Bambu Studio (opcional)
+                </label>
+                <select
+                  value={createSelectedProfileId}
+                  onChange={(e) => handleSelectProfileForCreate(e.target.value)}
+                  style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #0284c7", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                >
+                  <option value="">-- Preenchimento 100% manual --</option>
+                  {filamentProfiles.map((p) => (
+                    <option key={p.id} value={p.source_key || p.id}>
+                      {p.display_name} ({p.material}{p.brand ? ` • ${p.brand}` : ""})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca</label>
+                  <input
+                    type="text"
+                    value={createBrand}
+                    onChange={(e) => setCreateBrand(e.target.value)}
+                    placeholder="Ex.: Voolt3D, Bambu Lab..."
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Material</label>
+                  <select
+                    value={createMaterial}
+                    onChange={(e) => setCreateMaterial(e.target.value)}
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                  >
+                    <option value="PLA">PLA</option>
+                    <option value="PETG">PETG</option>
+                    <option value="ABS">ABS</option>
+                    <option value="TPU">TPU</option>
+                    <option value="ASA">ASA</option>
+                    <option value="PC">PC</option>
+                    <option value="PA">PA</option>
+                    <option value="OUTRO">OUTRO</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor / Nome do Carretel</label>
+                  <input
+                    type="text"
+                    value={createColorName}
+                    onChange={(e) => setCreateColorName(e.target.value)}
+                    placeholder="Ex.: Branco Ultra Silk"
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tom</label>
+                  <input
+                    type="color"
+                    value={createColorHex}
+                    onChange={(e) => setCreateColorHex(e.target.value)}
+                    style={{ width: "100%", height: 34, padding: 2, background: "#0f172a", border: "1px solid #334155", borderRadius: 6 }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Saldo Líquido (g)</label>
+                  <input
+                    type="number"
+                    value={createWeight}
+                    onChange={(e) => setCreateWeight(e.target.value)}
+                    placeholder="Ex.: 1000"
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tara do Carretel (g)</label>
+                  <input
+                    type="number"
+                    value={createTare}
+                    onChange={(e) => setCreateTare(e.target.value)}
+                    placeholder="Ex.: 200"
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Preço Pago (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={createPrice}
+                    onChange={(e) => setCreatePrice(e.target.value)}
+                    placeholder="Ex.: 85.00"
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Localização / Spot</label>
+                  <input
+                    type="text"
+                    value={createLocation}
+                    onChange={(e) => setCreateLocation(e.target.value)}
+                    placeholder="Ex.: Prateleira A1"
+                    style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag NFC (Opcional)</label>
+                <input
+                  type="text"
+                  value={createNfcUid}
+                  onChange={(e) => setCreateNfcUid(e.target.value)}
+                  placeholder="ID da tag (ou deixe vazio para associar depois)"
+                  style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#38bdf8" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  style={{ flex: 1, padding: 8, background: "#334155", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{ flex: 1, padding: 8, background: "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Cadastrar Carretel
+                </button>
               </div>
             </form>
           </div>

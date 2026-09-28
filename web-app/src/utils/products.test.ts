@@ -8,6 +8,7 @@ import {
   parseGrams,
   parseOptionalPrice,
   describeInboxItem,
+  suggestSpoolForInboxItem,
 } from "./products";
 import { buildSlotPickerOptions } from "./slotPicker";
 import { groupPrintLogsByJob } from "./history";
@@ -158,5 +159,40 @@ describe("histórico usa a foto do produto", () => {
     expect(jobs[0].items[0].color_name).toBe("Vermelho");
     expect(jobs[1].items[0].orphan_slot).toBe(false);
     expect(jobs[1].items[0].spool_name).toBe("- PETG ARQUIVADO");
+  });
+});
+
+describe("suggestSpoolForInboxItem (perfil do registro da Bambu)", () => {
+  const cloudItem = (filament_id: string, suggested_spool_id: string | null = null): SpoolInboxItem => ({
+    id: "i", source: "bambu_cloud", external_id: "161", payload: { filament_id }, status: "pending", suggested_spool_id,
+  });
+  const inv = [
+    spool({ id: "dental", filament_product_id: "p-dental" }),
+    spool({ id: "creality", filament_product_id: "p-creality" }),
+    spool({ id: "ligado", filament_product_id: "p-off", bambu_spool_id: "999" }),
+    spool({ id: "rolo-a", filament_product_id: "p-preto" }),
+    spool({ id: "rolo-b", filament_product_id: "p-preto" }),
+  ];
+  const profs = [
+    profile({ id: "a", source_key: "Pfdab47d", filament_product_id: "p-dental" }),
+    profile({ id: "b", source_key: "P6337f36", filament_product_id: null }),
+    profile({ id: "c", source_key: "P2322b03", filament_product_id: "p-off" }),
+    profile({ id: "d", source_key: "Pef7a165", filament_product_id: "p-preto" }),
+  ];
+
+  it("perfil -> produto -> único carretel sem vínculo", () => {
+    expect(suggestSpoolForInboxItem(cloudItem("Pfdab47d"), inv, profs)?.id).toBe("dental");
+  });
+  it("sugestão por texto que contradiz o perfil some (Branco Ultra Silk != Creality)", () => {
+    expect(suggestSpoolForInboxItem(cloudItem("P6337f36", "creality"), inv, profs)).toBeNull();
+  });
+  it("carretel já ligado a outro registro da nuvem não é sugerido", () => {
+    expect(suggestSpoolForInboxItem(cloudItem("P2322b03"), inv, profs)).toBeNull();
+  });
+  it("dois rolos do mesmo produto: não chuta", () => {
+    expect(suggestSpoolForInboxItem(cloudItem("Pef7a165"), inv, profs)).toBeNull();
+  });
+  it("perfil desconhecido: mantém a sugestão antiga", () => {
+    expect(suggestSpoolForInboxItem(cloudItem("GFL99", "creality"), inv, profs)?.id).toBe("creality");
   });
 });

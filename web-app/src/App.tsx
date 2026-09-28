@@ -843,8 +843,18 @@ export default function App() {
         if (!ok) return;
       }
     }
+    let replaceCloudLink = false;
+    if (item.source === "bambu_cloud" && spool.bambu_spool_id && spool.bambu_spool_id !== item.external_id) {
+      replaceCloudLink = window.confirm(
+        `"${spoolTitle(spool)}" está ligado ao registro ${spool.bambu_spool_id} da Bambu.
+
+` +
+          `Trocar pelo registro ${item.external_id}? (Use quando você apagou o cadastro antigo na Bambu e criou de novo.)`
+      );
+      if (!replaceCloudLink) return;
+    }
     setInboxBusy(true);
-    const { error } = await linkInboxItemToSpool(item, spool);
+    const { error } = await linkInboxItemToSpool(item, spool, { replaceCloudLink });
     if (!error) {
       const slotIdx = item.payload?.slot_index;
       if (typeof slotIdx === "number" && printers.length > 0) {

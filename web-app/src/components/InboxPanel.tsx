@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FilamentProduct, Spool, SpoolInboxItem, UserFilamentProfile } from "../types";
-import { describeInboxItem, profilesWithoutProduct } from "../utils/products";
+import { describeInboxItem, profilesWithoutProduct, suggestSpoolForInboxItem } from "../utils/products";
 import { canLinkInboxItem } from "../services/inboxService";
 
 // Caixa de entrada: evidências (nuvem Bambu, RFID, tag NFC desconhecida,
@@ -33,7 +33,7 @@ function InboxItemCard({
   onRename: (item: SpoolInboxItem, profile: UserFilamentProfile) => void;
 }) {
   const text = describeInboxItem(item);
-  const suggested = item.suggested_spool_id ? inventory.find((s) => s.id === item.suggested_spool_id) : undefined;
+  const suggested = suggestSpoolForInboxItem(item, inventory, profiles) ?? undefined;
   const [spoolId, setSpoolId] = useState("");
   const [profileId, setProfileId] = useState("");
   const chosenSpool = inventory.find((s) => s.id === spoolId);

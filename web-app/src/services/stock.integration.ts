@@ -93,14 +93,15 @@ describe("F7 contra o banco de teste", () => {
     const { data: archived } = await supabase.from("filament_products").select("id, name, origin").not("archived_at", "is", null);
     const everyProduct = [...all, ...((archived as FilamentProduct[]) || [])];
     const profiles = await fetchUserFilamentProfiles();
-    // A: perfil em uso sem produto (opção real do Novo Carretel).
-    const profA = profilesWithoutProduct(profiles, everyProduct)[0];
-    expect(profA).toBeTruthy();
-    // B: "perfil novo" do rename: qualquer perfil do Studio sem produto e com nome livre.
+    // A e B: perfis do Studio sem produto e com nome livre (A de preferência um listado,
+    // a opção real do Novo Carretel; o banco de teste vai consumindo os listados).
     const taken = new Set(everyProduct.map((p) => p.name.trim().toLowerCase()));
-    const profB = profiles.find(
-      (p: UserFilamentProfile) => p.source === "bambu_studio" && !p.filament_product_id && p.id !== profA.id && !taken.has(p.display_name.trim().toLowerCase())
-    )!;
+    const free = profiles.filter(
+      (p: UserFilamentProfile) => p.source === "bambu_studio" && !p.filament_product_id && !taken.has(p.display_name.trim().toLowerCase())
+    );
+    const profA = profilesWithoutProduct(profiles, everyProduct)[0] ?? free[0];
+    const profB = free.find((p) => p.id !== profA?.id && p.display_name.trim().toLowerCase() !== profA?.display_name.trim().toLowerCase())!;
+    expect(profA).toBeTruthy();
     expect(profB).toBeTruthy();
 
     const fromProfile = await createProductFromProfile(profA, "#123456");
@@ -123,6 +124,28 @@ describe("F7 contra o banco de teste", () => {
     expect(ren.error).toBeNull();
     const { data: renamed } = await supabase.from("filament_products").select("id, name").eq("id", pA.id).single();
     expect(renamed).toEqual({ id: pA.id, name: profB.display_name.trim() });
+  });
+
+  it("nuvem Bambu: trocar vínculo recriado exige confirmação e grava só bambu_spool_id", async () => {
+    const s = await createSpool({ ...identityFromProduct(product), filament_product_id: product.id, current_weight: 500, spool_tare_weight: 190, bambu_spool_id: `OLD${stamp}` });
+    expect(s.error).toBeNull();
+    created.spools.push(s.data.id);
+    const ins = await supabase
+      .from("spool_inbox")
+      .insert({ source: "bambu_cloud", external_id: `NEW${stamp}`, payload: { filament_id: "X" } })
+      .select("id, source, external_id, payload, suggested_spool_id, suggested_product_id, status, resolved_spool_id, created_at")
+      .single();
+    expect(ins.error).toBeNull();
+    const item = ins.data as SpoolInboxItem;
+    const spoolRow = { id: s.data.id, bambu_spool_id: `OLD${stamp}` } as any;
+
+    const refused = await linkInboxItemToSpool(item, spoolRow);
+    expect(refused.error).toBeTruthy();
+    const replaced = await linkInboxItemToSpool(item, spoolRow, { replaceCloudLink: true });
+    expect(replaced.error).toBeNull();
+    const { data } = await supabase.from("spools").select("bambu_spool_id, current_weight, filament_product_id").eq("id", s.data.id).single();
+    expect(data).toMatchObject({ bambu_spool_id: `NEW${stamp}`, filament_product_id: product.id });
+    expect(Number(data!.current_weight)).toBe(500);
   });
 
   it("arquivar tira do estoque sem apagar", async () => {

@@ -58,6 +58,12 @@ describe("linkInboxItemToSpool", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("troca de vínculo com a nuvem só com confirmação explícita (cadastro recriado na Bambu)", async () => {
+    await linkInboxItemToSpool(item({ source: "bambu_cloud", external_id: "16151332" }), spool({ bambu_spool_id: "15073794" }), { replaceCloudLink: true });
+    expect(calls[0].payload).toEqual({ bambu_spool_id: "16151332" });
+    expect(calls[1].payload).toMatchObject({ status: "linked", resolved_spool_id: "s1" });
+  });
+
   it("0 linhas afetadas (RLS) não resolve o item", async () => {
     useFake(() => ({ data: [], error: null }));
     const res = await linkInboxItemToSpool(item({}), spool());

@@ -58,15 +58,16 @@ export function canLinkInboxItem(item: SpoolInboxItem): boolean {
 
 /**
  * Liga a evidência a um carretel escolhido pelo usuário: a tag NFC vira o
- * nfc_uid do carretel; o registro da nuvem vira o bambu_spool_id (só se o
- * carretel ainda não tiver outro). Nada de identidade/peso é alterado.
+ * nfc_uid do carretel; o registro da nuvem vira o bambu_spool_id (se o
+ * carretel já tiver outro, só com replaceCloudLink). Nada de identidade/peso é alterado.
  */
-export async function linkInboxItemToSpool(item: SpoolInboxItem, spool: Spool) {
+export async function linkInboxItemToSpool(item: SpoolInboxItem, spool: Spool, options: { replaceCloudLink?: boolean } = {}) {
   let payload: Record<string, string>;
   if (item.source === "nfc") {
     payload = { ...buildNfcLinkUpdate(item.external_id) };
   } else if (item.source === "bambu_cloud") {
-    if (spool.bambu_spool_id && spool.bambu_spool_id !== item.external_id) {
+    // Trocar o vínculo só com confirmação explícita (ex.: cadastro apagado e recriado na Bambu).
+    if (spool.bambu_spool_id && spool.bambu_spool_id !== item.external_id && !options.replaceCloudLink) {
       return { data: null, error: { message: "Este carretel já está ligado a outro registro da nuvem Bambu." } };
     }
     payload = { bambu_spool_id: item.external_id };

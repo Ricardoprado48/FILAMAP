@@ -96,3 +96,28 @@ export function describeInboxItem(item: SpoolInboxItem): InboxItemText {
       return { title: item.external_id, subtitle: "" };
   }
 }
+
+/**
+ * Carretel sugerido para um item da caixa de entrada. Para a nuvem Bambu, o
+ * perfil do registro (payload.filament_id = source_key) é exato: perfil ->
+ * produto -> único carretel desse produto ainda sem vínculo com a nuvem. A
+ * sugestão antiga (por texto, gravada pelo Agent) só vale se não contradiz o
+ * perfil; perfil conhecido sem produto = sem sugestão (texto não é confiável).
+ */
+export function suggestSpoolForInboxItem(
+  item: SpoolInboxItem,
+  inventory: Spool[],
+  profiles: UserFilamentProfile[]
+): Spool | null {
+  const stored = item.suggested_spool_id ? inventory.find((s) => s.id === item.suggested_spool_id) ?? null : null;
+  const presetId = item.source === "bambu_cloud" ? item.payload?.filament_id : null;
+  if (!presetId) return stored;
+  const presetProfiles = profiles.filter((p) => p.source_key === presetId);
+  const productId = presetProfiles.find((p) => p.filament_product_id)?.filament_product_id ?? null;
+  if (productId) {
+    const sameProduct = inventory.filter((s) => s.filament_product_id === productId && !s.bambu_spool_id);
+    if (sameProduct.length === 1) return sameProduct[0];
+    return stored && stored.filament_product_id === productId ? stored : null;
+  }
+  return presetProfiles.length > 0 ? null : stored;
+}

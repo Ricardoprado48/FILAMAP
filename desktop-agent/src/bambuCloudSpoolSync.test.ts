@@ -19,6 +19,7 @@ import {
   type ReconciliationCandidate,
   type BridgeRunResult,
   type ParsedBambuCloudSpool,
+  buildSourceMetadata,
 } from "./bambuCloudSpoolSync";
 
 const USER_ID = "11111111-1111-1111-1111-111111111111";
@@ -830,7 +831,7 @@ test("syncBambuCloudSpoolsFromParsed reconcilia carretel desvinculado e preserva
   assert.equal(spool.bambu_slot_id, "0");
 });
 
-test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e não insere nova linha", async () => {
+test("syncBambuCloudSpoolsFromParsed: segundo rolo igual (antigo ID 'secundário') vira carretel físico próprio", async () => {
   const survivingId = randomUUID();
   const now = new Date().toISOString();
 
@@ -861,10 +862,33 @@ test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e
 
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [secondaryCloudSpool]);
 
-  assert.equal(result.spoolsInserted, 0, "não deve inserir linha duplicada para ID secundário");
-  assert.equal(client.tables.spools.length, 1);
-  assert.equal(client.tables.spools[0].id, survivingId);
-  assert.equal(client.tables.spools[0].bambu_spool_id, "15147446", "deve manter o ID primário");
-  assert.equal(client.tables.spools[0].current_weight, 338);
+  assert.equal(result.spoolsInserted, 1, "dois rolos físicos = dois carretéis");
+  assert.equal(client.tables.spools.length, 2);
+  const original = client.tables.spools.find((s: any) => s.id === survivingId);
+  assert.equal(original.bambu_spool_id, "15147446", "o rolo original não muda de identidade");
+  assert.equal(original.current_weight, 338, "peso do rolo original preservado");
+  const segundo = client.tables.spools.find((s: any) => s.id !== survivingId);
+  assert.equal(segundo.bambu_spool_id, "15788790");
+});
+
+test("buildSourceMetadata descarta a lista legada secondary_bambu_spool_ids", () => {
+  const meta = buildSourceMetadata(
+    silkSpool({ bambuSpoolId: "15147446" }),
+    { secondary_bambu_spool_ids: ["15788790"], outra_chave: 1 }
+  );
+  assert.equal("secondary_bambu_spool_ids" in meta, false);
+  assert.equal((meta as any).outra_chave, 1);
+});
+
+test("syncBambuCloudSpoolsFromParsed: dois rolos idênticos novos na Bambu viram dois carretéis", async () => {
+  const client = new FakeSupabaseClient({ spools: [] });
+  const a = silkSpool({ bambuSpoolId: "900001", filamentName: "PLA BRANCO ULTRA SILK", filamentType: "PLA" });
+  const b = silkSpool({ bambuSpoolId: "900002", filamentName: "PLA BRANCO ULTRA SILK", filamentType: "PLA" });
+
+  const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [a, b]);
+
+  assert.equal(result.spoolsInserted, 2);
+  assert.deepEqual(client.tables.spools.map((s: any) => s.bambu_spool_id).sort(), ["900001", "900002"]);
+  assert.equal(result.profilesUpserted, 1, "mesmo filamentId = um perfil só");
 });
 

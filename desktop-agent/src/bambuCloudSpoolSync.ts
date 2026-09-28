@@ -488,8 +488,11 @@ export function buildSourceMetadata(
   spool: ParsedBambuCloudSpool,
   existingMetadata?: Record<string, unknown> | null
 ): Record<string, unknown> {
+  // secondary_bambu_spool_ids (fusão da Fase F) não é mais usado: cada spool
+  // da Bambu é um carretel físico próprio. Some ao atualizar o metadado.
+  const { secondary_bambu_spool_ids: _legacy, ...kept } = existingMetadata || {};
   return {
-    ...(existingMetadata || {}),
+    ...kept,
     create_type: spool.createType,
     rfid: spool.rfid,
     color: spool.color,
@@ -662,8 +665,11 @@ export async function syncBambuCloudSpoolsFromParsed(
 
   const spoolsList = allUserSpools || [];
 
+  // Regra de domínio: PERFIL é único (um por filamentId), CARRETEL FÍSICO
+  // não -- dois rolos iguais (mesma marca/material/cor) são dois carretéis,
+  // cada um com seu peso. Cada spool da nuvem Bambu vira exatamente um
+  // carretel no Filamap; nada é fundido como "duplicata".
   const spoolByPrimaryBambuId = new Map<string, any>();
-  const spoolBySecondaryBambuId = new Map<string, any>();
   const unlinkedCandidates: any[] = [];
 
   for (const s of spoolsList) {
@@ -671,13 +677,6 @@ export async function syncBambuCloudSpoolsFromParsed(
       spoolByPrimaryBambuId.set(String(s.bambu_spool_id), s);
     } else {
       unlinkedCandidates.push(s);
-    }
-
-    const meta = s.bambu_source_metadata as Record<string, unknown> | null;
-    if (meta && Array.isArray(meta.secondary_bambu_spool_ids)) {
-      for (const secId of meta.secondary_bambu_spool_ids) {
-        spoolBySecondaryBambuId.set(String(secId), s);
-      }
     }
   }
 
@@ -710,26 +709,8 @@ export async function syncBambuCloudSpoolsFromParsed(
       continue;
     }
 
-    // Caso B: Já existe como bambu_spool_id secundário registrado
-    const secondaryExisting = spoolBySecondaryBambuId.get(spool.bambuSpoolId);
-    if (secondaryExisting) {
-      if (spool.inPrinter) {
-        rowsToUpdate.push({
-          id: secondaryExisting.id,
-          payload: {
-            bambu_in_printer: true,
-            bambu_dev_id: spool.devId,
-            bambu_device_name: spool.deviceName,
-            bambu_ams_sn: spool.amsSn,
-            bambu_ams_id: spool.amsId,
-            bambu_slot_id: spool.slotId,
-            bambu_synced_at: now,
-            updated_at: now,
-          },
-        });
-      }
-      continue;
-    }
+    // (O antigo Caso B -- ID "secundário" fundido em outro carretel -- foi
+    // removido: esses spools agora caem no Caso C ou D como qualquer outro.)
 
     // Caso C: Reconciliar com candidato desvinculado por forte evidência
     const matchedCandidate = findStrongReconciliationCandidate(

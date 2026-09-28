@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "C:\FILAMAP-staging"
-$Aprovado = "d3e34a28c93e32068b6b7ad09aac45d7e942a803"
+$Aprovado = "ecf2750b0aa67f8ed98033b24394c0bf3b52b4d2"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 

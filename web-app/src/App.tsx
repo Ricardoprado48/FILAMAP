@@ -52,6 +52,7 @@ import {
   assignSpoolToSlot,
 } from "./services/spoolService";
 import { SlotSpoolPicker } from "./components/SlotSpoolPicker";
+import { buildSpoolTitle } from "./utils/slotPicker";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -807,6 +808,10 @@ export default function App() {
   const agentBadge = getAgentBadgeProps(agentStatus);
   const printerBadge = getPrinterBadgeProps(printerStatus);
 
+  // Nome do carretel no padrão do usuário (nome do perfil Bambu Studio, senão +/- MATERIAL COR MARCA).
+  const profileById = new Map(filamentProfiles.map((p) => [p.id, p]));
+  const spoolTitle = (s: Spool) => buildSpoolTitle(s, s.filament_profile_id ? profileById.get(s.filament_profile_id) : null);
+
   function renderSpoolCard(spool: Spool) {
     const location = formatBambuLocation(spool);
     const spoolNeedsWeighing = needsWeighing(spool);
@@ -817,7 +822,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 28, height: 28, borderRadius: "50%", backgroundColor: getSpoolSwatchColor(spool), border: "2px solid #64748b", flexShrink: 0 }} />
           <div>
-            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</strong>
+            <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spoolTitle(spool)}</strong>
             <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
               <span>{getSpoolBrandDisplay(spool.brand, spool.material)} • {spool.material}</span>
               {getNfcStatus(spool) === "written" ? (
@@ -1060,7 +1065,7 @@ export default function App() {
                     </div>
                     {spool ? (
                       <div style={{ marginTop: 6 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{getSpoolDisplayName(spool)}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: "#f8fafc" }}>{spoolTitle(spool)}</div>
                         <div style={{ fontSize: 11, color: "#cbd5e1" }}>{spool.material}</div>
                         <div style={{ fontSize: 12, color: "#38bdf8", fontWeight: 800, marginTop: 4 }}>{spool.current_weight}g</div>
                         <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
@@ -1459,7 +1464,7 @@ export default function App() {
                           >
                             <option value="">F{idx + 1}: Carretel do Estoque...</option>
                             {inventory.map((s) => (
-                              <option key={s.id} value={s.id}>{getSpoolDisplayName(s)} ({s.material}) - R${s.price_paid || 85}/kg</option>
+                              <option key={s.id} value={s.id}>{spoolTitle(s)} - R${s.price_paid || 85}/kg</option>
                             ))}
                           </select>
                           <input
@@ -1561,7 +1566,7 @@ export default function App() {
                   return (
                     <option key={s.id} value={s.id}>
                       {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : "⚠️ "}
-                      {`${getSpoolDisplayName(s)} — ${s.brand} — ${s.material}`}
+                      {spoolTitle(s)}
                       {nfcStatus === "written" ? " (tag gravada)" : nfcStatus === "pending" ? " (aguardando gravação física)" : " (sem tag)"}
                     </option>
                   );

@@ -1030,7 +1030,7 @@ export default function App() {
               ) : getNfcStatus(spool) === "pending" ? (
                 <span title={`Possui nfc_uid ("${spool.nfc_uid}") mas nenhuma escrita física confirmada ainda`} style={{ background: "rgba(251, 191, 36, 0.15)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⏳ Aguardando gravação</span>
               ) : (
-                <span style={{ background: "rgba(239, 68, 68, 0.15)", color: "#f87171", border: "1px solid #dc2626", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⚠️ Sem tag</span>
+                <span title="Tag NFC é opcional: grave uma (🏷️) só se quiser identificar este carretel pelo celular" style={{ background: "rgba(148, 163, 184, 0.12)", color: "#94a3b8", border: "1px solid #475569", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>Sem tag</span>
               )}
               {spool.bambu_spool_id && (
                 <span title="Origem do registro: sincronizado via ecossistema Bambu (Cloud Spool Sync)" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid #0284c7", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🌐 Sincronizado</span>
@@ -1792,7 +1792,7 @@ export default function App() {
                   const nfcStatus = getNfcStatus(s);
                   return (
                     <option key={s.id} value={s.id}>
-                      {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : "⚠️ "}
+                      {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : ""}
                       {spoolTitle(s)}
                       {nfcStatus === "written" ? " (tag gravada)" : nfcStatus === "pending" ? " (aguardando gravação física)" : " (sem tag)"}
                     </option>

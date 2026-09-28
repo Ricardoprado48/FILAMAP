@@ -28,6 +28,10 @@ export function createFakeSupabase(resolver: FakeSupabaseResolver) {
         call.filters.push({ col, val });
         return query;
       },
+      is(col: string, val: any) {
+        call.filters.push({ col, val });
+        return query;
+      },
       in(col: string, val: any) {
         call.filters.push({ col, val });
         return query;

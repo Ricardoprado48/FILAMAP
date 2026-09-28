@@ -5,6 +5,8 @@ export interface GroupedJobSpoolItem {
   id: string;
   spool_id?: string;
   spool_name: string;
+  // Nome do produto no momento da impressão (snapshot); null em registros antigos.
+  product_name: string | null;
   material: string;
   color_hex: string;
   color_name: string;
@@ -37,16 +39,20 @@ export function groupPrintLogsByJob(logs: PrintLog[]): GroupedJob[] {
 
   for (const log of logs) {
     const usedG = typeof log.filament_used_g === "number" ? log.filament_used_g : 0;
-    const isOrphan = Boolean(log.orphan_slot || !log.spool);
-    const spoolName = log.spool ? getSpoolDisplayName(log.spool) : "Carretel não identificado";
-    const material = log.spool?.material || (isOrphan ? "N/A" : "");
+    const isOrphan = Boolean(log.orphan_slot || (!log.spool && !log.product_name_snapshot));
+    // A "foto" gravada na impressão vale mais que o carretel de hoje: editar ou
+    // arquivar o carretel/produto depois não reescreve o histórico.
+    const productName = log.product_name_snapshot?.trim() || null;
+    const spoolName = productName || (log.spool ? getSpoolDisplayName(log.spool) : "Carretel não identificado");
+    const material = log.material_snapshot || log.spool?.material || (isOrphan ? "N/A" : "");
     const colorHex = log.spool ? getSpoolSwatchColor(log.spool) : "#64748b";
-    const colorName = log.spool?.color_name || (isOrphan ? "Sem carretel" : "");
+    const colorName = log.color_snapshot || log.spool?.color_name || (isOrphan ? "Sem carretel" : "");
 
     const spoolItem: GroupedJobSpoolItem = {
       id: log.id,
       spool_id: log.spool_id,
       spool_name: spoolName,
+      product_name: productName,
       material,
       color_hex: colorHex,
       color_name: colorName,

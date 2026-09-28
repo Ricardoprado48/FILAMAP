@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Spool, UserFilamentProfile } from "../types";
+import type { FilamentProduct, Spool, UserFilamentProfile } from "../types";
 import { buildSlotPickerOptions } from "../utils/slotPicker";
 import { getSpoolSwatchColor } from "../utils/inventory";
 
@@ -10,6 +10,7 @@ export function SlotSpoolPicker({
   inventory,
   activeSlots,
   profiles,
+  products,
   saving,
   onPick,
   onClose,
@@ -18,14 +19,15 @@ export function SlotSpoolPicker({
   inventory: Spool[];
   activeSlots: Record<number, Spool | null>;
   profiles: UserFilamentProfile[];
+  products: FilamentProduct[];
   saving: boolean;
   onPick: (spool: Spool) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const options = useMemo(
-    () => buildSlotPickerOptions(inventory, activeSlots, slotIndex, query, profiles),
-    [inventory, activeSlots, slotIndex, query, profiles]
+    () => buildSlotPickerOptions(inventory, activeSlots, slotIndex, query, profiles, products),
+    [inventory, activeSlots, slotIndex, query, profiles, products]
   );
 
   return (

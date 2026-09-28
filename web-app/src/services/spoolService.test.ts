@@ -159,6 +159,7 @@ describe("createSpool", () => {
     vi.mocked(supabase.from).mockImplementation(fake.from as any);
 
     const payload = {
+      filament_product_id: "prod-1",
       brand: "VIDA BUENAS",
       material: "PLA",
       color_name: "PLA BRANCO ULTRA SILK",
@@ -178,7 +179,55 @@ describe("createSpool", () => {
     expect(calls[0].payload.spool_tare_weight).toBe(200);
     expect(calls[0].payload.location).toBe("Prateleira A1");
     expect(calls[0].payload.filament_profile_id).toBe("P6337f36");
+    expect(calls[0].payload.filament_product_id).toBe("prod-1");
     expect(res.data.id).toBe("spool-created");
+  });
+
+  it("sem preço grava NULL (nunca o antigo padrão de R$ 85) e não inventa vínculo com a nuvem", async () => {
+    const calls: FakeQueryCall[] = [];
+    const fake = createFakeSupabase((call) => {
+      calls.push(call);
+      return { data: { id: "spool-x", ...call.payload }, error: null };
+    });
+    vi.mocked(supabase.from).mockReset();
+    vi.mocked(supabase.from).mockImplementation(fake.from as any);
+
+    await createSpool({
+      filament_product_id: "prod-1",
+      brand: null,
+      material: "PLA",
+      color_name: "+ PLA AZUL VELVET VOOLT",
+      color_hex: null,
+      current_weight: 742,
+      spool_tare_weight: 190,
+    });
+
+    expect(calls[0].payload.price_paid).toBeNull();
+    expect(calls[0].payload.initial_weight).toBe(742);
+    expect("bambu_spool_id" in calls[0].payload).toBe(false);
+  });
+
+  it("grava bambu_spool_id só quando vem da caixa de entrada (ação explícita)", async () => {
+    const calls: FakeQueryCall[] = [];
+    const fake = createFakeSupabase((call) => {
+      calls.push(call);
+      return { data: { id: "spool-y", ...call.payload }, error: null };
+    });
+    vi.mocked(supabase.from).mockReset();
+    vi.mocked(supabase.from).mockImplementation(fake.from as any);
+
+    await createSpool({
+      filament_product_id: "prod-1",
+      brand: "Bambu Lab",
+      material: "PLA",
+      color_name: "PLA Lite Amarelo",
+      color_hex: "#FFB549",
+      current_weight: 1000,
+      spool_tare_weight: 250,
+      bambu_spool_id: "8594733",
+    });
+
+    expect(calls[0].payload.bambu_spool_id).toBe("8594733");
   });
 
   it("executa fallback sem location se a migration estiver pendente no banco remoto (PGRST204)", async () => {
@@ -196,6 +245,7 @@ describe("createSpool", () => {
     vi.mocked(supabase.from).mockImplementation(fake.from as any);
 
     const res = await createSpool({
+      filament_product_id: "prod-2",
       brand: "Voolt3D",
       material: "PLA",
       color_name: "Azul",

@@ -45,6 +45,7 @@ export async function fetchInventory(): Promise<Spool[] | null> {
   const { data } = await supabase
     .from("spools")
     .select("*")
+    .is("archived_at", null)
     .order("color_name", { ascending: true });
 
   return data as Spool[] | null;

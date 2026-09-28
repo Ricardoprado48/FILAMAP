@@ -4,8 +4,7 @@ import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 import { FilamapLogo, FilamapIcon } from "./components/Brand";
 
-import type { Printer, Spool, CatalogItem, PrintLog, UserFilamentProfile } from "./types";
-import { POPULAR_BRANDS, TARE_PRESETS } from "./constants";
+import type { Printer, Spool, CatalogItem, PrintLog, UserFilamentProfile, FilamentProduct, SpoolInboxItem } from "./types";
 import {
   getAgentStatus,
   getPrinterStatus,
@@ -50,9 +49,19 @@ import {
   updateSpoolLocation,
   createSpool,
   assignSpoolToSlot,
+  archiveSpool,
 } from "./services/spoolService";
+import { fetchProducts, createProduct, createProductFromProfile, updateProductBrand } from "./services/productService";
+import {
+  fetchPendingInbox,
+  queueUnknownNfcTag,
+  resolveInboxItem,
+  linkInboxItemToSpool,
+  applyPresetRename,
+} from "./services/inboxService";
 import { SlotSpoolPicker } from "./components/SlotSpoolPicker";
-import { buildSpoolTitle } from "./utils/slotPicker";
+import { InboxPanel } from "./components/InboxPanel";
+import { resolveSpoolTitle, identityFromProduct, profilesWithoutProduct, parseGrams, parseOptionalPrice } from "./utils/products";
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -93,9 +102,8 @@ export default function App() {
 
 
   const [editingSpool, setEditingSpool] = useState<Spool | null>(null);
-  const [editBrand, setEditBrand] = useState("");
-  const [editMaterial, setEditMaterial] = useState("PETG");
-  const [editColorName, setEditColorName] = useState("");
+  const [editProductId, setEditProductId] = useState("");
+  const [editProductBrand, setEditProductBrand] = useState("");
   const [editColorHex, setEditColorHex] = useState("#111827");
   const [editTare, setEditTare] = useState("");
   const [editWeight, setEditWeight] = useState("");
@@ -105,16 +113,27 @@ export default function App() {
   // Fase I: Perfis de fatiador e Cadastro Assistido de Novo Carretel
   const [filamentProfiles, setFilamentProfiles] = useState<UserFilamentProfile[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createSelectedProfileId, setCreateSelectedProfileId] = useState("");
-  const [createBrand, setCreateBrand] = useState("Voolt3D");
+  // Identidade do carretel novo: "product:<id>" (produto existente),
+  // "profile:<id>" (cria o produto a partir do perfil do Bambu Studio) ou
+  // "manual" (produto novo digitado). Sem produto não há carretel (R5).
+  const [createProductChoice, setCreateProductChoice] = useState("");
+  const [createBrand, setCreateBrand] = useState("");
   const [createMaterial, setCreateMaterial] = useState("PLA");
   const [createColorName, setCreateColorName] = useState("");
   const [createColorHex, setCreateColorHex] = useState("#FFFFFF");
-  const [createTare, setCreateTare] = useState("200");
-  const [createWeight, setCreateWeight] = useState("1000");
-  const [createPrice, setCreatePrice] = useState("85");
+  const [createTare, setCreateTare] = useState("");
+  const [createWeight, setCreateWeight] = useState("");
+  const [createPrice, setCreatePrice] = useState("");
   const [createLocation, setCreateLocation] = useState("");
   const [createNfcUid, setCreateNfcUid] = useState("");
+  // Item da caixa de entrada que originou este "Novo Carretel" (se houver).
+  const [createFromInbox, setCreateFromInbox] = useState<SpoolInboxItem | null>(null);
+
+  // Produtos de filamento e caixa de entrada (F7)
+  const [products, setProducts] = useState<FilamentProduct[]>([]);
+  const [inboxItems, setInboxItems] = useState<SpoolInboxItem[]>([]);
+  const [showInbox, setShowInbox] = useState(false);
+  const [inboxBusy, setInboxBusy] = useState(false);
 
   // Gravação de Tags (vinculada a um carretel já cadastrado no estoque)
   const [writerSpoolId, setWriterSpoolId] = useState("");
@@ -212,6 +231,9 @@ export default function App() {
     if (profsData) {
       setFilamentProfiles(profsData);
     }
+
+    setProducts(await fetchProducts());
+    setInboxItems(await fetchPendingInbox());
   }
   useEffect(() => {
     if (session) {
@@ -448,28 +470,29 @@ export default function App() {
 
   async function handleAssignSlot(slotIdx: number) {
     if (!nfcUid || printers.length === 0) return;
-    let { data: spool } = await supabase.from("spools").select("*").eq("nfc_uid", nfcUid).single();
-    let isNewSpool = false;
-    if (!spool) {
-      const { data: created } = await supabase.from("spools").insert({
-        nfc_uid: nfcUid, brand: "Voolt3D", material: "PETG", color_name: "Preto",
-        color_hex: "#111827", initial_weight: 1000, current_weight: 1000,
-        spool_tare_weight: 218, price_paid: 85.00,
-      }).select().single();
-      spool = created;
-      isNewSpool = true;
-    }
+    const uid = nfcUid;
+    const { data: spool } = await supabase
+      .from("spools")
+      .select("*")
+      .eq("nfc_uid", uid)
+      .is("archived_at", null)
+      .maybeSingle();
+    setNfcUid(null);
     if (spool) {
       await assignSpoolToSlot(printers[0].id, slotIdx, spool.id);
-      setNfcUid(null);
       await loadData();
-      // Tag desconhecida: o carretel foi criado com placeholders (marca/material/cor/
-      // tara/peso fixos), não com dados informados pelo usuário. Abre a edição na hora
-      // para que os valores reais sejam preenchidos antes de ficarem "esquecidos".
-      if (isNewSpool) {
-        openEditModal(spool);
-      }
+      return;
     }
+    // Tag desconhecida (R3/R5): não inventa carretel. Vai para a caixa de
+    // entrada, que já abre para o usuário dizer de qual carretel ela é (ou
+    // cadastrar um novo); ao resolver, o carretel entra neste slot.
+    const { error } = await queueUnknownNfcTag(uid, printers[0].id, slotIdx);
+    if (error) {
+      alert("Não foi possível registrar a tag desconhecida: " + error.message);
+      return;
+    }
+    await loadData();
+    setShowInbox(true);
   }
 
   // Escolha pela lista do estoque: mesmo efeito da tag NFC, sem precisar dela.
@@ -497,9 +520,10 @@ export default function App() {
 
   function openWeighModal(spool: Spool) {
     setWeighingSpool(spool);
-    const savedTare = (spool.spool_tare_weight || 218).toString();
+    // Sem tara cadastrada, o campo fica vazio para o usuário informar (sem valor inventado).
+    const savedTare = spool.spool_tare_weight != null ? String(spool.spool_tare_weight) : "";
     setModalTare(savedTare);
-    setModalGross((spool.current_weight + parseFloat(savedTare)).toString());
+    setModalGross(savedTare ? (Number(spool.current_weight) + Number(savedTare)).toString() : "");
     // Primeira pesagem real de um carretel vindo da Bambu: current_weight/
     // initial_weight ainda são só o default da coluna, nunca uma medição.
     // Sugere o netWeight nominal da Bambu como ponto de partida do peso
@@ -542,14 +566,25 @@ export default function App() {
 
   function openEditModal(spool: Spool) {
     setEditingSpool(spool);
-    setEditBrand(spool.brand);
-    setEditMaterial(spool.material);
-    setEditColorName(spool.color_name);
-    setEditColorHex(spool.color_hex || "#111827");
-    setEditTare((spool.spool_tare_weight || 218).toString());
-    setEditWeight(spool.current_weight.toString());
-    setEditPrice((spool.price_paid || 85).toString());
+    const product = spool.filament_product_id ? products.find((p) => p.id === spool.filament_product_id) : undefined;
+    setEditProductId(product?.id || "");
+    setEditProductBrand(product?.brand || "");
+    setEditColorHex(spool.color_hex || product?.color_hex || "#111827");
+    setEditTare(spool.spool_tare_weight != null ? String(spool.spool_tare_weight) : "");
+    setEditWeight(String(spool.current_weight));
+    setEditPrice(spool.price_paid != null ? String(spool.price_paid) : "");
     setEditLocation(spool.location || "");
+  }
+
+  // Perfil do Bambu Studio que representa o produto (para manter o vínculo
+  // legado filament_profile_id coerente com o produto escolhido).
+  function profileIdForProduct(productId: string): string | null {
+    const linked = filamentProfiles.filter((p) => p.filament_product_id === productId);
+    const preferred =
+      linked.find((p) => p.source === "bambu_studio" && p.is_listed !== false) ||
+      linked.find((p) => p.source === "bambu_studio") ||
+      linked.find((p) => p.source === "bambu_official");
+    return preferred?.id ?? null;
   }
 
   async function handleSaveEdit(e: React.FormEvent) {
@@ -570,14 +605,36 @@ export default function App() {
       }
     }
 
+    const product = products.find((p) => p.id === editProductId);
+    if (!product) {
+      alert("Escolha o produto deste carretel.");
+      return;
+    }
+    const tare = parseGrams(editTare);
+    const weight = parseGrams(editWeight);
+    if (tare === null || weight === null) {
+      alert("Informe a tara e o saldo em gramas.");
+      return;
+    }
+
+    // Marca é do produto (vale para todos os carretéis dele).
+    const newBrand = editProductBrand.trim() || null;
+    if (newBrand !== (product.brand?.trim() || null)) {
+      const { error: brandError } = await updateProductBrand(product.id, newBrand);
+      if (brandError) {
+        alert("Erro ao salvar a marca do produto: " + brandError.message);
+        return;
+      }
+    }
+
+    const productChanged = product.id !== editingSpool.filament_product_id;
     const updatePayload: Record<string, any> = {
-      brand: editBrand,
-      material: editMaterial,
-      color_name: editColorName,
-      color_hex: editColorHex,
-      spool_tare_weight: parseFloat(editTare) || 218,
-      current_weight: parseFloat(editWeight) || 0,
-      price_paid: parseFloat(editPrice) || 85.00,
+      ...identityFromProduct({ ...product, brand: newBrand }, editColorHex),
+      filament_product_id: product.id,
+      ...(productChanged ? { filament_profile_id: profileIdForProduct(product.id) } : {}),
+      spool_tare_weight: tare,
+      current_weight: weight,
+      price_paid: parseOptionalPrice(editPrice),
       weight_confirmed_at: new Date().toISOString(),
       location: trimmedLoc || null,
     };
@@ -616,45 +673,96 @@ export default function App() {
     if (locationPending) {
       setFeedbackMsg(`⚠️ Dados salvos! Nota: o spot "${editLocation}" aguarda aplicação da migration no banco.`);
     } else {
-      setFeedbackMsg(`✅ Carretel "${editColorName}" atualizado com sucesso!`);
+      setFeedbackMsg(`✅ Carretel "${product.name}" atualizado com sucesso!`);
     }
 
     setEditingSpool(null);
     await loadData();
   }
 
-  function openCreateModal() {
-    setCreateSelectedProfileId("");
-    setCreateBrand("Voolt3D");
-    setCreateMaterial("PLA");
-    setCreateColorName("");
-    setCreateColorHex("#FFFFFF");
-    setCreateTare("200");
-    setCreateWeight("1000");
-    setCreatePrice("85");
+  function openCreateModal(fromInbox: SpoolInboxItem | null = null) {
+    setCreateFromInbox(fromInbox);
+    const suggestedProduct = fromInbox?.suggested_product_id ? products.find((p) => p.id === fromInbox.suggested_product_id) : undefined;
+    setCreateProductChoice(suggestedProduct ? `product:${suggestedProduct.id}` : "");
+    setCreateBrand(fromInbox?.payload?.suggested_brand || "");
+    setCreateMaterial(fromInbox?.payload?.filament_type || "PLA");
+    setCreateColorName(fromInbox?.payload?.suggested_color_name || "");
+    const payloadColor = typeof fromInbox?.payload?.color === "string" ? fromInbox.payload.color : null;
+    setCreateColorHex(payloadColor || suggestedProduct?.color_hex || "#FFFFFF");
+    setCreateTare("");
+    setCreateWeight("");
+    setCreatePrice("");
     setCreateLocation("");
-    setCreateNfcUid("");
+    setCreateNfcUid(fromInbox?.source === "nfc" ? fromInbox.external_id : "");
     setShowCreateModal(true);
   }
 
-  function handleSelectProfileForCreate(profileId: string) {
-    setCreateSelectedProfileId(profileId);
-    if (!profileId) return;
-    const prof = filamentProfiles.find((p) => p.id === profileId);
-    if (prof) {
-      const parsed = parseProfileToSpoolForm(prof);
-      setCreateBrand(parsed.brand);
-      setCreateMaterial(parsed.material);
-      setCreateColorName(parsed.color_name);
-      setCreateColorHex(parsed.color_hex);
-      setCreateTare(parsed.suggestedTare.toString());
+  function handleSelectProductChoice(choice: string) {
+    setCreateProductChoice(choice);
+    if (choice.startsWith("product:")) {
+      const product = products.find((p) => `product:${p.id}` === choice);
+      if (product?.color_hex) setCreateColorHex(product.color_hex);
+    } else if (choice.startsWith("profile:")) {
+      const prof = filamentProfiles.find((p) => `profile:${p.id}` === choice);
+      if (prof) {
+        const parsed = parseProfileToSpoolForm(prof);
+        setCreateColorHex(parsed.color_hex);
+        // Tara sugerida pelo perfil só preenche se o usuário ainda não digitou.
+        setCreateTare((curr) => curr || String(parsed.suggestedTare));
+      }
     }
+  }
+
+  // Resolve (ou cria) o produto escolhido no Novo Carretel.
+  async function resolveCreateProduct(): Promise<{ product: FilamentProduct; profileId: string | null } | null> {
+    const choice = createProductChoice;
+    if (choice.startsWith("product:")) {
+      const product = products.find((p) => `product:${p.id}` === choice);
+      return product ? { product, profileId: profileIdForProduct(product.id) } : null;
+    }
+    if (choice.startsWith("profile:")) {
+      const prof = filamentProfiles.find((p) => `profile:${p.id}` === choice);
+      if (!prof) return null;
+      const { data, error } = await createProductFromProfile(prof, createColorHex);
+      if (error || !data) {
+        alert("Erro ao criar o produto a partir do perfil: " + (error?.message || "sem retorno"));
+        return null;
+      }
+      return { product: data as FilamentProduct, profileId: prof.id };
+    }
+    if (choice === "manual") {
+      const name = [createMaterial, createColorName.trim(), createBrand.trim()].filter(Boolean).join(" ").toUpperCase();
+      const { data, error } = await createProduct({
+        name,
+        brand: createBrand,
+        material: createMaterial,
+        color_name: createColorName,
+        color_hex: createColorHex,
+        origin: "manual",
+      });
+      if (error || !data) {
+        alert("Erro ao criar o produto: " + (error?.message || "sem retorno") + (error?.code === "23505" ? " (já existe um produto com esse nome)" : ""));
+        return null;
+      }
+      return { product: data as FilamentProduct, profileId: null };
+    }
+    return null;
   }
 
   async function handleSaveCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!createColorName.trim()) {
-      alert("Por favor, informe a cor/nome do carretel.");
+    if (!createProductChoice) {
+      alert("Escolha o produto (filamento) deste carretel.");
+      return;
+    }
+    if (createProductChoice === "manual" && (!createColorName.trim() || !createBrand.trim())) {
+      alert("Para um produto novo, informe a marca e a cor.");
+      return;
+    }
+    const weight = parseGrams(createWeight);
+    const tare = parseGrams(createTare);
+    if (weight === null || tare === null) {
+      alert("Informe o saldo líquido e a tara em gramas (confira na balança).");
       return;
     }
 
@@ -678,49 +786,135 @@ export default function App() {
       }
     }
 
+    const resolved = await resolveCreateProduct();
+    if (!resolved) return;
+    const { product, profileId } = resolved;
+    const fromInbox = createFromInbox;
+
     const res = await createSpool({
-      brand: createBrand,
-      material: createMaterial,
-      color_name: createColorName.trim(),
-      color_hex: createColorHex,
-      current_weight: parseFloat(createWeight) || 0,
-      spool_tare_weight: parseFloat(createTare) || 200,
-      initial_weight: parseFloat(createWeight) || 1000,
-      price_paid: parseFloat(createPrice) || 85.0,
+      ...identityFromProduct(product, createColorHex),
+      filament_product_id: product.id,
+      current_weight: weight,
+      spool_tare_weight: tare,
+      initial_weight: weight,
+      price_paid: parseOptionalPrice(createPrice),
       location: createLocation.trim() || null,
       nfc_uid: createNfcUid.trim() || null,
-      filament_profile_id: createSelectedProfileId || null,
+      filament_profile_id: profileId,
+      bambu_spool_id: fromInbox?.source === "bambu_cloud" ? fromInbox.external_id : null,
     });
 
     if (res.error && !res.locationPendingMigration) {
       alert("Erro ao criar carretel: " + res.error.message);
+      await loadData();
       return;
+    }
+
+    if (fromInbox && res.data?.id) {
+      await resolveInboxItem(fromInbox.id, "created", res.data.id);
+      const slotIdx = fromInbox.payload?.slot_index;
+      if (typeof slotIdx === "number" && printers.length > 0) {
+        await assignSpoolToSlot(printers[0].id, slotIdx, res.data.id);
+      }
     }
 
     if (res.locationPendingMigration) {
       setFeedbackMsg(`⚠️ Carretel criado! Nota: o spot "${createLocation}" aguarda aplicação da migration no banco.`);
     } else {
-      setFeedbackMsg(`✅ Carretel "${createColorName.trim()}" cadastrado com sucesso no estoque!`);
+      setFeedbackMsg(`✅ Carretel "${product.name}" cadastrado com sucesso no estoque!`);
     }
 
     setShowCreateModal(false);
+    setCreateFromInbox(null);
+    await loadData();
+  }
+
+  // --- Caixa de entrada ---------------------------------------------------
+
+  async function handleInboxLink(item: SpoolInboxItem, spool: Spool) {
+    if (item.source === "nfc") {
+      const conflict = findConflictingSpool(inventory, item.external_id, spool.id);
+      if (conflict) {
+        alert(`Esta tag já está no carretel "${spoolTitle(conflict)}". Uma tag não pode ficar em dois carretéis.`);
+        return;
+      }
+      if (spool.nfc_uid && spool.nfc_uid !== item.external_id) {
+        const ok = window.confirm(`"${spoolTitle(spool)}" já tem a tag "${spool.nfc_uid}". Substituir pela tag "${item.external_id}"?`);
+        if (!ok) return;
+      }
+    }
+    setInboxBusy(true);
+    const { error } = await linkInboxItemToSpool(item, spool);
+    if (!error) {
+      const slotIdx = item.payload?.slot_index;
+      if (typeof slotIdx === "number" && printers.length > 0) {
+        await assignSpoolToSlot(printers[0].id, slotIdx, spool.id);
+      }
+    }
+    setInboxBusy(false);
+    if (error) {
+      alert("Não foi possível ligar: " + ((error as any).code === "23505" ? "esta tag já está em outro carretel." : error.message));
+      return;
+    }
+    setFeedbackMsg(`✅ Ligado ao carretel "${spoolTitle(spool)}".`);
+    await loadData();
+  }
+
+  function handleInboxCreate(item: SpoolInboxItem) {
+    setShowInbox(false);
+    openCreateModal(item);
+  }
+
+  async function handleInboxIgnore(item: SpoolInboxItem) {
+    if (!window.confirm("Ignorar este item? Nada será alterado no estoque.")) return;
+    setInboxBusy(true);
+    const { error } = await resolveInboxItem(item.id, "ignored", null);
+    setInboxBusy(false);
+    if (error) {
+      alert("Erro ao ignorar: " + error.message);
+      return;
+    }
+    await loadData();
+  }
+
+  async function handleInboxRename(item: SpoolInboxItem, profile: UserFilamentProfile) {
+    const product = products.find((p) => p.id === item.suggested_product_id);
+    const ok = window.confirm(
+      `Confirmar que "${profile.display_name}" é o mesmo produto que "${product?.name || item.payload?.old_display_name}"?\n\n` +
+        "Os carretéis desse produto passam a usar o nome novo. O histórico de impressões mantém o nome da época."
+    );
+    if (!ok) return;
+    setInboxBusy(true);
+    const { error } = await applyPresetRename(item, profile);
+    setInboxBusy(false);
+    if (error) {
+      alert("Erro ao aplicar o novo nome: " + ((error as any).code === "23505" ? "já existe outro produto com esse nome." : error.message));
+      return;
+    }
+    setFeedbackMsg(`✅ Produto agora se chama "${profile.display_name}".`);
     await loadData();
   }
 
   function selectWriterSpool(spool: Spool) {
     setWriterSpoolId(spool.id);
     setActiveTab("writer");
-    const tare = (spool.spool_tare_weight || 218).toString();
+    const tare = spool.spool_tare_weight != null ? String(spool.spool_tare_weight) : "";
     setTareWeight(tare);
-    setGrossWeight((spool.current_weight + (parseFloat(tare) || 0)).toString());
+    setGrossWeight(tare ? (Number(spool.current_weight) + Number(tare)).toString() : "");
     setCustomTagId(spool.nfc_uid || generateAutoTagId(spool.material, getSpoolDisplayName(spool)));
     setFeedbackMsg(null);
   }
 
-  async function handleDeleteSpool(spool: Spool) {
-    if (!window.confirm(`Excluir carretel "${getSpoolDisplayName(spool)}"?`)) return;
-    await supabase.from("ams_slots").update({ spool_id: null }).eq("spool_id", spool.id);
-    await supabase.from("spools").delete().eq("id", spool.id);
+  // D4: carretel não é apagado (o histórico de impressões aponta para ele);
+  // é arquivado e some do estoque, do AMS e das listas.
+  async function handleArchiveSpool(spool: Spool) {
+    if (!window.confirm(`Arquivar o carretel "${spoolTitle(spool)}"?\n\nEle sai do estoque e do AMS. O histórico de impressões continua guardado.`)) return;
+    const { error } = await archiveSpool(spool.id);
+    if (error) {
+      alert("Erro ao arquivar: " + error.message);
+      return;
+    }
+    setFeedbackMsg(`📦 Carretel "${spoolTitle(spool)}" arquivado.`);
     await loadData();
   }
 
@@ -744,7 +938,7 @@ export default function App() {
     const { error } = await supabase.from("spools").update({
       nfc_uid: finalTagId,
       current_weight: netWeight,
-      spool_tare_weight: parseFloat(tareWeight) || 218,
+      spool_tare_weight: parseFloat(tareWeight),
       nfc_written_at: new Date().toISOString(),
     }).eq("id", writerSpool.id);
 
@@ -810,7 +1004,13 @@ export default function App() {
 
   // Nome do carretel no padrão do usuário (nome do perfil Bambu Studio, senão +/- MATERIAL COR MARCA).
   const profileById = new Map(filamentProfiles.map((p) => [p.id, p]));
-  const spoolTitle = (s: Spool) => buildSpoolTitle(s, s.filament_profile_id ? profileById.get(s.filament_profile_id) : null);
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const spoolTitle = (s: Spool) =>
+    resolveSpoolTitle(
+      s,
+      s.filament_product_id ? productById.get(s.filament_product_id) : null,
+      s.filament_profile_id ? profileById.get(s.filament_profile_id) : null
+    );
 
   function renderSpoolCard(spool: Spool) {
     const location = formatBambuLocation(spool);
@@ -869,7 +1069,7 @@ export default function App() {
           </button>
           <button onClick={() => selectWriterSpool(spool)} title="Gravar tag NFC nova neste carretel" style={{ background: spool.nfc_uid ? "#0f172a" : "rgba(56, 189, 248, 0.2)", color: "#38bdf8", border: "1px solid #38bdf8", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🏷️</button>
           <button onClick={() => openEditModal(spool)} style={{ background: "#0f172a", color: "#38bdf8", border: "1px solid #334155", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✏️</button>
-          <button onClick={() => handleDeleteSpool(spool)} style={{ background: "rgba(239, 68, 68, 0.2)", color: "#f87171", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>🗑️</button>
+          <button onClick={() => handleArchiveSpool(spool)} title="Arquivar (sai do estoque; o histórico continua)" style={{ background: "rgba(148, 163, 184, 0.15)", color: "#cbd5e1", border: "none", padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>📦</button>
         </div>
       </div>
     );
@@ -991,10 +1191,37 @@ export default function App() {
           inventory={inventory}
           activeSlots={activeSlots}
           profiles={filamentProfiles}
+          products={products}
           saving={savingSlotPick}
           onPick={handlePickSpoolForSlot}
           onClose={() => setPickingSlot(null)}
         />
+      )}
+
+      {showInbox && (
+        <InboxPanel
+          items={inboxItems}
+          inventory={inventory}
+          profiles={filamentProfiles}
+          products={products}
+          spoolTitle={spoolTitle}
+          busy={inboxBusy}
+          onLink={handleInboxLink}
+          onCreate={handleInboxCreate}
+          onIgnore={handleInboxIgnore}
+          onRename={handleInboxRename}
+          onClose={() => setShowInbox(false)}
+        />
+      )}
+
+      {inboxItems.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowInbox(true)}
+          style={{ width: "100%", marginBottom: 16, padding: 10, background: "rgba(251, 191, 36, 0.12)", border: "1px solid #d97706", borderRadius: 8, color: "#fbbf24", fontSize: 13, fontWeight: 700, cursor: "pointer", textAlign: "left" }}
+        >
+          📥 {inboxItems.length === 1 ? "1 item" : `${inboxItems.length} itens`} na caixa de entrada: toque para resolver
+        </button>
       )}
 
       {feedbackMsg && (
@@ -1157,7 +1384,7 @@ export default function App() {
                                   SEM CARRETEL
                                 </span>
                               ) : null}
-                              {item.material ? `${item.material} • ` : ""}{item.color_name || item.spool_name}
+                              {item.product_name ? item.product_name : `${item.material ? `${item.material} • ` : ""}${item.color_name || item.spool_name}`}
                             </span>
                           </div>
                           <span style={{ color: "#94a3b8", fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
@@ -1185,7 +1412,7 @@ export default function App() {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={openCreateModal}
+                onClick={() => openCreateModal()}
                 style={{
                   padding: "8px 14px",
                   background: "#0284c7",
@@ -1240,7 +1467,7 @@ export default function App() {
             {Object.keys(groupedByMaterial).map((mat) => {
               const spools = groupedByMaterial[mat];
               const totalWeight = spools.reduce((acc, s) => acc + (s.current_weight || 0), 0);
-              const totalValue = spools.reduce((acc, s) => acc + ((s.current_weight || 0) * ((s.price_paid || 85) / 1000)), 0);
+              const totalValue = spools.reduce((acc, s) => acc + (s.price_paid ? (s.current_weight || 0) * (s.price_paid / 1000) : 0), 0);
 
               return (
                 <div key={mat} style={{ background: "#0f172a", borderRadius: 10, border: "1px solid #334155", overflow: "hidden" }}>
@@ -1464,7 +1691,7 @@ export default function App() {
                           >
                             <option value="">F{idx + 1}: Carretel do Estoque...</option>
                             {inventory.map((s) => (
-                              <option key={s.id} value={s.id}>{spoolTitle(s)} - R${s.price_paid || 85}/kg</option>
+                              <option key={s.id} value={s.id}>{spoolTitle(s)} - {s.price_paid ? `R$${s.price_paid}/kg` : "sem preço (usa o manual)"}</option>
                             ))}
                           </select>
                           <input
@@ -1655,27 +1882,27 @@ export default function App() {
           <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 380, width: "100%" }}>
             <h3 style={{ margin: "0 0 10px", color: "#fff" }}>✏️ Editar Carretel</h3>
             <form onSubmit={handleSaveEdit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca</label>
-                  <select value={editBrand} onChange={(e) => setEditBrand(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                    {POPULAR_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Material</label>
-                  <select value={editMaterial} onChange={(e) => setEditMaterial(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }}>
-                    <option value="PETG">PETG</option>
-                    <option value="PLA">PLA</option>
-                    <option value="ABS">ABS</option>
-                    <option value="TPU">TPU</option>
-                  </select>
-                </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Produto (filamento)</label>
+                <select
+                  value={editProductId}
+                  onChange={(e) => {
+                    setEditProductId(e.target.value);
+                    setEditProductBrand(products.find((p) => p.id === e.target.value)?.brand || "");
+                  }}
+                  style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #0284c7", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                  required
+                >
+                  <option value="">Escolha o produto...</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor</label>
-                  <input type="text" value={editColorName} onChange={(e) => setEditColorName(e.target.value)} placeholder="Cor" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca do produto</label>
+                  <input type="text" value={editProductBrand} onChange={(e) => setEditProductBrand(e.target.value)} placeholder="Ex.: Voolt3D" disabled={!editProductId} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
                 </div>
                 <div>
                   <label style={{ fontSize: 11, color: "#94a3b8" }}>Tom</label>
@@ -1691,6 +1918,10 @@ export default function App() {
                   <label style={{ fontSize: 11, color: "#94a3b8" }}>Saldo (g)</label>
                   <input type="number" value={editWeight} onChange={(e) => setEditWeight(e.target.value)} placeholder="Saldo em gramas" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} required />
                 </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#94a3b8" }}>Preço pago (R$, opcional)</label>
+                <input type="number" step="0.01" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} placeholder="Sem preço" style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, color: "#94a3b8" }}>Localização / Spot (fora da impressora)</label>
@@ -1758,32 +1989,49 @@ export default function App() {
           <div style={{ background: "#1e293b", border: "1px solid #38bdf8", borderRadius: 12, padding: 20, maxWidth: 420, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
             <h3 style={{ margin: "0 0 6px", color: "#fff" }}>➕ Novo Carretel (Estoque Físico)</h3>
             <p style={{ margin: "0 0 14px", color: "#94a3b8", fontSize: 12 }}>
-              Cadastre um carretel físico. O perfil do fatiador auxilia no preenchimento, mas a matéria física (peso líquido e tara) é conferida por você.
+              Escolha o produto (o filamento, como está no Bambu Studio) e informe o que é deste carretel: peso, tara, preço e local.
             </p>
+            {createFromInbox && (
+              <p style={{ margin: "-6px 0 12px", color: "#fbbf24", fontSize: 12 }}>
+                📥 Criando a partir da caixa de entrada{createFromInbox.source === "nfc" ? ` (tag ${createFromInbox.external_id})` : " (carretel da nuvem Bambu)"}.
+                {createFromInbox.payload?.net_weight ? ` Peso nominal na Bambu: ${createFromInbox.payload.net_weight}g.` : ""}
+              </p>
+            )}
 
             <form onSubmit={handleSaveCreate} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {/* Seletor de Perfil do Bambu Studio */}
               <div>
                 <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>
-                  Usar perfil do Bambu Studio (opcional)
+                  Produto (filamento)
                 </label>
                 <select
-                  value={createSelectedProfileId}
-                  onChange={(e) => handleSelectProfileForCreate(e.target.value)}
+                  value={createProductChoice}
+                  onChange={(e) => handleSelectProductChoice(e.target.value)}
                   style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #0284c7", borderRadius: 6, color: "#fff", fontSize: 12 }}
+                  required
                 >
-                  <option value="">-- Preenchimento 100% manual --</option>
-                  {/* Só presets do fatiador em uso. Perfis 'bambu_cloud' (criados pelo
-                      Cloud Spool Sync) e de pastas antigas do fatiador ficam fora:
-                      duplicariam produtos na lista. */}
-                  {filamentProfiles.filter((p) => p.source === "bambu_studio" && p.is_listed !== false).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.display_name} ({p.material}{p.brand ? ` • ${p.brand}` : ""})
-                    </option>
-                  ))}
+                  <option value="">Escolha o produto...</option>
+                  {products.length > 0 && (
+                    <optgroup label="Seus produtos">
+                      {products.map((p) => (
+                        <option key={p.id} value={`product:${p.id}`}>{p.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {/* Perfis do Bambu Studio em uso que ainda não são produto. Perfis
+                      'bambu_cloud' e de pastas antigas do fatiador ficam fora. */}
+                  {profilesWithoutProduct(filamentProfiles, products).length > 0 && (
+                    <optgroup label="Novo produto a partir do Bambu Studio">
+                      {profilesWithoutProduct(filamentProfiles, products).map((p) => (
+                        <option key={p.id} value={`profile:${p.id}`}>{p.display_name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <option value="manual">➕ Produto que não está no Bambu Studio...</option>
                 </select>
               </div>
 
+              {createProductChoice === "manual" && (
+              <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={{ fontSize: 11, color: "#94a3b8" }}>Marca</label>
@@ -1817,7 +2065,7 @@ export default function App() {
 
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor / Nome do Carretel</label>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Cor</label>
                   <input
                     type="text"
                     value={createColorName}
@@ -1837,6 +2085,20 @@ export default function App() {
                   />
                 </div>
               </div>
+              </>
+              )}
+
+              {createProductChoice !== "manual" && createProductChoice !== "" && (
+                <div>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Tom deste carretel</label>
+                  <input
+                    type="color"
+                    value={createColorHex}
+                    onChange={(e) => setCreateColorHex(e.target.value)}
+                    style={{ width: "100%", height: 34, padding: 2, background: "#0f172a", border: "1px solid #334155", borderRadius: 6 }}
+                  />
+                </div>
+              )}
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
@@ -1865,7 +2127,7 @@ export default function App() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
-                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Preço Pago (R$)</label>
+                  <label style={{ fontSize: 11, color: "#94a3b8" }}>Preço Pago (R$, opcional)</label>
                   <input
                     type="number"
                     step="0.01"

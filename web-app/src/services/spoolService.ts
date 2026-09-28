@@ -75,17 +75,24 @@ export async function updateSpoolLocation(
 }
 
 export interface CreateSpoolPayload {
-  brand: string;
-  material: string;
+  // Identidade: sempre um produto (R5/F7). brand/material/cor são a cópia
+  // legada tirada do produto (identityFromProduct).
+  filament_product_id: string;
+  brand: string | null;
+  material: string | null;
   color_name: string;
-  color_hex: string;
+  color_hex: string | null;
   current_weight: number;
   spool_tare_weight: number;
   initial_weight?: number;
-  price_paid?: number;
+  // Opcional: sem preço grava NULL (nunca um valor padrão inventado).
+  price_paid?: number | null;
   location?: string | null;
   nfc_uid?: string | null;
   filament_profile_id?: string | null;
+  // Só quando o usuário cria o carretel a partir de um item da nuvem Bambu
+  // na caixa de entrada (ação explícita).
+  bambu_spool_id?: string | null;
   weight_confirmed_at?: string;
 }
 
@@ -96,8 +103,8 @@ export interface CreateSpoolResult {
 }
 
 /**
- * Cria um carretel físico no estoque com peso e tara confirmados pelo usuário.
- * Pode ser pré-preenchido por perfil do Bambu Studio ou entrada 100% manual.
+ * Cria um carretel físico no estoque, sempre ligado a um produto, com peso e
+ * tara confirmados pelo usuário.
  * Se a migration da coluna location ainda estiver pendente no Supabase remoto,
  * faz fallback gravando o carretel sem o spot e reporta a pendência.
  */
@@ -105,6 +112,7 @@ export async function createSpool(
   payload: CreateSpoolPayload
 ): Promise<CreateSpoolResult> {
   const row: Record<string, any> = {
+    filament_product_id: payload.filament_product_id,
     brand: payload.brand,
     material: payload.material,
     color_name: payload.color_name,
@@ -112,10 +120,13 @@ export async function createSpool(
     current_weight: payload.current_weight,
     spool_tare_weight: payload.spool_tare_weight,
     initial_weight: payload.initial_weight ?? payload.current_weight,
-    price_paid: payload.price_paid ?? 85.0,
+    price_paid: payload.price_paid ?? null,
     weight_confirmed_at:
       payload.weight_confirmed_at ?? new Date().toISOString(),
   };
+  if (payload.bambu_spool_id) {
+    row.bambu_spool_id = payload.bambu_spool_id;
+  }
 
   if (payload.nfc_uid && payload.nfc_uid.trim()) {
     row.nfc_uid = payload.nfc_uid.trim();
@@ -199,4 +210,21 @@ export async function assignSpoolToSlot(
     return supabase.from("ams_slots").upsert(row, { onConflict: "printer_id,slot_index" });
   }
   return result;
+}
+
+/**
+ * Arquiva o carretel (D4): sai do estoque, da lista de slots e do AMS, mas o
+ * registro continua existindo para o histórico de impressões apontar para ele.
+ */
+export async function archiveSpool(spoolId: string, nowIso: string = new Date().toISOString()) {
+  const cleared = await supabase
+    .from("ams_slots")
+    .update({ spool_id: null, updated_at: nowIso })
+    .eq("spool_id", spoolId);
+  if (cleared.error) return cleared;
+  return supabase
+    .from("spools")
+    .update({ archived_at: nowIso })
+    .eq("id", spoolId)
+    .select("id");
 }

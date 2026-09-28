@@ -1,4 +1,4 @@
-import type { Spool, UserFilamentProfile } from "../types";
+import type { FilamentProduct, Spool, UserFilamentProfile } from "../types";
 import { getSpoolDisplayName } from "./inventory";
 
 export interface SlotPickerOption {
@@ -39,18 +39,21 @@ export function buildSpoolDetails(spool: Spool): string[] {
 // Lista de carretéis para escolher o de um slot do AMS sem tag NFC. Busca
 // por nome/marca/material/cor/local; carretéis livres primeiro, depois os que
 // já estão em outro slot (escolher move); o que já está no slot alvo sai da lista.
+// O nome é o do produto; sem produto, o do perfil do Bambu Studio.
 export function buildSlotPickerOptions(
   inventory: Spool[],
   activeSlots: Record<number, Spool | null>,
   targetSlot: number,
   query: string,
-  profiles: UserFilamentProfile[] = []
+  profiles: UserFilamentProfile[] = [],
+  products: FilamentProduct[] = []
 ): SlotPickerOption[] {
   const slotBySpoolId = new Map<string, number>();
   for (const [idx, spool] of Object.entries(activeSlots)) {
     if (spool?.id) slotBySpoolId.set(spool.id, Number(idx));
   }
   const profileById = new Map(profiles.map((p) => [p.id, p]));
+  const productById = new Map(products.map((p) => [p.id, p]));
 
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
 
@@ -59,7 +62,9 @@ export function buildSlotPickerOptions(
     .map((spool) => ({
       spool,
       inOtherSlot: slotBySpoolId.get(spool.id) ?? null,
-      title: buildSpoolTitle(spool, spool.filament_profile_id ? profileById.get(spool.filament_profile_id) : null),
+      title:
+        (spool.filament_product_id && productById.get(spool.filament_product_id)?.name?.trim()) ||
+        buildSpoolTitle(spool, spool.filament_profile_id ? profileById.get(spool.filament_profile_id) : null),
       details: buildSpoolDetails(spool),
     }))
     .filter((o) => {

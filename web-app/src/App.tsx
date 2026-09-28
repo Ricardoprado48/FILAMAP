@@ -985,6 +985,7 @@ export default function App() {
           slotIndex={pickingSlot}
           inventory={inventory}
           activeSlots={activeSlots}
+          profiles={filamentProfiles}
           saving={savingSlotPick}
           onPick={handlePickSpoolForSlot}
           onClose={() => setPickingSlot(null)}

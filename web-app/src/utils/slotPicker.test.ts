@@ -27,4 +27,24 @@ describe("buildSlotPickerOptions", () => {
     expect(buildSlotPickerOptions(inventory, {}, 0, "masterprint")).toHaveLength(1);
     expect(buildSlotPickerOptions(inventory, {}, 0, "nylon")).toHaveLength(0);
   });
+
+  it("título no padrão do usuário: nome do perfil Bambu Studio, senão +/- MATERIAL COR MARCA", () => {
+    const linked = { ...spool("e", "PLA", "Vermelho Ultra Silk", "Vidas Buenas"), filament_profile_id: "p1" };
+    const profiles = [{ id: "p1", user_id: "u", source: "bambu_studio", source_key: "P1", source_profile_name: "x", display_name: "+ PLA VERMELHO ULTRA SILK VIDAS BUENAS", material: "PLA" }];
+    const opts = buildSlotPickerOptions([...inventory, linked], {}, 0, "", profiles);
+    const title = (id: string) => opts.find((o) => o.spool.id === id)?.title;
+    expect(title("e")).toBe("+ PLA VERMELHO ULTRA SILK VIDAS BUENAS");
+    expect(title("b")).toBe("- PETG BRANCO MASTERPRINT");
+    expect(title("a")).toBe("+ PLA PRETO VELVET VOOLT3D");
+  });
+
+  it("detalhes separam carretéis iguais: local, peso e tag; busca acha pelo local", () => {
+    const p1 = { ...spool("x", "PETG", "Preto"), location: "SPOT 2", nfc_uid: "04AA" };
+    const p2 = { ...spool("y", "PETG", "Preto"), location: null, current_weight: 338.4 };
+    const opts = buildSlotPickerOptions([p2, p1], {}, 0, "");
+    expect(opts.map((o) => o.spool.id)).toEqual(["y", "x"]); // "" antes de "SPOT 2"
+    expect(opts[1].details).toEqual(["📍 SPOT 2", "1000g", "🏷️ com tag"]);
+    expect(opts[0].details).toEqual(["📍 sem local", "338g", "sem tag"]);
+    expect(buildSlotPickerOptions([p1, p2], {}, 0, "spot 2").map((o) => o.spool.id)).toEqual(["x"]);
+  });
 });

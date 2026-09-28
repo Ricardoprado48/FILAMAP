@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import type { Spool } from "../types";
+import type { Spool, UserFilamentProfile } from "../types";
 import { buildSlotPickerOptions } from "../utils/slotPicker";
-import { getSpoolDisplayName, getSpoolSwatchColor } from "../utils/inventory";
+import { getSpoolSwatchColor } from "../utils/inventory";
 
 // Escolher o carretel de um slot do AMS pela lista do estoque (sem tag NFC).
 
@@ -9,6 +9,7 @@ export function SlotSpoolPicker({
   slotIndex,
   inventory,
   activeSlots,
+  profiles,
   saving,
   onPick,
   onClose,
@@ -16,14 +17,15 @@ export function SlotSpoolPicker({
   slotIndex: number;
   inventory: Spool[];
   activeSlots: Record<number, Spool | null>;
+  profiles: UserFilamentProfile[];
   saving: boolean;
   onPick: (spool: Spool) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const options = useMemo(
-    () => buildSlotPickerOptions(inventory, activeSlots, slotIndex, query),
-    [inventory, activeSlots, slotIndex, query]
+    () => buildSlotPickerOptions(inventory, activeSlots, slotIndex, query, profiles),
+    [inventory, activeSlots, slotIndex, query, profiles]
   );
 
   return (
@@ -57,7 +59,7 @@ export function SlotSpoolPicker({
           {options.length === 0 && (
             <div style={{ color: "#94a3b8", fontSize: 13, padding: 12, textAlign: "center" }}>Nenhum carretel encontrado.</div>
           )}
-          {options.map(({ spool, inOtherSlot }) => (
+          {options.map(({ spool, inOtherSlot, title, details }) => (
             <button
               key={spool.id}
               disabled={saving}
@@ -66,9 +68,9 @@ export function SlotSpoolPicker({
             >
               <span style={{ width: 18, height: 18, flexShrink: 0, borderRadius: "50%", backgroundColor: getSpoolSwatchColor(spool), border: "1px solid rgba(255,255,255,0.25)" }} />
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontWeight: 700, fontSize: 14, overflowWrap: "anywhere" }}>{getSpoolDisplayName(spool)}</span>
+                <span style={{ display: "block", fontWeight: 700, fontSize: 14, overflowWrap: "anywhere" }}>{title}</span>
                 <span style={{ display: "block", fontSize: 12, color: "#94a3b8" }}>
-                  {spool.material} · {spool.current_weight}g
+                  {details.join(" · ")}
                   {inOtherSlot !== null ? ` · hoje no slot ${inOtherSlot + 1} (será movido)` : ""}
                 </span>
               </span>

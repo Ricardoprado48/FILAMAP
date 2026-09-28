@@ -510,6 +510,34 @@ export function buildSourceMetadata(
   };
 }
 
+// Posição do carretel segundo a PRÓPRIA nuvem Bambu ("devId|slotId"); null = fora da impressora.
+export function cloudPositionOf(spool: ParsedBambuCloudSpool): string | null {
+  if (!spool.inPrinter || spool.slotId === null || spool.slotId === "") return null;
+  return `${spool.devId ?? ""}|${spool.slotId}`;
+}
+
+/**
+ * Memória da visão da nuvem (v4.1). A projeção do AMS reescreve bambu_slot_id com a
+ * conclusão dela, então a posição que a nuvem informou -- e QUANDO ela mudou -- fica
+ * guardada à parte no metadata. É o que permite "a escolha mais recente vale": uma
+ * troca feita em Dispositivos na Bambu depois da escolha feita no Filamap.
+ * Primeira observação: changed_at = null (idade desconhecida = antiga), para a
+ * atualização do Agent nunca passar por cima de escolhas já feitas no Filamap.
+ */
+export function withCloudPosition(
+  metadata: Record<string, unknown>,
+  existingMetadata: Record<string, unknown> | null | undefined,
+  position: string | null,
+  now: string
+): Record<string, unknown> {
+  const hadPosition = !!existingMetadata && Object.prototype.hasOwnProperty.call(existingMetadata, "cloud_position");
+  let changedAt: unknown = null;
+  if (hadPosition) {
+    changedAt = existingMetadata!.cloud_position !== position ? now : existingMetadata!.cloud_position_changed_at ?? null;
+  }
+  return { ...metadata, cloud_position: position, cloud_position_changed_at: changedAt };
+}
+
 /**
  * Normaliza um valor de cor para formato hexadecimal padrão #RRGGBB.
  * Trata valores de 6 dígitos (#RRGGBB ou RRGGBB) e 8 dígitos (RRGGBBAA com alpha).
@@ -688,39 +716,64 @@ export async function syncBambuCloudSpoolsFromParsed(
   const rowsToUpdate: { id: string; payload: any }[] = [];
   const inboxRows: ReturnType<typeof buildInboxRow>[] = [];
 
+  // Um carretel físico pode ter mais de um registro na nuvem (principal + secundários).
+  // A posição dele é a do registro que está na impressora; senão, a do principal.
+  const positionBySpoolId = new Map<string, ParsedBambuCloudSpool>();
+  const primaryIdsInBatch = new Set(spools.map((s) => s.bambuSpoolId));
+  for (const spool of spools) {
+    const target = spoolByPrimaryBambuId.get(spool.bambuSpoolId) || spoolBySecondaryBambuId.get(spool.bambuSpoolId);
+    if (!target) continue;
+    const current = positionBySpoolId.get(target.id);
+    if (!current || (!current.inPrinter && spool.inPrinter)) positionBySpoolId.set(target.id, spool);
+  }
+
   for (const spool of spools) {
     const profileRow = profileRowByFilamentId.get(spool.filamentId);
 
     // Caso A: spool ja ligado a este carretel da nuvem -> so posicao/evidencia
     const primaryExisting = spoolByPrimaryBambuId.get(spool.bambuSpoolId);
     if (primaryExisting) {
+      const position = positionBySpoolId.get(primaryExisting.id) || spool;
+      const existingMeta = primaryExisting.bambu_source_metadata as Record<string, unknown> | null;
       rowsToUpdate.push({
         id: primaryExisting.id,
         payload: {
-          ...buildSpoolPositionRow(spool, now),
-          bambu_source_metadata: buildSourceMetadata(spool, primaryExisting.bambu_source_metadata),
+          ...buildSpoolPositionRow(position, now),
+          bambu_source_metadata: withCloudPosition(
+            buildSourceMetadata(spool, existingMeta),
+            existingMeta,
+            cloudPositionOf(position),
+            now
+          ),
         },
       });
       continue;
     }
 
-    // Caso B: id secundario ja registrado -> so posicao quando esta na impressora
+    // Caso B: id secundario ja registrado. Se o principal veio neste lote, o caso A
+    // ja gravou a posicao combinada; senao (principal apagado na Bambu), o secundario
+    // informa a posicao do carretel.
     const secondaryExisting = spoolBySecondaryBambuId.get(spool.bambuSpoolId);
     if (secondaryExisting) {
-      if (spool.inPrinter) {
-        rowsToUpdate.push({
-          id: secondaryExisting.id,
-          payload: {
+      if (!primaryIdsInBatch.has(String(secondaryExisting.bambu_spool_id))) {
+        const position = positionBySpoolId.get(secondaryExisting.id) || spool;
+        const existingMeta = secondaryExisting.bambu_source_metadata as Record<string, unknown> | null;
+        const payload: Record<string, unknown> = {
+          bambu_source_metadata: withCloudPosition({ ...(existingMeta || {}) }, existingMeta, cloudPositionOf(position), now),
+          bambu_synced_at: now,
+          updated_at: now,
+        };
+        if (position.inPrinter) {
+          Object.assign(payload, {
             bambu_in_printer: true,
-            bambu_dev_id: spool.devId,
-            bambu_device_name: spool.deviceName,
-            bambu_ams_sn: spool.amsSn,
-            bambu_ams_id: spool.amsId,
-            bambu_slot_id: spool.slotId,
-            bambu_synced_at: now,
-            updated_at: now,
-          },
-        });
+            bambu_dev_id: position.devId,
+            bambu_device_name: position.deviceName,
+            bambu_ams_sn: position.amsSn,
+            bambu_ams_id: position.amsId,
+            bambu_slot_id: position.slotId,
+          });
+        }
+        rowsToUpdate.push({ id: secondaryExisting.id, payload });
       }
       continue;
     }

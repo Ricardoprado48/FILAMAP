@@ -23,6 +23,8 @@ export interface ReconcileAmsInputSpool {
   bambu_slot_id: string | null;
   bambu_in_printer: boolean | null;
   bambu_source_metadata?: Record<string, unknown> | null;
+  // Produto de filamento (F1/F6). Ausente em bancos antigos.
+  filament_product_id?: string | null;
 }
 
 export interface ReconcileAmsInputAmsSlot {
@@ -31,6 +33,8 @@ export interface ReconcileAmsInputAmsSlot {
   // 'user' = escolhido na Web (tag NFC ou lista do estoque); 'agent' = esta
   // projeção. Ausente em bancos sem a migration 20260929010000.
   assigned_by?: string | null;
+  // Quando a escolha foi feita (compara com uma troca feita depois na Bambu).
+  assigned_at?: string | null;
 }
 
 export interface AmsReconciliationInput {
@@ -38,6 +42,8 @@ export interface AmsReconciliationInput {
   mqttTrays: MqttAmsTray[];
   spools: ReconcileAmsInputSpool[];
   currentAmsSlots: ReconcileAmsInputAmsSlot[];
+  // Perfil do slot (tray_info_idx = source_key do preset) -> produto de filamento.
+  presetProducts?: Record<string, string>;
 }
 
 export interface SpoolLocationUpdate {
@@ -165,15 +171,39 @@ export function parseMqttAmsStatus(printPayload: any): MqttAmsTray[] {
   return result;
 }
 
+// A nuvem Bambu aponta este carretel para este slot? Usa a visão da PRÓPRIA nuvem
+// guardada pelo sync (metadata.cloud_position, v4.1); dados antigos sem ela caem em
+// bambu_* como antes.
+export function cloudPointsToSlot(s: ReconcileAmsInputSpool, printerSerial: string, slotIdx: number): boolean {
+  const meta = s.bambu_source_metadata as Record<string, unknown> | null | undefined;
+  if (meta && Object.prototype.hasOwnProperty.call(meta, "cloud_position")) {
+    return meta.cloud_position === `${printerSerial}|${slotIdx}`;
+  }
+  return s.bambu_dev_id === printerSerial && s.bambu_slot_id === String(slotIdx) && s.bambu_in_printer === true;
+}
+
+// Quando a nuvem passou a apontar este carretel para a posição atual (null = desconhecido/antigo).
+function cloudChangedAt(s: ReconcileAmsInputSpool): number | null {
+  const raw = (s.bambu_source_metadata as Record<string, unknown> | null | undefined)?.cloud_position_changed_at;
+  const t = typeof raw === "string" ? Date.parse(raw) : NaN;
+  return Number.isNaN(t) ? null : t;
+}
+
+// O carretel contradiz o perfil que o AMS informa para o slot? Só quando os dois lados são conhecidos.
+function contradictsPreset(s: ReconcileAmsInputSpool, presetProductId: string | null): boolean {
+  return Boolean(presetProductId && s.filament_product_id && s.filament_product_id !== presetProductId);
+}
+
 /**
  * Reconcilia o estado físico da AMS comparando o MQTT autoritativo com o banco (Bambu Cloud + ams_slots + estoque).
- * Prioridade:
- * 1. Ocupação estrita do MQTT local (porta 8883)
- * 2. Validação de material (elimina imediatamente dados stale da nuvem)
- * 3. Match por RFID real da Bambu Lab
- * 4. Match por Bambu Cloud attribution (se compatível em material)
- * 5. Match por ams_slots anterior (se compatível)
- * 6. Match por material + cor único no inventário
+ * Prioridade (slot ocupado no MQTT local; material sempre validado):
+ * 1. RFID real da Bambu Lab
+ * 2. Escolha do usuário no Filamap -- exceto se, DEPOIS dela, o usuário trocou o carretel
+ *    do slot em Dispositivos na Bambu (a escolha mais recente vale)
+ * 3. Carretel que a nuvem Bambu aponta para o slot (descartado se contradiz o perfil do slot)
+ * 4. Perfil do slot (tray_info_idx) -> produto -> único carretel desse produto no estoque
+ * 5. ams_slots anterior (se não contradiz o perfil do slot)
+ * 6. Material + cor único no inventário (sem carretéis de outro produto que o do perfil)
  */
 export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliationResult {
   const { printerSerial, mqttTrays, spools, currentAmsSlots } = input;
@@ -186,9 +216,14 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
 
   const currentAmsMap = new Map<number, string | null>();
   const userChosenSlots = new Set<number>();
+  const userChosenAt = new Map<number, number>();
   for (const s of currentAmsSlots) {
     currentAmsMap.set(s.slot_index, s.spool_id);
-    if (s.assigned_by === "user" && s.spool_id) userChosenSlots.add(s.slot_index);
+    if (s.assigned_by === "user" && s.spool_id) {
+      userChosenSlots.add(s.slot_index);
+      const t = s.assigned_at ? Date.parse(s.assigned_at) : NaN;
+      userChosenAt.set(s.slot_index, Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t);
+    }
   }
 
   for (let slotIdx = 0; slotIdx < 4; slotIdx++) {
@@ -201,6 +236,11 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
 
     // O slot está fisicamente ocupado pelo MQTT
     let matchedSpool: ReconcileAmsInputSpool | null = null;
+    const presetProductId = (tray.trayInfoIdx && input.presetProducts?.[tray.trayInfoIdx]) || null;
+
+    // Carretéis que a nuvem aponta para este slot, separados em válidos e desatualizados.
+    const cloudPointed = spools.filter((s) => !assignedSpoolIds.has(s.id) && cloudPointsToSlot(s, printerSerial, slotIdx));
+    const cloudValid = cloudPointed.filter((s) => isMaterialCompatible(s.material, tray.trayType) && !contradictsPreset(s, presetProductId));
 
     // Prioridade 1: RFID físico da Bambu Lab (se tagUid não for zeros nem vazio)
     if (tray.tagUid && tray.tagUid !== "0000000000000000" && tray.tagUid.length >= 8) {
@@ -222,7 +262,13 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
       const chosenId = currentAmsMap.get(slotIdx);
       const chosen = spools.find((s) => s.id === chosenId && !assignedSpoolIds.has(s.id));
       if (chosen && isMaterialCompatible(chosen.material, tray.trayType)) {
-        matchedSpool = chosen;
+        // Troca feita na Bambu (Dispositivos) DEPOIS da escolha no Filamap: a mais recente vale.
+        const chosenAt = userChosenAt.get(slotIdx) ?? Number.NEGATIVE_INFINITY;
+        const newerCloud = cloudValid.find((c) => {
+          const t = cloudChangedAt(c);
+          return c.id !== chosen.id && t !== null && t > chosenAt;
+        });
+        matchedSpool = newerCloud || chosen;
       } else if (chosen) {
         conflicts.push({
           slotIndex: slotIdx,
@@ -233,25 +279,19 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
 
     // Prioridade 2: Candidato apontado pela Bambu Cloud para este slot
     if (!matchedSpool) {
-      const cloudCandidates = spools.filter(
-        (s) =>
-          s.bambu_dev_id === printerSerial &&
-          s.bambu_slot_id === String(slotIdx) &&
-          s.bambu_in_printer === true &&
-          !assignedSpoolIds.has(s.id)
-      );
-
-      for (const cand of cloudCandidates) {
-        if (isMaterialCompatible(cand.material, tray.trayType)) {
-          // Se compatível em material e cor não conflita diretamente
+      for (const cand of cloudPointed) {
+        if (cloudValid.includes(cand)) {
           if (!matchedSpool) {
             matchedSpool = cand;
           }
-        } else {
+        } else if (matchedSpool?.id !== cand.id) {
           // Conflito crítico detectado: a nuvem Bambu tem cache stale no slot!
+          const motivo = isMaterialCompatible(cand.material, tray.trayType)
+            ? `o perfil do slot no AMS (${tray.trayInfoIdx}) é de outro produto`
+            : `o hardware MQTT reporta ${tray.trayType}`;
           conflicts.push({
             slotIndex: slotIdx,
-            description: `Bambu Cloud apontava carretel "${cand.color_name}" (${cand.material}) no slot ${slotIdx + 1}, mas o hardware MQTT reporta ${tray.trayType}. Vínculo stale da nuvem rejeitado.`,
+            description: `Bambu Cloud apontava carretel "${cand.color_name}" (${cand.material}) no slot ${slotIdx + 1}, mas ${motivo}. Vínculo stale da nuvem rejeitado.`,
           });
           spoolLocationUpdates.push({
             id: cand.id,
@@ -264,21 +304,37 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
       }
     }
 
-    // Prioridade 3: ams_slots anterior (vínculo NFC anterior ou persistido)
+    // Prioridade 3: perfil do slot aponta um produto com um único carretel livre no estoque.
+    // Com dois ou mais carretéis iguais não há como saber qual rolo é: vale o que já estava
+    // no slot (se for desse produto); senão fica sem vínculo (tag ou escolha do usuário).
+    if (!matchedSpool && presetProductId) {
+      const sameProduct = spools.filter(
+        (s) => !assignedSpoolIds.has(s.id) && s.filament_product_id === presetProductId && isMaterialCompatible(s.material, tray.trayType)
+      );
+      if (sameProduct.length === 1) {
+        matchedSpool = sameProduct[0];
+      } else if (sameProduct.length > 1) {
+        const previousSpoolId = currentAmsMap.get(slotIdx);
+        matchedSpool = sameProduct.find((s) => s.id === previousSpoolId) || null;
+      }
+    }
+
+    // Prioridade 4: ams_slots anterior (vínculo NFC anterior ou persistido)
     if (!matchedSpool) {
       const previousSpoolId = currentAmsMap.get(slotIdx);
       if (previousSpoolId && !assignedSpoolIds.has(previousSpoolId)) {
         const prevSpool = spools.find((s) => s.id === previousSpoolId);
-        if (prevSpool && isMaterialCompatible(prevSpool.material, tray.trayType)) {
+        if (prevSpool && isMaterialCompatible(prevSpool.material, tray.trayType) && !contradictsPreset(prevSpool, presetProductId)) {
           matchedSpool = prevSpool;
         }
       }
     }
 
-    // Prioridade 4: Unassigned inventory match por Material + Cor
+    // Prioridade 5: Unassigned inventory match por Material + Cor
     if (!matchedSpool) {
       const materialCandidates = spools.filter((s) => {
         if (assignedSpoolIds.has(s.id)) return false;
+        if (contradictsPreset(s, presetProductId)) return false;
         return isMaterialCompatible(s.material, tray.trayType);
       });
 
@@ -392,7 +448,7 @@ export async function syncAmsProjection(
   {
     const withSource = await supabase
       .from("ams_slots")
-      .select("slot_index, spool_id, assigned_by")
+      .select("slot_index, spool_id, assigned_by, assigned_at")
       .eq("printer_id", printerId);
     if (withSource.error && isMissingAssignedByColumn(withSource.error)) {
       const legacy = await supabase.from("ams_slots").select("slot_index, spool_id").eq("printer_id", printerId);
@@ -412,7 +468,7 @@ export async function syncAmsProjection(
   {
     const withArchive = await supabase
       .from("spools")
-      .select("id, brand, material, color_name, color_hex, nfc_uid, bambu_spool_id, bambu_dev_id, bambu_slot_id, bambu_in_printer, bambu_source_metadata, archived_at");
+      .select("id, brand, material, color_name, color_hex, nfc_uid, bambu_spool_id, bambu_dev_id, bambu_slot_id, bambu_in_printer, bambu_source_metadata, filament_product_id, archived_at");
     if (withArchive.error && isMissingArchivedColumn(withArchive.error)) {
       const legacy = await supabase
         .from("spools")
@@ -426,15 +482,32 @@ export async function syncAmsProjection(
     }
   }
 
-  // 3. Executa reconciliação pura
+  // 3. Perfil do slot -> produto (F6). Banco sem a coluna ou falha: segue sem (como antes).
+  const presetProducts: Record<string, string> = {};
+  try {
+    const { data: profileRows, error: profileErr } = await supabase
+      .from("user_filament_profiles")
+      .select("source_key, filament_product_id")
+      .not("filament_product_id", "is", null);
+    if (!profileErr) {
+      for (const row of profileRows || []) {
+        if (row.source_key && row.filament_product_id) presetProducts[String(row.source_key)] = String(row.filament_product_id);
+      }
+    }
+  } catch {
+    // sem mapa: identificação por perfil desligada neste ciclo
+  }
+
+  // 4. Executa reconciliação pura
   const reconciliation = reconcileAmsState({
     printerSerial,
     mqttTrays,
     spools: (spoolsData || []) as ReconcileAmsInputSpool[],
     currentAmsSlots: (currentSlotsData || []) as ReconcileAmsInputAmsSlot[],
+    presetProducts,
   });
 
-  // 4. Aplica atualizações idempotentes em ams_slots
+  // 5. Aplica atualizações idempotentes em ams_slots
   let slotsUpdated = 0;
   const existingSlotMap = new Map<number, string | null>(
     (currentSlotsData || []).map((s: any) => [s.slot_index, s.spool_id])
@@ -458,7 +531,7 @@ export async function syncAmsProjection(
     }
   }
 
-  // 5. Aplica atualizações idempotentes em spools
+  // 6. Aplica atualizações idempotentes em spools
   let spoolsUpdated = 0;
   const updatesBySpoolId = new Map<string, SpoolLocationUpdate>();
   for (const update of reconciliation.spoolLocationUpdates) {

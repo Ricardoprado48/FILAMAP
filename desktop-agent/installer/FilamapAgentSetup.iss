@@ -1,5 +1,5 @@
 #define MyAppName "Filamap Agent"
-#define MyAppVersion "4.0.0"
+#define MyAppVersion "4.1.0"
 #define MyAppPublisher "Filamap"
 #define MyAppExeName "filamap-agent.exe"
 
@@ -87,10 +87,10 @@ Filename: "powershell.exe"; \
 [Icons]
 
 ; Atalho principal. Aponta para start-agent.vbs (via wscript.exe, sem
-; janela preta) em vez do .exe diretamente -- start-agent.vbs só pede
-; ao Task Scheduler para rodar a Tarefa Agendada já registrada por
-; install-autostart.ps1, então clicar aqui nunca cria um segundo
-; processo do Agent: se já estiver rodando, MultipleInstances=IgnoreNew
+; janela preta) em vez do .exe diretamente -- start-agent.vbs s?? pede
+; ao Task Scheduler para rodar a Tarefa Agendada j?? registrada por
+; install-autostart.ps1, ent??o clicar aqui nunca cria um segundo
+; processo do Agent: se j?? estiver rodando, MultipleInstances=IgnoreNew
 ; faz o Windows ignorar o pedido.
 Name: "{group}\Filamap"; \
     Filename: "https://filamap.pages.dev"; \

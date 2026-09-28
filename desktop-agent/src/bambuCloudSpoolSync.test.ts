@@ -923,3 +923,61 @@ test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e
   assert.equal(client.tables.spools[0].current_weight, 338);
 });
 
+
+// ---------------------------------------------------------------------------
+// v4.1: memória da posição informada pela PRÓPRIA nuvem (para "a escolha mais recente vale")
+// ---------------------------------------------------------------------------
+
+function linkedSpool(bambuId: string, meta: Record<string, unknown> | null = null) {
+  return { id: randomUUID(), user_id: USER_ID, bambu_spool_id: bambuId, material: "PLA", bambu_source_metadata: meta };
+}
+
+test("v4.1: 1a observação da posição na nuvem fica com data desconhecida (não passa por cima de escolhas antigas)", async () => {
+  const client = new FakeSupabaseClient({ spools: [linkedSpool("15582983")] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool({ inPrinter: true })]);
+  const meta = client.tables.spools[0].bambu_source_metadata;
+  assert.equal(meta.cloud_position, "01P00A000000000|1");
+  assert.equal(meta.cloud_position_changed_at, null);
+});
+
+test("v4.1: posição da nuvem mudou -> registra o momento; não mudou -> mantém o momento anterior", async () => {
+  const before = { cloud_position: "01P00A000000000|3", cloud_position_changed_at: "2026-09-01T00:00:00.000Z" };
+  const moved = new FakeSupabaseClient({ spools: [linkedSpool("15582983", before)] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(moved), USER_ID, [silkSpool({ inPrinter: true })]);
+  const m1 = moved.tables.spools[0].bambu_source_metadata;
+  assert.equal(m1.cloud_position, "01P00A000000000|1");
+  assert.ok(Date.parse(m1.cloud_position_changed_at) > Date.parse(before.cloud_position_changed_at));
+
+  const same = { cloud_position: "01P00A000000000|1", cloud_position_changed_at: "2026-09-01T00:00:00.000Z" };
+  const still = new FakeSupabaseClient({ spools: [linkedSpool("15582983", same)] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(still), USER_ID, [silkSpool({ inPrinter: true })]);
+  assert.equal(still.tables.spools[0].bambu_source_metadata.cloud_position_changed_at, "2026-09-01T00:00:00.000Z");
+
+  const out = new FakeSupabaseClient({ spools: [linkedSpool("15582983", same)] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(out), USER_ID, [silkSpool({ inPrinter: false })]);
+  assert.equal(out.tables.spools[0].bambu_source_metadata.cloud_position, null);
+});
+
+test("v4.1: principal fora + secundário na impressora -> posição do carretel = a do secundário (uma escrita só)", async () => {
+  const s = linkedSpool("15147446", { secondary_bambu_spool_ids: ["15788790"] });
+  const client = new FakeSupabaseClient({ spools: [s] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [
+    silkSpool({ bambuSpoolId: "15788790", inPrinter: true, slotId: "2" }),
+    silkSpool({ bambuSpoolId: "15147446", inPrinter: false }),
+  ]);
+  const row = client.tables.spools[0];
+  assert.equal(row.bambu_in_printer, true);
+  assert.equal(row.bambu_slot_id, "2");
+  assert.equal(row.bambu_source_metadata.cloud_position, "01P00A000000000|2");
+  assert.deepEqual(row.bambu_source_metadata.secondary_bambu_spool_ids, ["15788790"]);
+});
+
+test("v4.1: principal apagado na Bambu, só o secundário vem -> ele informa a posição", async () => {
+  const s = linkedSpool("13534875", { secondary_bambu_spool_ids: ["15306058"] });
+  const client = new FakeSupabaseClient({ spools: [s] });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool({ bambuSpoolId: "15306058", inPrinter: true, slotId: "1" })]);
+  const row = client.tables.spools[0];
+  assert.equal(row.bambu_slot_id, "1");
+  assert.equal(row.bambu_source_metadata.cloud_position, "01P00A000000000|1");
+  assert.equal(row.bambu_spool_id, "13534875", "o vínculo principal não é trocado");
+});

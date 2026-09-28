@@ -540,7 +540,7 @@ test("syncAmsProjection: banco sem a coluna assigned_by (antes da migration) con
 
   const counts = await syncAmsProjection(mockSupabase, "printer-1", "P1", payload);
   assert.equal(counts.slotsUpdated, 4);
-  assert.deepEqual(selects, ["slot_index, spool_id, assigned_by", "slot_index, spool_id"]);
+  assert.deepEqual(selects, ["slot_index, spool_id, assigned_by, assigned_at", "slot_index, spool_id"]);
   const slot0 = upserts.filter((u) => u.slot_index === 0);
   assert.equal(slot0.length, 2, "tenta com assigned_by e repete sem");
   assert.equal(slot0[1].spool_id, "s1");
@@ -585,6 +585,9 @@ test("syncAmsProjection: banco sem a coluna archived_at continua funcionando (co
           upsert() { return Promise.resolve({ error: null }); },
         };
       }
+      if (table === "user_filament_profiles") {
+        return { select() { return { not() { return Promise.resolve({ data: null, error: { code: "42703", message: "column filament_product_id does not exist" } }); } }; } };
+      }
       return {
         select(cols: string) {
           selects.push(cols);
@@ -600,4 +603,133 @@ test("syncAmsProjection: banco sem a coluna archived_at continua funcionando (co
   assert.equal(selects.length, 2);
   assert.ok(!selects[1].includes("archived_at"));
   assert.equal(counts.slotsUpdated, 4);
+});
+
+// ---------------------------------------------------------------------------
+// v4.1: escolha mais recente vale (Filamap x Dispositivos da Bambu) e perfil do slot
+// ---------------------------------------------------------------------------
+
+const PLA_TRAY = (slotIndex: number, trayInfoIdx: string | null = null) => ({
+  slotIndex, occupied: true, trayType: "PLA", trayColorHex: "#161616", tagUid: "0000000000000000", trayInfoIdx, traySubBrands: null,
+});
+const cloudAt = (serial: string, slot: number, changedAt: string | null) => ({
+  bambu_source_metadata: { cloud_position: `${serial}|${slot}`, cloud_position_changed_at: changedAt },
+});
+
+test("v4.1: troca feita na Bambu DEPOIS da escolha no Filamap vence (a mais recente vale)", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("escolhido-filamap", "PLA"),
+      spool("escolhido-bambu", "PLA", cloudAt("P1", 0, "2026-09-29T12:00:00Z")),
+    ],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido-filamap", assigned_by: "user", assigned_at: "2026-09-29T10:00:00Z" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "escolhido-bambu");
+});
+
+test("v4.1: escolha no Filamap DEPOIS da troca na Bambu continua valendo", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("escolhido-filamap", "PLA"),
+      spool("escolhido-bambu", "PLA", cloudAt("P1", 0, "2026-09-29T09:00:00Z")),
+    ],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido-filamap", assigned_by: "user", assigned_at: "2026-09-29T10:00:00Z" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "escolhido-filamap");
+});
+
+test("v4.1: posição da nuvem de idade desconhecida (1a leitura após instalar) não passa por cima da escolha do usuário", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [spool("escolhido-filamap", "PLA"), spool("nuvem", "PLA", cloudAt("P1", 0, null))],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "escolhido-filamap", assigned_by: "user", assigned_at: "2026-09-29T10:00:00Z" }],
+  });
+  assert.equal(result.slotAssignments.get(0), "escolhido-filamap");
+});
+
+test("v4.1: a visão da nuvem vem do metadata, não do bambu_slot_id que a projeção reescreve", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      // projeção antiga deixou este no slot 0, mas a nuvem já diz que ele saiu
+      spool("antigo", "PLA", { bambu_dev_id: "P1", bambu_slot_id: "0", bambu_in_printer: true, bambu_source_metadata: { cloud_position: null, cloud_position_changed_at: "2026-09-29T12:00:00Z" } }),
+      spool("novo", "PLA", cloudAt("P1", 0, "2026-09-29T12:00:00Z")),
+    ],
+    currentAmsSlots: [],
+  });
+  assert.equal(result.slotAssignments.get(0), "novo");
+});
+
+test("v4.1: perfil do slot identifica o único carretel daquele produto (mesmo com outros PLA pretos)", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0, "Pef7a165"), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("preto-velvet", "PLA", { color_hex: "#161616", filament_product_id: "prod-velvet" }),
+      spool("preto-silk", "PLA", { color_hex: "#161616", filament_product_id: "prod-silk" }),
+    ],
+    currentAmsSlots: [],
+    presetProducts: { Pef7a165: "prod-velvet" },
+  });
+  assert.equal(result.slotAssignments.get(0), "preto-velvet");
+});
+
+test("v4.1: dois carretéis do mesmo produto -> não chuta (fica o que já estava no slot, ou nenhum)", () => {
+  const base = {
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0, "Pef7a165"), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("rolo-a", "PLA", { color_hex: "#161616", filament_product_id: "prod-velvet" }),
+      spool("rolo-b", "PLA", { color_hex: "#161616", filament_product_id: "prod-velvet" }),
+    ],
+    presetProducts: { Pef7a165: "prod-velvet" },
+  };
+  assert.equal(reconcileAmsState({ ...base, currentAmsSlots: [] }).slotAssignments.get(0), null);
+  assert.equal(reconcileAmsState({ ...base, currentAmsSlots: [{ slot_index: 0, spool_id: "rolo-b" }] }).slotAssignments.get(0), "rolo-b");
+});
+
+test("v4.1: carretel anterior de OUTRO produto que o perfil do slot não é mantido (rolo foi trocado)", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0, "P0a22169"), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("preto-velvet", "PLA", { filament_product_id: "prod-preto" }),
+      spool("branco-velvet", "PLA", { filament_product_id: "prod-branco" }),
+    ],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "preto-velvet" }],
+    presetProducts: { P0a22169: "prod-branco" },
+  });
+  assert.equal(result.slotAssignments.get(0), "branco-velvet");
+});
+
+test("v4.1: nuvem desatualizada que contradiz o perfil do slot é rejeitada", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0, "P0a22169"), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [
+      spool("nuvem-velha", "PLA", { filament_product_id: "prod-preto", ...cloudAt("P1", 0, "2026-09-29T12:00:00Z") }),
+      spool("branco-velvet", "PLA", { filament_product_id: "prod-branco" }),
+    ],
+    currentAmsSlots: [],
+    presetProducts: { P0a22169: "prod-branco" },
+  });
+  assert.equal(result.slotAssignments.get(0), "branco-velvet");
+  assert.ok(result.conflicts.some((c) => c.description.includes("perfil do slot")));
+});
+
+test("v4.1: perfil genérico/desconhecido no slot não muda nada (sem mapa, segue material + cor)", () => {
+  const result = reconcileAmsState({
+    printerSerial: "P1",
+    mqttTrays: [PLA_TRAY(0, "GFL99"), EMPTY_TRAY(1), EMPTY_TRAY(2), EMPTY_TRAY(3)],
+    spools: [spool("unico-pla", "PLA", { filament_product_id: "prod-x" })],
+    currentAmsSlots: [],
+    presetProducts: { Pef7a165: "prod-velvet" },
+  });
+  assert.equal(result.slotAssignments.get(0), "unico-pla");
 });

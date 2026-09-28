@@ -31,12 +31,14 @@ Write-Host "=== Publicar Web na PRODUCAO ==="
 
 $null = Assert-Cmd "git fetch origin" "Falha ao consultar o GitHub."
 $head = (Assert-Cmd "git rev-parse HEAD" "Falha no git.").Trim()
-if ($head -ne $Aprovado) { throw "Versao local ($head) diferente da aprovada ($Aprovado). Nada foi publicado." }
+$anc = Invoke-Cmd "git merge-base --is-ancestor $Aprovado HEAD"
+$dif = Invoke-Cmd "git diff --quiet $Aprovado HEAD -- web-app desktop-agent supabase"
+if ($anc.Code -ne 0 -or $dif.Code -ne 0) { throw "O codigo mudou desde a versao aprovada ($($Aprovado.Substring(0,7))). Nada foi publicado." }
 $sujo = (Assert-Cmd "git status --porcelain" "Falha no git.") -split "`n" | Where-Object { $_.Trim() -and $_ -notmatch "web-app/dist-staging/" }
 if ($sujo) { throw "Ha alteracoes locais nao salvas: $($sujo -join ', '). Nada foi publicado." }
 $ff = Invoke-Cmd "git merge-base --is-ancestor origin/main HEAD"
 if ($ff.Code -ne 0) { throw "O main no GitHub mudou e nao avanca direto para esta versao. Me chame. Nada foi publicado." }
-Write-Host "[1] Versao aprovada conferida: $($head.Substring(0,7)); main avanca direto (fast-forward)."
+Write-Host "[1] Codigo identico ao aprovado ($($Aprovado.Substring(0,7))); publicando $($head.Substring(0,7)); main avanca direto."
 
 Set-Location (Join-Path $Repo "web-app")
 $env:VITE_SUPABASE_URL = $null

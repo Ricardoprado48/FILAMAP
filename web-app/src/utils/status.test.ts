@@ -6,6 +6,7 @@ import {
   formatPrinterOperationalState,
   isPrinterLivePrinting,
 } from "./status";
+import { PRINTER_ONLINE_THRESHOLD_MS } from "../constants";
 
 function createPrinter(overrides: Partial<Printer> = {}): Printer {
   return {
@@ -74,7 +75,7 @@ describe("Status Hermético - Agent e Impressora (Fixtures A - L)", () => {
   });
 
   describe("STATUS IMPRESSORA", () => {
-    it("Fixture G: Agent Online + telemetry fresca (< 60s) -> Online", () => {
+    it("Fixture G: Agent Online + telemetry fresca (< threshold) -> Online", () => {
       const printer = createPrinter({
         last_seen_at: new Date(baseNow - 5000).toISOString(),
         last_online: new Date(baseNow - 10000).toISOString(),
@@ -83,10 +84,10 @@ describe("Status Hermético - Agent e Impressora (Fixtures A - L)", () => {
       expect(getPrinterStatus(printer, baseNow)).toBe("ONLINE");
     });
 
-    it("Fixture H: Agent Online + telemetry expirada (>= 60s) -> Offline", () => {
+    it("Fixture H: Agent Online + telemetry expirada (>= threshold) -> Offline", () => {
       const printer = createPrinter({
         last_seen_at: new Date(baseNow - 5000).toISOString(),
-        last_online: new Date(baseNow - 70000).toISOString(),
+        last_online: new Date(baseNow - PRINTER_ONLINE_THRESHOLD_MS - 10000).toISOString(),
         is_online: true,
       });
       expect(getPrinterStatus(printer, baseNow)).toBe("OFFLINE");
@@ -137,6 +138,62 @@ describe("Status Hermético - Agent e Impressora (Fixtures A - L)", () => {
         is_online: true,
       });
       expect(getPrinterStatus(printerReconectada, baseNow)).toBe("ONLINE");
+    });
+  });
+
+  describe("FONTE DA IMPRESSORA = last_online (telemetria MQTT real)", () => {
+    it("last_online null com Agent Online -> Offline (heartbeat do Agent NÃO prova impressora)", () => {
+      const printer = createPrinter({
+        last_seen_at: new Date(baseNow - 1000).toISOString(),
+        last_online: null,
+        is_online: true,
+      });
+      expect(getPrinterStatus(printer, baseNow)).toBe("OFFLINE");
+      expect(isPrinterLivePrinting({ ...printer, gcode_state: "RUNNING" }, baseNow)).toBe(false);
+    });
+
+    it("last_online stale de dias (caso de produção 17/09) com Agent Online -> Offline", () => {
+      const printer = createPrinter({
+        last_seen_at: new Date(baseNow - 3000).toISOString(),
+        last_online: new Date(baseNow - 10 * 24 * 3600 * 1000).toISOString(),
+      });
+      expect(getPrinterStatus(printer, baseNow)).toBe("OFFLINE");
+    });
+
+    it("fronteira do threshold: 1ms antes Online, no limite Offline", () => {
+      const lastOnline = new Date(baseNow - PRINTER_ONLINE_THRESHOLD_MS).toISOString();
+      const printer = createPrinter({ last_seen_at: new Date(baseNow - 1000).toISOString(), last_online: lastOnline });
+      expect(getPrinterStatus(printer, baseNow - 1)).toBe("ONLINE");
+      expect(getPrinterStatus(printer, baseNow)).toBe("OFFLINE");
+    });
+
+    it("timestamp com offset +00:00 (formato do PostgREST) e com Z dão o mesmo resultado", () => {
+      const iso = new Date(baseNow - 5000).toISOString();
+      const pg = iso.replace("Z", "+00:00");
+      const a = createPrinter({ last_seen_at: iso, last_online: iso });
+      const b = createPrinter({ last_seen_at: pg, last_online: pg });
+      expect(getPrinterStatus(a, baseNow)).toBe("ONLINE");
+      expect(getPrinterStatus(b, baseNow)).toBe("ONLINE");
+    });
+
+    it("impressão ativa com telemetria fresca -> painel ao vivo (RUNNING + Online)", () => {
+      const printer = createPrinter({
+        gcode_state: "RUNNING",
+        last_seen_at: new Date(baseNow - 2000).toISOString(),
+        last_online: new Date(baseNow - 4000).toISOString(),
+      });
+      expect(getPrinterStatus(printer, baseNow)).toBe("ONLINE");
+      expect(isPrinterLivePrinting(printer, baseNow)).toBe(true);
+      expect(formatPrinterOperationalState(printer, undefined, undefined, baseNow)).toBe("Imprimindo");
+    });
+
+    it("reload: mesmo registro do banco em novo 'agora' dá o mesmo status (sem estado oculto)", () => {
+      const printer = createPrinter({
+        last_seen_at: new Date(baseNow - 2000).toISOString(),
+        last_online: new Date(baseNow - 4000).toISOString(),
+      });
+      const again = JSON.parse(JSON.stringify(printer));
+      expect(getPrinterStatus(again, baseNow)).toBe(getPrinterStatus(printer, baseNow));
     });
   });
 

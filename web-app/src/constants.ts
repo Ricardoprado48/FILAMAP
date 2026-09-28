@@ -28,4 +28,9 @@ export const TARE_PRESETS = [
 ];
 
 export const AGENT_ONLINE_THRESHOLD_MS = 45000;
-export const PRINTER_ONLINE_THRESHOLD_MS = 60000;
+// Idade máxima de printers.last_online (última telemetria MQTT real da
+// impressora) para considerá-la Online. Regra definida antes da medição:
+// max(60s, 3 x p99 do intervalo entre escritas de telemetria + 8s de
+// polling/tick da Web). Medição M0 (2026-09-27, RUNNING, 600s): p99 23.9s
+// -> 80s. Revisar com a medição em IDLE.
+export const PRINTER_ONLINE_THRESHOLD_MS = 80000;

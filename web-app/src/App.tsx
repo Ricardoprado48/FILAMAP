@@ -134,7 +134,9 @@ export default function App() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    // scope "local": o padrão "global" revogaria também a sessão do Desktop
+    // Agent (mesma conta) e o deixaria offline (incidente 2026-09-27).
+    await supabase.auth.signOut({ scope: "local" });
   }
 
   const { isReading, isWriting, nfcUid, error: nfcError, writeTagUrl, startScanning, setNfcUid, setError: setNfcErrorState } = useNfc();

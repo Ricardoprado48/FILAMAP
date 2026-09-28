@@ -223,3 +223,21 @@ test("falha ao persistir no cofre não interrompe a sessão", async () => {
   await tick();
   assert.equal(sup.isHealthy(), true);
 });
+
+test("onRecovered é chamado após recuperar (reenvio da fila de finalize)", async () => {
+  let recovered = 0;
+  const { sup, state } = build({ onRecovered: () => { recovered++; } });
+  state.refreshImpl = async () => ({ data: { session: session("rt-1") }, error: null });
+  sup.reportSessionLost("teste");
+  await sup.currentRecovery();
+  assert.equal(recovered, 1);
+});
+
+test("onRecovered NÃO é chamado quando a sessão em memória ainda vale (falha só de rede)", async () => {
+  let recovered = 0;
+  const { sup, state } = build({ onRecovered: () => { recovered++; } });
+  state.current = session("rt-0");
+  sup.reportSessionLost("heartbeat: fetch failed");
+  await sup.currentRecovery();
+  assert.equal(recovered, 0);
+});

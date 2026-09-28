@@ -25,9 +25,17 @@ describe("printer utils", () => {
       expect(isPrinterOnline(printer)).toBe(false);
     });
 
-    it("retorna true se last_seen_at for recente (< 45s)", () => {
-      const printer = createPrinter({ last_seen_at: new Date(Date.now() - 5000).toISOString() });
+    it("retorna true se Agent vivo (last_seen_at < 45s) E telemetria da impressora recente (last_online)", () => {
+      const printer = createPrinter({
+        last_seen_at: new Date(Date.now() - 5000).toISOString(),
+        last_online: new Date(Date.now() - 5000).toISOString(),
+      });
       expect(isPrinterOnline(printer)).toBe(true);
+    });
+
+    it("retorna false com só o heartbeat do Agent recente e sem telemetria da impressora", () => {
+      const printer = createPrinter({ last_seen_at: new Date(Date.now() - 5000).toISOString(), last_online: null });
+      expect(isPrinterOnline(printer)).toBe(false);
     });
 
     it("retorna false se last_seen_at for antigo (> 45s)", () => {
@@ -37,17 +45,19 @@ describe("printer utils", () => {
   });
 
   describe("isPrinterLivePrinting", () => {
-    it("H: RUNNING + last_seen_at válido -> card ao vivo ativo (true)", () => {
+    it("H: RUNNING + Agent vivo + telemetria recente -> card ao vivo ativo (true)", () => {
       const printer = createPrinter({
         last_seen_at: new Date(Date.now() - 2000).toISOString(),
+        last_online: new Date(Date.now() - 2000).toISOString(),
         gcode_state: "RUNNING",
       });
       expect(isPrinterLivePrinting(printer)).toBe(true);
     });
 
-    it("PAUSE + last_seen_at válido -> card ao vivo ativo (true)", () => {
+    it("PAUSE + Agent vivo + telemetria recente -> card ao vivo ativo (true)", () => {
       const printer = createPrinter({
         last_seen_at: new Date(Date.now() - 2000).toISOString(),
+        last_online: new Date(Date.now() - 2000).toISOString(),
         gcode_state: "PAUSE",
       });
       expect(isPrinterLivePrinting(printer)).toBe(true);

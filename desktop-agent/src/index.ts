@@ -30,6 +30,8 @@ import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
 import { syncAmsProjection } from "./amsProjection";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 import { SessionSupervisor } from "./sessionSupervisor";
+import { FinalizeOutbox } from "./finalizeOutbox";
+import { buildTelemetryUpdate, initialGcodeStateFor, isPrinterReportTopic } from "./runtimeState";
 
 dotenv.config();
 
@@ -207,8 +209,28 @@ async function startAgent() {
         closeCliPrompts();
       }
     },
+    onRecovered: () => void finalizeOutbox.flush(),
   });
   sessionSupervisor.start();
+
+  // Jobs terminados ficam aqui até o RPC confirmar (ver finalizeOutbox.ts).
+  // Só envia com sessão do próprio usuário: sem ela o supabase-js usaria a
+  // anon key e as leituras do finalize voltariam vazias.
+  const finalizeOutbox = new FinalizeOutbox({
+    filePath: path.join(path.dirname(STATE_FILE), "agent-pending-finalize.json"),
+    canExecute: async () => {
+      if (!sessionSupervisor.isHealthy()) return false;
+      const { data } = await supabase.auth.getSession();
+      return data.session?.user?.id === authenticatedUserId;
+    },
+    execute: (p) =>
+      finalizeJob(p.printerId, p.printSnapshot, p.percentExecuted, p.finishStatus, p.job, p.mqttTrays),
+  });
+  if (finalizeOutbox.size() > 0) {
+    console.log(`📮 ${finalizeOutbox.size()} finalização(ões) pendente(s) de execução anterior -- reenviando.`);
+  }
+  void finalizeOutbox.flush();
+  setInterval(() => void finalizeOutbox.flush(), 60000);
 
   // Sincroniza os presets pessoais do Bambu Studio mesmo quando
   // a impressora estiver desligada. filament_id é a identidade estável.
@@ -343,33 +365,35 @@ async function startAgent() {
     // O resultado é conferido: sem sessão o supabase-js cai na anon key e o
     // UPDATE afeta 0 linhas sem erro nenhum -- foi exatamente assim que o
     // Agent ficou "offline" com o processo vivo no incidente 2026-09-27.
-    let heartbeatFailures = 0;
-    setInterval(async () => {
+    const updateFailures: Record<string, number> = {};
+    // UPDATE em printers conferido (usado por heartbeat e telemetria).
+    async function updatePrinterConfirmed(label: string, fields: Record<string, unknown>) {
       let failure: string | null = null;
       try {
-        const nowIso = new Date().toISOString();
-        const { data, error } = await supabase
-          .from("printers")
-          .update({ is_online: true, updated_at: nowIso, last_seen_at: nowIso })
-          .eq("id", printer.id)
-          .select("id");
+        const { data, error } = await supabase.from("printers").update(fields).eq("id", printer.id).select("id");
         if (error) failure = error.message;
         else if (!data || data.length === 0) failure = "UPDATE sem efeito (0 linhas -- sessão ausente/RLS)";
       } catch (e: any) {
         failure = e?.message || String(e);
       }
 
+      const previous = updateFailures[label] ?? 0;
       if (failure) {
-        heartbeatFailures++;
-        // 1ª falha e depois a cada ~5 min, para não inundar o log.
-        if (heartbeatFailures === 1 || heartbeatFailures % 20 === 0) {
-          console.warn(`💔 Heartbeat falhou (${heartbeatFailures}x seguidas): ${failure}`);
+        updateFailures[label] = previous + 1;
+        // 1ª falha e depois a cada 20, para não inundar o log.
+        if (previous === 0 || (previous + 1) % 20 === 0) {
+          console.warn(`💔 ${label} falhou (${previous + 1}x seguidas): ${failure}`);
         }
-        sessionSupervisor.reportSessionLost(`heartbeat: ${failure}`);
-      } else if (heartbeatFailures > 0) {
-        console.log(`💚 Heartbeat restabelecido após ${heartbeatFailures} falha(s).`);
-        heartbeatFailures = 0;
+        sessionSupervisor.reportSessionLost(`${label}: ${failure}`);
+      } else if (previous > 0) {
+        console.log(`💚 ${label} restabelecido após ${previous} falha(s).`);
+        updateFailures[label] = 0;
       }
+    }
+
+    setInterval(() => {
+      const nowIso = new Date().toISOString();
+      void updatePrinterConfirmed("Heartbeat", { is_online: true, updated_at: nowIso, last_seen_at: nowIso });
     }, 15000);
 
     // Gravação de is_online:false num encerramento limpo (Ctrl+C, `kill`).
@@ -401,11 +425,12 @@ async function startAgent() {
       client.publish(`device/${PRINTER_SERIAL}/request`, payload);
     }
 
+    const restoredJob = loadJobState();
     const jobStateMachine = new JobStateMachine({
-      initialJob: loadJobState(),
-      initialGcodeState: "IDLE",
+      initialJob: restoredJob,
+      initialGcodeState: initialGcodeStateFor(restoredJob),
     });
-    let lastGcodeState = "IDLE";
+    let lastGcodeState = initialGcodeStateFor(restoredJob);
     let lastSyncTime = 0;
 
     let rediscoveryInProgress = false;
@@ -516,7 +541,7 @@ async function startAgent() {
       void rediscoverPrinter();
     });
 
-    client.on("message", async (_topic, payload) => {
+    client.on("message", async (topic, payload) => {
       try {
         const raw = JSON.parse(payload.toString());
 
@@ -607,8 +632,23 @@ async function startAgent() {
             } else {
               console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%!`);
             }
-            await finalizeJob(printer.id, print, action.percentExecuted, action.finishStatus, action.job);
-            saveJobState(null);
+            // O job só sai de agent-state.json depois de gravado na fila;
+            // a fila só o solta quando o RPC confirmar.
+            const queued = finalizeOutbox.enqueue({
+              jobId: action.job.jobId,
+              printerId: printer.id,
+              job: action.job,
+              percentExecuted: action.percentExecuted,
+              finishStatus: action.finishStatus,
+              printSnapshot: { subtask_name: print.subtask_name, mc_cost_time: print.mc_cost_time },
+              mqttTrays: currentMqttTrays(),
+            });
+            if (queued) {
+              saveJobState(null);
+            } else {
+              console.error(`❌ Job ${action.job.jobId} não pôde ir para a fila -- mantido em agent-state.json.`);
+            }
+            await finalizeOutbox.flush();
           } else if (action.type === "discard_job") {
             console.log("🧹 Descartando estado de job órfão/fantasma (impressora em IDLE com progresso 0%).");
             saveJobState(null);
@@ -618,30 +658,19 @@ async function startAgent() {
         const currentJob = jobStateMachine.getCurrentJob();
         const currentState = jobStateMachine.getLastGcodeState();
         const activeSlotIndex = jobStateMachine.getActiveSlotIndex();
-        const progress = Number(print.mc_percent) || 0;
 
         const now = Date.now();
         if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
           lastSyncTime = now;
-          const telemetryData: Record<string, unknown> = {
-            is_online: true,
-            last_seen_at: new Date().toISOString(),
-            gcode_state: currentState,
-            active_slot_index: activeSlotIndex,
-          };
-          if (print.subtask_name !== undefined) telemetryData.current_task = print.subtask_name;
-          if (print.mc_percent !== undefined) telemetryData.print_progress = progress;
-          if (print.mc_remaining_time !== undefined) telemetryData.remaining_time_min = Number(print.mc_remaining_time) || 0;
-          if (print.layer_num !== undefined) telemetryData.current_layer = Number(print.layer_num) || 0;
-          if (print.total_layer_num !== undefined) telemetryData.total_layers = Number(print.total_layer_num) || 0;
-          if (print.nozzle_temper !== undefined) telemetryData.nozzle_temp = Math.round(Number(print.nozzle_temper));
-          if (print.bed_temper !== undefined) telemetryData.bed_temp = Math.round(Number(print.bed_temper));
-
-          if (currentJob?.filamentSliceInfo && currentJob.filamentSliceInfo.length > 0) {
-            telemetryData.filament_slice_info = currentJob.filamentSliceInfo;
-          }
-
-          await supabase.from("printers").update(telemetryData).eq("id", printer.id);
+          const telemetryData = buildTelemetryUpdate({
+            print,
+            fromPrinterReport: isPrinterReportTopic(topic, PRINTER_SERIAL),
+            currentState,
+            activeSlotIndex,
+            filamentSliceInfo: currentJob?.filamentSliceInfo,
+            nowIso: new Date().toISOString(),
+          });
+          await updatePrinterConfirmed("Telemetria", telemetryData);
         }
 
         lastGcodeState = currentState;
@@ -661,7 +690,8 @@ async function finalizeJob(
   printData: any,
   percentExecuted: number,
   finishStatus: string,
-  jobToFinalize: ActiveJobState | null
+  jobToFinalize: ActiveJobState | null,
+  mqttTraysSnapshot?: any[]
 ) {
   try {
     const jobId = jobToFinalize?.jobId || randomUUID();
@@ -674,10 +704,14 @@ async function finalizeJob(
     const usedSlots = jobToFinalize?.usedSlots?.length ? jobToFinalize.usedSlots : [jobToFinalize?.activeSlot ?? 0];
 
     // Prepara candidatos de slots AMS para resolução física de filamento
-    const { data: allAmsSlots } = await supabase
+    // Erros nestas leituras precisam abortar: seguir com resultado vazio
+    // gravaria o job como órfão (sem desconto) e a idempotência por job_id
+    // impediria corrigir depois. Abortando, o job volta para a fila.
+    const { data: allAmsSlots, error: allAmsSlotsError } = await supabase
       .from("ams_slots")
       .select("slot_index, spool_id, spool:spools(material, color_hex, tray_info_idx)")
       .eq("printer_id", printerId);
+    if (allAmsSlotsError) throw allAmsSlotsError;
 
     const availableSlots: AmsSlotPhysicalCandidate[] = [];
     for (const r of (allAmsSlots || []) as any[]) {
@@ -692,10 +726,8 @@ async function finalizeJob(
       }
     }
 
-    const mqttTrays =
-      lastMqttPrintPayload?.ams?.ams?.[0]?.tray ||
-      lastMqttPrintPayload?.ams?.tray ||
-      [];
+    // Snapshot do instante do fim quando vem da fila (envio pode ser tardio).
+    const mqttTrays = mqttTraysSnapshot ?? currentMqttTrays();
     for (let idx = 0; idx < mqttTrays.length; idx++) {
       const t = mqttTrays[idx];
       const sIdx = Number(t.id ?? idx);
@@ -724,11 +756,12 @@ async function finalizeJob(
     // para cross-check/log do que já está vinculado a cada slot -- weight_confirmed_at
     // e os campos bambu_* aqui são sobre o spool HOJE preso em ams_slots, não
     // necessariamente o que será usado (ver resolvePhysicalSpoolsForJob).
-    const { data: slotRows } = await supabase
+    const { data: slotRows, error: slotRowsError } = await supabase
       .from("ams_slots")
       .select("slot_index, spool_id, spool:spools(weight_confirmed_at, bambu_spool_id, bambu_dev_id, bambu_in_printer, bambu_slot_id)")
       .eq("printer_id", printerId)
       .in("slot_index", usedSlotIndexes);
+    if (slotRowsError) throw slotRowsError;
 
     const amsSlotBySlot = new Map<number, string | null>();
     const physicalInfoBySlot = new Map<number, SpoolPhysicalInfo | null>();
@@ -759,12 +792,13 @@ async function finalizeJob(
     // do escopo desta fase). RLS já isola por user_id; o filtro por
     // bambu_dev_id aqui isola por impressora, repetido em JS dentro de
     // groupBambuCandidatesBySlot como segunda camada.
-    const { data: bambuCandidateRows } = await supabase
+    const { data: bambuCandidateRows, error: bambuCandidateError } = await supabase
       .from("spools")
       .select("id, bambu_dev_id, bambu_slot_id, bambu_in_printer, weight_confirmed_at")
       .eq("bambu_dev_id", PRINTER_SERIAL)
       .eq("bambu_in_printer", true)
       .in("bambu_slot_id", usedSlotIndexes.map(String));
+    if (bambuCandidateError) throw bambuCandidateError;
 
     const bambuRows: BambuSyncedSpoolRow[] = ((bambuCandidateRows || []) as any[]).map((r) => {
       spoolInfoById.set(r.id, { weightConfirmed: Boolean(r.weight_confirmed_at) });
@@ -871,8 +905,15 @@ async function finalizeJob(
     );
     console.log(`📝 Job ${jobId} finalizado (${finishStatus}) -- ${logRows?.length ?? items.length} linha(s) de log, ${totalDeducted}g debitados no total.`);
   } catch (e: any) {
-    console.error("❌ Falha ao finalizar trabalho:", e.message);
+    // Propaga: quem decide reenviar é a FinalizeOutbox (antes o erro era
+    // engolido e o job apagado em seguida -- consumo perdido).
+    console.error("❌ Falha ao finalizar trabalho:", e?.message || e);
+    throw e;
   }
+}
+
+function currentMqttTrays(): any[] {
+  return lastMqttPrintPayload?.ams?.ams?.[0]?.tray || lastMqttPrintPayload?.ams?.tray || [];
 }
 
 async function updateStatus(printerId: string, isOnline: boolean) {

@@ -53,18 +53,9 @@ export function getPrinterStatus(
     return diff < PRINTER_ONLINE_THRESHOLD_MS ? "ONLINE" : "OFFLINE";
   }
 
-  // Fallback quando last_online ainda não foi populado no banco:
-  // Se o Agent está Online e printer.is_online é true, valida frescor por last_seen_at
-  if (printer.is_online === true) {
-    if (printer.last_seen_at) {
-      const seenTime = new Date(printer.last_seen_at).getTime();
-      if (!isNaN(seenTime) && nowMs - seenTime < PRINTER_ONLINE_THRESHOLD_MS) {
-        return "ONLINE";
-      }
-    }
-    return "ONLINE";
-  }
-
+  // Sem last_online não há evidência de que a impressora falou: Offline.
+  // last_seen_at NÃO serve aqui -- o heartbeat do Agent também o grava, e
+  // Agent vivo não prova impressora ligada.
   return "OFFLINE";
 }
 

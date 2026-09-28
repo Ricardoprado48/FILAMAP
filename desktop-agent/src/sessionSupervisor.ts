@@ -34,6 +34,9 @@ export interface SessionSupervisorOptions {
   getAgentEmail: () => string;
   persistRefreshToken: (refreshToken: string) => Promise<void>;
   askPassword: () => Promise<string>;
+  // Chamado após cada recuperação bem-sucedida (ex.: reenviar finalizações
+  // que ficaram na fila enquanto não havia sessão).
+  onRecovered?: () => void;
   retryDelayMs?: (attempt: number) => number;
   passwordPromptCooldownMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -62,6 +65,7 @@ export class SessionSupervisor {
       now: () => Date.now(),
       logInfo: console.log,
       logWarn: console.warn,
+      onRecovered: () => {},
       ...options,
     };
     this.lastKnownRefreshToken = options.initialSession?.refresh_token ?? null;
@@ -225,5 +229,10 @@ export class SessionSupervisor {
 
     this.healthy = true;
     this.opts.logInfo("✅ Sessão Supabase recuperada. Heartbeat e telemetria retomados.");
+    try {
+      this.opts.onRecovered();
+    } catch (e: any) {
+      this.opts.logWarn(`⚠️ Falha no pós-recuperação: ${e?.message || e}`);
+    }
   }
 }

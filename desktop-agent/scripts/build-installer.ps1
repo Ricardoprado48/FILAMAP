@@ -8,8 +8,7 @@ $OutputDir = Join-Path $InstallerDir "output"
 
 $RequiredPayload = @(
     (Join-Path $PayloadDir "filamap-agent.exe"),
-    (Join-Path $PayloadDir "run-agent.vbs"),
-    (Join-Path $PayloadDir "start-agent.vbs"),
+    (Join-Path $PayloadDir "filamap-launcher.exe"),
     (Join-Path $PayloadDir "install-autostart.ps1"),
     (Join-Path $PayloadDir "uninstall-autostart.ps1"),
     (Join-Path $PayloadDir "bambu-bridge\filamap-bambu-bridge.exe")

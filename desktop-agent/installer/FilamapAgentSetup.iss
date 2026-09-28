@@ -39,14 +39,17 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 Source: "filamap.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\filamap-agent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\bambu-bridge\filamap-bambu-bridge.exe"; DestDir: "{app}\bambu-bridge"; Flags: ignoreversion
-Source: "payload\run-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
-Source: "payload\start-agent.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "payload\filamap-launcher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\install-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "payload\uninstall-autostart.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 
 
 [InstallDelete]
+
+; Launchers VBScript das versoes anteriores (substituidos por filamap-launcher.exe).
+Type: files; Name: "{app}\run-agent.vbs"
+Type: files; Name: "{app}\start-agent.vbs"
 
 ; Remove atalhos antigos antes de recriar os atalhos do Filamap.
 Type: files; Name: "{group}\Filamap Agent.lnk"
@@ -62,10 +65,10 @@ Filename: "powershell.exe"; \
     WorkingDir: "{app}"; \
     Flags: runhidden waituntilterminated
 
-; Inicia o Agent silenciosamente em segundo plano apos instalar.
-Filename: "{sys}\wscript.exe"; \
-    Parameters: """{app}\start-agent.vbs"""; \
-    WorkingDir: "{app}"; \
+; Inicia o Agent em segundo plano apos instalar, pela propria tarefa
+; agendada (roda como o usuario, nao elevado; IgnoreNew evita duplicar).
+Filename: "{sys}\schtasks.exe"; \
+    Parameters: "/Run /TN ""FilamapAgentAutoStart"""; \
     Flags: runhidden nowait
 
 ; Na tela final, oferece abrir o Filamap Web.
@@ -86,12 +89,8 @@ Filename: "powershell.exe"; \
 
 [Icons]
 
-; Atalho principal. Aponta para start-agent.vbs (via wscript.exe, sem
-; janela preta) em vez do .exe diretamente -- start-agent.vbs só pede
-; ao Task Scheduler para rodar a Tarefa Agendada já registrada por
-; install-autostart.ps1, então clicar aqui nunca cria um segundo
-; processo do Agent: se já estiver rodando, MultipleInstances=IgnoreNew
-; faz o Windows ignorar o pedido.
+; Atalho principal: abre o Filamap Web. O Agent roda sozinho em segundo
+; plano pela tarefa agendada (filamap-launcher.exe, sem janela).
 Name: "{group}\Filamap"; \
     Filename: "https://filamap.pages.dev"; \
     IconFilename: "{app}\filamap.ico"; \

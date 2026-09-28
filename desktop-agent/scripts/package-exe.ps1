@@ -24,13 +24,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "pkg falhou com exit code $LASTEXITCODE"
 }
 
+Write-Host ""
+Write-Host "=== COMPILANDO LAUNCHER SEM JANELA ==="
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "launcher\build-launcher.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "build-launcher falhou com exit code $LASTEXITCODE"
+}
+
 New-Item -ItemType Directory -Force -Path $PayloadDir | Out-Null
 New-Item -ItemType Directory -Force -Path $PayloadBridgeDir | Out-Null
 
 $Copies = @(
     @{ Source = (Join-Path $Root "filamap-agent.exe");            Dest = (Join-Path $PayloadDir "filamap-agent.exe") },
-    @{ Source = (Join-Path $Root "run-agent.vbs");                Dest = (Join-Path $PayloadDir "run-agent.vbs") },
-    @{ Source = (Join-Path $Root "start-agent.vbs");              Dest = (Join-Path $PayloadDir "start-agent.vbs") },
+    @{ Source = (Join-Path $Root "launcher\bin\filamap-launcher.exe"); Dest = (Join-Path $PayloadDir "filamap-launcher.exe") },
     @{ Source = (Join-Path $Root "install-autostart.ps1");        Dest = (Join-Path $PayloadDir "install-autostart.ps1") },
     @{ Source = (Join-Path $Root "uninstall-autostart.ps1");      Dest = (Join-Path $PayloadDir "uninstall-autostart.ps1") },
     @{ Source = $BridgeSource;                                    Dest = (Join-Path $PayloadBridgeDir "filamap-bambu-bridge.exe") }

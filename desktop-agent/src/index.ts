@@ -47,7 +47,7 @@ for (const level of ["log", "warn", "error"] as const) {
 // Rejeição não tratada em integração (MQTT/FTPS/Supabase/bridge) não pode
 // derrubar o Agent inteiro: registra com stack e segue. Exceção síncrona
 // não capturada continua encerrando o processo (estado pode estar
-// corrompido) -- o Task Scheduler relança via run-agent.vbs.
+// corrompido) -- o filamap-launcher.exe (tarefa agendada) relança.
 process.on("unhandledRejection", (reason: any) => {
   console.error("❌ Promise rejeitada sem tratamento (Agent segue rodando):", reason?.stack || reason);
 });

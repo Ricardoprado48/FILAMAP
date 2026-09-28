@@ -4,19 +4,18 @@ Filamap Desktop Agent - Auto-start Windows
 Registra a tarefa agendada "FilamapAgentAutoStart" para iniciar o
 Filamap Agent automaticamente no logon do usuário atual.
 
-O launcher utilizado é run-agent.vbs através do wscript.exe.
+O launcher utilizado é filamap-launcher.exe (launcher/FilamapLauncher.cs):
+executável sem janela que substituiu run-agent.vbs + wscript.exe.
 
 Motivo:
-- não abre PowerShell;
-- não abre CMD;
-- não deixa janela de terminal visível;
-- mantém filamap-agent.exe rodando em segundo plano.
+- não abre PowerShell, CMD nem janela de terminal;
+- relança o Agent após crash (espera crescente 30s -> 10min);
+- nunca duplica o Agent (mutex nomeado + checagem de processo).
 
-O run-agent.vbs deve permanecer ao lado deste arquivo.
+O filamap-launcher.exe deve permanecer ao lado deste arquivo.
 
 A tarefa usa MultipleInstances=IgnoreNew: se já estiver rodando, um
-novo pedido de execução (schtasks /Run, o atalho start-agent.vbs, ou o
-[Run] do instalador) é ignorado em vez de subir um segundo processo do
+novo pedido de execução (schtasks /Run ou o [Run] do instalador) é ignorado em vez de subir um segundo processo do
 Agent.
 
 O Agent empacotado esperado é:
@@ -37,16 +36,11 @@ $ErrorActionPreference = "Stop"
 $TaskName = "FilamapAgentAutoStart"
 $AgentDir = $PSScriptRoot
 
-$RunnerVbs = Join-Path $AgentDir "run-agent.vbs"
+$Launcher = Join-Path $AgentDir "filamap-launcher.exe"
 $ExePath = Join-Path $AgentDir "filamap-agent.exe"
-$WscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
 
-if (-not (Test-Path $RunnerVbs)) {
-    throw "Não encontrei o launcher: $RunnerVbs"
-}
-
-if (-not (Test-Path $WscriptPath)) {
-    throw "Não encontrei wscript.exe em: $WscriptPath"
+if (-not (Test-Path $Launcher)) {
+    throw "Não encontrei o launcher: $Launcher"
 }
 
 if (-not (Test-Path $ExePath)) {
@@ -57,8 +51,7 @@ if (-not (Test-Path $ExePath)) {
 $currentUser = "$env:USERDOMAIN\$env:USERNAME"
 
 $action = New-ScheduledTaskAction `
-    -Execute $WscriptPath `
-    -Argument "`"$RunnerVbs`"" `
+    -Execute $Launcher `
     -WorkingDirectory $AgentDir
 
 $trigger = New-ScheduledTaskTrigger `
@@ -92,5 +85,5 @@ Register-ScheduledTask `
 Write-Host ""
 Write-Host "Tarefa '$TaskName' instalada com sucesso."
 Write-Host "Usuário: $currentUser"
-Write-Host "Launcher: $RunnerVbs"
+Write-Host "Launcher: $Launcher"
 Write-Host "Log: $(Join-Path $AgentDir 'agent.log')"

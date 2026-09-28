@@ -123,7 +123,8 @@ uma nova implementação de `OnboardingPrompts`.
 `install-autostart.ps1` registra uma Tarefa Agendada (`FilamapAgentAutoStart`)
 no logon do usuário (sem janela visível, com restart automático,
 `MultipleInstances=IgnoreNew`). Ver comentários no próprio script e em
-`run-agent.vbs`. `uninstall-autostart.ps1` remove. Já cobria o caso
+`launcher/FilamapLauncher.cs` (launcher sem janela que substituiu o antigo
+`run-agent.vbs`). `uninstall-autostart.ps1` remove. Já cobria o caso
 "iniciar sozinho no logon"; o onboarding comercial foi construído para
 funcionar com ele sem mudanças (checagem de `stdin.isTTY` é o que evita
 o Agent travar quando a Tarefa Agendada o inicia sem terminal).
@@ -132,16 +133,15 @@ o Agent travar quando a Tarefa Agendada o inicia sem terminal).
 
 O instalador (`installer/FilamapAgentSetup.iss`) cria um atalho "Filamap
 Agent" no grupo do Menu Iniciar e, opcionalmente, na Área de Trabalho.
-Esse atalho **não** chama `filamap-agent.exe` nem `run-agent.vbs`
-diretamente -- ele aponta para `start-agent.vbs`, que só pede ao Task
-Scheduler para rodar `FilamapAgentAutoStart` (`schtasks /Run`, janela
-oculta). Isso é proposital: como a tarefa está registrada com
+Hoje o atalho abre o Filamap Web; o Agent em si é iniciado pela Tarefa
+Agendada `FilamapAgentAutoStart` (o instalador dispara `schtasks /Run`
+logo após instalar). Isso é proposital: como a tarefa está registrada com
 `MultipleInstances=IgnoreNew`, clicar no atalho enquanto o Agent já está
 rodando (por auto-start no logon, por exemplo) é ignorado pelo próprio
 Windows em vez de subir um segundo processo concorrente (o que
 duplicaria conexão MQTT e consumo). Se o Agent não estiver rodando, o
 atalho o inicia normalmente pelo mesmo caminho do auto-start
-(`run-agent.vbs` → `filamap-agent.exe`, log em
+(`filamap-launcher.exe` → `filamap-agent.exe`, log em
 `%APPDATA%\Filamap\agent.log`).
 
 ## Testes
@@ -162,7 +162,7 @@ do projeto.
   "Filamap Agent" no Menu Iniciar (+ opcional na Área de Trabalho) e
   desinstalador registrado no Painel de Controle. Para gerar o `.exe` do
   instalador: `npm run package-exe`, copiar `filamap-agent.exe`,
-  `run-agent.vbs`, `start-agent.vbs`, `install-autostart.ps1` e
+  `filamap-launcher.exe`, `install-autostart.ps1` e
   `uninstall-autostart.ps1` para `installer/payload/` (não versionado),
   depois `iscc installer/FilamapAgentSetup.iss` (gera
   `installer/output/FilamapAgentSetup.exe`, também não versionado).

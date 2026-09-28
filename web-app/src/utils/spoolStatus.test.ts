@@ -277,7 +277,7 @@ describe("parseProfileToSpoolForm", () => {
       color_name: "PLA BRANCO ULTRA SILK VIDA BUENAS",
       color_hex: "#F5F5F5",
       density: 1.24,
-      filament_profile_id: "P6337f36",
+      filament_profile_id: "prof-1", // UUID do perfil (FK), nunca o source_key do Bambu
       suggestedTare: 200,
     });
   });
@@ -300,7 +300,7 @@ describe("parseProfileToSpoolForm", () => {
     expect(form.color_name).toBe("Generic PLA");
     expect(form.color_hex).toBe("#FFFFFF");
     expect(form.density).toBeUndefined();
-    expect(form.filament_profile_id).toBe("P12345");
+    expect(form.filament_profile_id).toBe("prof-2");
   });
 });
 

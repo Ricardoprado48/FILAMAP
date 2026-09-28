@@ -284,7 +284,9 @@ export function parseProfileToSpoolForm(
     color_name: colorName,
     color_hex: colorHex,
     density,
-    filament_profile_id: profile.source_key || profile.id,
+    // spools.filament_profile_id é FK para user_filament_profiles.id (UUID);
+    // source_key ("P6337f36") é o ID do preset no Bambu Studio, não serve aqui.
+    filament_profile_id: profile.id,
     suggestedTare: 200,
   };
 }

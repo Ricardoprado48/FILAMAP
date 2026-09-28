@@ -620,7 +620,7 @@ export default function App() {
   function handleSelectProfileForCreate(profileId: string) {
     setCreateSelectedProfileId(profileId);
     if (!profileId) return;
-    const prof = filamentProfiles.find((p) => (p.source_key || p.id) === profileId);
+    const prof = filamentProfiles.find((p) => p.id === profileId);
     if (prof) {
       const parsed = parseProfileToSpoolForm(prof);
       setCreateBrand(parsed.brand);
@@ -1732,7 +1732,7 @@ export default function App() {
                 >
                   <option value="">-- Preenchimento 100% manual --</option>
                   {filamentProfiles.filter((p) => p.is_listed !== false).map((p) => (
-                    <option key={p.id} value={p.source_key || p.id}>
+                    <option key={p.id} value={p.id}>
                       {p.display_name} ({p.material}{p.brand ? ` • ${p.brand}` : ""})
                     </option>
                   ))}

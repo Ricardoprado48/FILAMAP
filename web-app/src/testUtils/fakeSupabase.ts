@@ -1,6 +1,6 @@
 export interface FakeQueryCall {
   table: string;
-  method: "select" | "update" | "insert" | "delete";
+  method: "select" | "update" | "insert" | "delete" | "upsert";
   payload?: any;
   filters: Array<{ col: string; val: any }>;
   order?: { col: string; opts: any };
@@ -63,6 +63,7 @@ export function createFakeSupabase(resolver: FakeSupabaseResolver) {
         update: (payload: any) => makeQuery(table, "update", payload),
         insert: (payload: any) => makeQuery(table, "insert", payload),
         delete: () => makeQuery(table, "delete"),
+        upsert: (payload: any, _opts?: any) => makeQuery(table, "upsert", payload),
       };
     },
   };

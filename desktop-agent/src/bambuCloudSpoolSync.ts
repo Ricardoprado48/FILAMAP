@@ -299,7 +299,7 @@ export async function fetchBambuCloudSpools(
 
 interface BambuCloudProfileRow {
   user_id: string;
-  source: "bambu_cloud";
+  source: "bambu_cloud" | "bambu_official";
   source_key: string;
   source_profile_name: string;
   display_name: string;
@@ -312,6 +312,12 @@ interface BambuCloudProfileRow {
   updated_at: string;
 }
 
+// Presets oficiais Bambu tem filament_id "GF..." (100/100 dos presets de sistema; 0/46 presets
+// de usuario, que sao "P" + 7 hex). Evidencia: IMPACTO_V2 / F2.
+export function isOfficialFilamentId(filamentId: string | null | undefined): boolean {
+  return /^GF[A-Z0-9]{2,6}$/.test(String(filamentId || ""));
+}
+
 function buildProfileRow(
   spool: ParsedBambuCloudSpool,
   userId: string,
@@ -319,7 +325,7 @@ function buildProfileRow(
 ): BambuCloudProfileRow {
   return {
     user_id: userId,
-    source: "bambu_cloud",
+    source: isOfficialFilamentId(spool.filamentId) ? "bambu_official" : "bambu_cloud",
     source_key: spool.filamentId,
     source_profile_name: spool.filamentName,
     display_name: spool.filamentName,
@@ -554,50 +560,13 @@ export function resolveSpoolColorName(
 }
 
 /**
- * Payload de INSERT: só roda pra spool físico novo, então precisa
- * preencher as colunas NOT NULL (brand, material) -- não há dado local
- * anterior pra preservar ainda.
+ * Payload de UPDATE de um spool JA ligado a este carretel da nuvem (bambu_spool_id).
+ * Regra R1 (IMPACTO_V2): a nuvem Bambu e evidencia de POSICAO, nunca autoridade de
+ * identidade -- por isso so entram colunas bambu_*. Perfil, produto, cor, nome, marca,
+ * NFC, peso, tara e preco nunca aparecem aqui, entao o Postgres nao os toca.
  */
-export function buildSpoolInsertRow(
-  spool: ParsedBambuCloudSpool,
-  userId: string,
-  filamentProfileId: string | null,
-  profileDisplayName: string | null,
-  now: string
-) {
+export function buildSpoolPositionRow(spool: ParsedBambuCloudSpool, now: string) {
   return {
-    user_id: userId,
-    bambu_spool_id: spool.bambuSpoolId,
-    filament_profile_id: filamentProfileId,
-    brand: resolveSpoolBrand(spool),
-    material: spool.filamentType,
-    color_name: resolveSpoolColorName(spool, profileDisplayName),
-    color_hex: normalizeColorHex(spool.color),
-    bambu_in_printer: spool.inPrinter,
-    bambu_dev_id: spool.devId,
-    bambu_device_name: spool.deviceName,
-    bambu_ams_sn: spool.amsSn,
-    bambu_ams_id: spool.amsId,
-    bambu_slot_id: spool.slotId,
-    bambu_source_metadata: buildSourceMetadata(spool),
-    bambu_synced_at: now,
-  };
-}
-
-/**
- * Payload de UPDATE: de propósito só contém localização + vínculo de
- * perfil (regra 9). NFC, peso real, consumo acumulado e qualquer outro
- * campo controlado pelo Filamap (regra 10) nunca aparecem aqui -- por não
- * estarem na chave do UPDATE, o Supabase/Postgres não os toca.
- */
-export function buildSpoolUpdateRow(
-  spool: ParsedBambuCloudSpool,
-  filamentProfileId: string | null,
-  now: string,
-  extraDisplayUpdates?: { color_name?: string; color_hex?: string | null }
-) {
-  return {
-    filament_profile_id: filamentProfileId,
     bambu_in_printer: spool.inPrinter,
     bambu_dev_id: spool.devId,
     bambu_device_name: spool.deviceName,
@@ -607,20 +576,61 @@ export function buildSpoolUpdateRow(
     bambu_source_metadata: buildSourceMetadata(spool),
     bambu_synced_at: now,
     updated_at: now,
-    ...(extraDisplayUpdates?.color_name ? { color_name: extraDisplayUpdates.color_name } : {}),
-    ...(extraDisplayUpdates?.color_hex ? { color_hex: extraDisplayUpdates.color_hex } : {}),
   };
+}
+
+/**
+ * Item da caixa de entrada para um carretel da nuvem que o Filamap ainda nao conhece.
+ * Regras R1/R2/R5: nada e criado nem fundido; marca/cor resolvidas por texto vao so
+ * como SUGESTAO no payload, e um candidato por texto vai em suggested_spool_id.
+ */
+export function buildInboxRow(
+  spool: ParsedBambuCloudSpool,
+  userId: string,
+  suggestedSpoolId: string | null,
+  profileDisplayName: string | null
+) {
+  return {
+    user_id: userId,
+    source: "bambu_cloud",
+    external_id: spool.bambuSpoolId,
+    suggested_spool_id: suggestedSpoolId,
+    payload: {
+      bambu_spool_id: spool.bambuSpoolId,
+      filament_id: spool.filamentId,
+      filament_name: spool.filamentName,
+      filament_type: spool.filamentType,
+      filament_vendor: spool.filamentVendor,
+      color: normalizeColorHex(spool.color),
+      rfid: spool.rfid,
+      net_weight: spool.netWeight,
+      in_printer: spool.inPrinter,
+      dev_id: spool.devId,
+      device_name: spool.deviceName,
+      ams_id: spool.amsId,
+      slot_id: spool.slotId,
+      suggested_brand: resolveSpoolBrand(spool),
+      suggested_color_name: resolveSpoolColorName(spool, profileDisplayName),
+    },
+  };
+}
+
+// Banco sem a migration 20260930100000 (tabela spool_inbox): segue sem Inbox e sem criar spool.
+function isMissingInboxTable(error: any): boolean {
+  const text = `${error?.code || ""} ${error?.message || ""}`;
+  return /42P01|PGRST205/.test(text) && /spool_inbox/.test(text);
 }
 
 export interface BambuCloudSpoolSyncCounts {
   profilesUpserted: number;
-  spoolsInserted: number;
   spoolsUpdated: number;
+  inboxQueued: number;
 }
 
 /**
- * Recebe spools já validados (parseBambuCloudSpoolRecord) e faz o upsert
- * no Supabase com reconciliação inteligente por forte evidência física.
+ * Recebe spools ja validados (parseBambuCloudSpoolRecord). Atualiza a POSICAO dos spools
+ * ja ligados e manda o resto para a caixa de entrada. Nunca cria, funde nem reclassifica
+ * spool fisico (decisoes do cliente, IMPACTO_ARQUITETURA_ESTOQUE_FILAMAP_V2 secao 4).
  */
 export async function syncBambuCloudSpoolsFromParsed(
   supabase: SupabaseClient,
@@ -628,31 +638,26 @@ export async function syncBambuCloudSpoolsFromParsed(
   spools: ParsedBambuCloudSpool[]
 ): Promise<BambuCloudSpoolSyncCounts> {
   if (spools.length === 0) {
-    return { profilesUpserted: 0, spoolsInserted: 0, spoolsUpdated: 0 };
+    return { profilesUpserted: 0, spoolsUpdated: 0, inboxQueued: 0 };
   }
 
   const now = new Date().toISOString();
 
-  // 1. Upsert perfis de filamento
+  // 1. Perfis digitais referenciados pela nuvem (evidencia; nao mexe em spool)
   const profileRowByFilamentId = new Map<string, BambuCloudProfileRow>();
   for (const spool of spools) {
     profileRowByFilamentId.set(spool.filamentId, buildProfileRow(spool, userId, now));
   }
 
-  const { data: upsertedProfiles, error: profileError } = await supabase
+  const { error: profileError } = await supabase
     .from("user_filament_profiles")
     .upsert([...profileRowByFilamentId.values()], {
       onConflict: "user_id,source,source_key",
-    })
-    .select("id, source_key");
+    });
 
   if (profileError) throw profileError;
 
-  const profileIdByFilamentId = new Map<string, string>(
-    (upsertedProfiles || []).map((row: any) => [row.source_key as string, row.id as string])
-  );
-
-  // 2. Buscar todos os carretéis do usuário para reconciliação inteligente
+  // 2. Spools do usuario: so para saber quem ja esta ligado a um carretel da nuvem
   const { data: allUserSpools, error: existingError } = await supabase
     .from("spools")
     .select("id, bambu_spool_id, brand, material, color_name, color_hex, bambu_source_metadata, filament_profile_id")
@@ -660,19 +665,18 @@ export async function syncBambuCloudSpoolsFromParsed(
 
   if (existingError) throw existingError;
 
-  const spoolsList = allUserSpools || [];
-
   const spoolByPrimaryBambuId = new Map<string, any>();
   const spoolBySecondaryBambuId = new Map<string, any>();
   const unlinkedCandidates: any[] = [];
 
-  for (const s of spoolsList) {
+  for (const s of allUserSpools || []) {
     if (s.bambu_spool_id) {
       spoolByPrimaryBambuId.set(String(s.bambu_spool_id), s);
     } else {
       unlinkedCandidates.push(s);
     }
 
+    // Vinculos secundarios ja decididos no passado: so leitura, nenhum vinculo novo e criado.
     const meta = s.bambu_source_metadata as Record<string, unknown> | null;
     if (meta && Array.isArray(meta.secondary_bambu_spool_ids)) {
       for (const secId of meta.secondary_bambu_spool_ids) {
@@ -681,36 +685,26 @@ export async function syncBambuCloudSpoolsFromParsed(
     }
   }
 
-  const rowsToInsert: ReturnType<typeof buildSpoolInsertRow>[] = [];
   const rowsToUpdate: { id: string; payload: any }[] = [];
+  const inboxRows: ReturnType<typeof buildInboxRow>[] = [];
 
   for (const spool of spools) {
-    const filamentProfileId = profileIdByFilamentId.get(spool.filamentId) ?? null;
     const profileRow = profileRowByFilamentId.get(spool.filamentId);
 
-    // Caso A: Já existe com este bambu_spool_id primário
+    // Caso A: spool ja ligado a este carretel da nuvem -> so posicao/evidencia
     const primaryExisting = spoolByPrimaryBambuId.get(spool.bambuSpoolId);
     if (primaryExisting) {
-      const extraDisplayUpdates: { color_name?: string; color_hex?: string | null } = {};
-      const isLegacyHexName = Boolean(normalizeColorHex(primaryExisting.color_name));
-      if (!primaryExisting.color_name || isLegacyHexName) {
-        extraDisplayUpdates.color_name = resolveSpoolColorName(spool, profileRow?.display_name);
-      }
-      if (!primaryExisting.color_hex) {
-        extraDisplayUpdates.color_hex = normalizeColorHex(spool.color);
-      }
-
       rowsToUpdate.push({
         id: primaryExisting.id,
         payload: {
-          ...buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
+          ...buildSpoolPositionRow(spool, now),
           bambu_source_metadata: buildSourceMetadata(spool, primaryExisting.bambu_source_metadata),
         },
       });
       continue;
     }
 
-    // Caso B: Já existe como bambu_spool_id secundário registrado
+    // Caso B: id secundario ja registrado -> so posicao quando esta na impressora
     const secondaryExisting = spoolBySecondaryBambuId.get(spool.bambuSpoolId);
     if (secondaryExisting) {
       if (spool.inPrinter) {
@@ -731,49 +725,10 @@ export async function syncBambuCloudSpoolsFromParsed(
       continue;
     }
 
-    // Caso C: Reconciliar com candidato desvinculado por forte evidência
-    const matchedCandidate = findStrongReconciliationCandidate(
-      spool,
-      profileRow?.display_name,
-      unlinkedCandidates
-    );
-
-    if (matchedCandidate) {
-      const idx = unlinkedCandidates.findIndex((c) => c.id === matchedCandidate.id);
-      if (idx !== -1) unlinkedCandidates.splice(idx, 1);
-
-      spoolByPrimaryBambuId.set(spool.bambuSpoolId, matchedCandidate);
-
-      const extraDisplayUpdates: { color_name?: string; color_hex?: string | null } = {};
-      const isLegacyHexName = Boolean(normalizeColorHex(matchedCandidate.color_name));
-      if (!matchedCandidate.color_name || isLegacyHexName) {
-        extraDisplayUpdates.color_name = resolveSpoolColorName(spool, profileRow?.display_name);
-      }
-      if (!matchedCandidate.color_hex) {
-        extraDisplayUpdates.color_hex = normalizeColorHex(spool.color);
-      }
-
-      rowsToUpdate.push({
-        id: matchedCandidate.id,
-        payload: {
-          ...buildSpoolUpdateRow(spool, filamentProfileId, now, extraDisplayUpdates),
-          bambu_spool_id: spool.bambuSpoolId,
-          filament_profile_id: matchedCandidate.filament_profile_id || filamentProfileId,
-          bambu_source_metadata: buildSourceMetadata(spool, matchedCandidate.bambu_source_metadata),
-        },
-      });
-      continue;
-    }
-
-    // Caso D: Spool físico novo real
-    rowsToInsert.push(
-      buildSpoolInsertRow(spool, userId, filamentProfileId, profileRow?.display_name ?? null, now)
-    );
-  }
-
-  if (rowsToInsert.length > 0) {
-    const { error: insertError } = await supabase.from("spools").insert(rowsToInsert);
-    if (insertError) throw insertError;
+    // Casos C/D: carretel da nuvem desconhecido -> caixa de entrada.
+    // Um candidato por texto (C) vira apenas sugestao; o spool nao e alterado.
+    const suggestion = findStrongReconciliationCandidate(spool, profileRow?.display_name, unlinkedCandidates);
+    inboxRows.push(buildInboxRow(spool, userId, suggestion?.id ?? null, profileRow?.display_name ?? null));
   }
 
   for (const update of rowsToUpdate) {
@@ -785,10 +740,24 @@ export async function syncBambuCloudSpoolsFromParsed(
     if (updateError) throw updateError;
   }
 
+  let inboxQueued = 0;
+  if (inboxRows.length > 0) {
+    // ignoreDuplicates: item ja existente (inclusive ja resolvido/ignorado pelo usuario) nao e reaberto.
+    const { error: inboxError } = await supabase
+      .from("spool_inbox")
+      .upsert(inboxRows, { onConflict: "user_id,source,external_id", ignoreDuplicates: true });
+    if (inboxError) {
+      if (!isMissingInboxTable(inboxError)) throw inboxError;
+      console.warn(`⚠️ Caixa de entrada indisponivel neste banco; ${inboxRows.length} carretel(is) da nuvem aguardando (nenhum criado).`);
+    } else {
+      inboxQueued = inboxRows.length;
+    }
+  }
+
   return {
     profilesUpserted: profileRowByFilamentId.size,
-    spoolsInserted: rowsToInsert.length,
     spoolsUpdated: rowsToUpdate.length,
+    inboxQueued,
   };
 }
 

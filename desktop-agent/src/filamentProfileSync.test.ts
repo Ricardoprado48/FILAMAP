@@ -9,6 +9,7 @@ import {
   parseBambuFilamentPreset,
   readBambuStudioFilamentProfiles,
   syncBambuStudioFilamentProfiles,
+  queueMissingProductPresets,
 } from "./filamentProfileSync";
 
 test("cleanDisplayName remove somente o sufixo técnico da Bambu", () => {
@@ -336,4 +337,41 @@ test("syncBambuStudioFilamentProfiles: banco sem a coluna is_listed continua sin
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test("queueMissingProductPresets: preset com produto que sumiu vira pendência 'preset_renamed' (D6)", async () => {
+  const filters: any[] = [];
+  const inboxUpserts: any[] = [];
+  const fake: any = {
+    from(table: string) {
+      if (table === "spool_inbox") {
+        return { upsert(rows: any, opts: any) { inboxUpserts.push({ rows, opts }); return Promise.resolve({ error: null }); } };
+      }
+      const q: any = {
+        select() { return q; },
+        eq(c: string, v: any) { filters.push(["eq", c, v]); return q; },
+        not(c: string, o: string, v: any) {
+          filters.push(["not", c, o, v]);
+          if (c === "filament_product_id") return Promise.resolve({ data: [{ source_key: "Pantigo", display_name: "+ PLA VELHO", filament_product_id: "prod-1" }], error: null });
+          return q;
+        },
+      };
+      return q;
+    },
+  };
+  const n = await queueMissingProductPresets(fake, "user-1", '"P1"');
+  assert.equal(n, 1);
+  assert.deepEqual(filters.find((f) => f[1] === "source_key"), ["not", "source_key", "in", '("P1")']);
+  const row = inboxUpserts[0].rows[0];
+  assert.equal(row.source, "preset_renamed");
+  assert.equal(row.external_id, "Pantigo");
+  assert.equal(row.suggested_product_id, "prod-1");
+  assert.equal(inboxUpserts[0].opts.ignoreDuplicates, true, "pendência já resolvida não é reaberta");
+});
+
+test("queueMissingProductPresets: banco sem as colunas/tabela novas não derruba o sync", async () => {
+  const fake: any = { from() { const q: any = { select() { return q; }, eq() { return q; }, not() { return q; }, then(r: any) { return Promise.resolve({ data: null, error: { code: "42703", message: "column filament_product_id does not exist" } }).then(r); } }; return q; } };
+  assert.equal(await queueMissingProductPresets(fake, "user-1", '"P1"'), 0);
+  const quebrado: any = { from() { throw new Error("falha inesperada"); } };
+  assert.equal(await queueMissingProductPresets(quebrado, "user-1", '"P1"'), 0);
 });

@@ -366,6 +366,12 @@ export function isMissingAssignedByColumn(error: any): boolean {
   return /42703|PGRST204/.test(text) && /assigned_(by|at)/.test(text);
 }
 
+// Banco sem a migration 20260930100000 (coluna spools.archived_at).
+export function isMissingArchivedColumn(error: any): boolean {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`;
+  return /42703|PGRST204/.test(text) && /archived_at/.test(text);
+}
+
 /**
  * Executa a projeção AMS contra o Supabase de forma totalmente idempotente.
  */
@@ -399,11 +405,26 @@ export async function syncAmsProjection(
     }
   }
 
-  // 2. Busca todos os carretéis do usuário
-  const { data: spoolsData, error: spoolErr } = await supabase
-    .from("spools")
-    .select("id, brand, material, color_name, color_hex, nfc_uid, bambu_spool_id, bambu_dev_id, bambu_slot_id, bambu_in_printer, bambu_source_metadata");
-  if (spoolErr) throw spoolErr;
+  // 2. Busca os carretéis do usuário; arquivados (decisão D4) ficam fora do AMS.
+  //    Banco sem a coluna archived_at (antes da migration 20260930100000) -> todos.
+  //    Colunas por extenso (sem template) para o R-CONTRATO validar as duas consultas.
+  let spoolsData: any[] | null = null;
+  {
+    const withArchive = await supabase
+      .from("spools")
+      .select("id, brand, material, color_name, color_hex, nfc_uid, bambu_spool_id, bambu_dev_id, bambu_slot_id, bambu_in_printer, bambu_source_metadata, archived_at");
+    if (withArchive.error && isMissingArchivedColumn(withArchive.error)) {
+      const legacy = await supabase
+        .from("spools")
+        .select("id, brand, material, color_name, color_hex, nfc_uid, bambu_spool_id, bambu_dev_id, bambu_slot_id, bambu_in_printer, bambu_source_metadata");
+      if (legacy.error) throw legacy.error;
+      spoolsData = legacy.data;
+    } else if (withArchive.error) {
+      throw withArchive.error;
+    } else {
+      spoolsData = (withArchive.data || []).filter((s: any) => !s.archived_at);
+    }
+  }
 
   // 3. Executa reconciliação pura
   const reconciliation = reconcileAmsState({

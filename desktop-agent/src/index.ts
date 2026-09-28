@@ -27,7 +27,7 @@ import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
 import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
-import { syncAmsProjection } from "./amsProjection";
+import { syncAmsProjection, isMissingArchivedColumn } from "./amsProjection";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 import { SessionSupervisor } from "./sessionSupervisor";
 import { FinalizeOutbox } from "./finalizeOutbox";
@@ -285,7 +285,7 @@ async function startAgent() {
       const result = await syncBambuCloudSpools(supabase, authenticatedUserId);
 
       console.log(
-        `🧵 Cloud Spool Sync: ${result.spoolsInserted} novo(s), ${result.spoolsUpdated} atualizado(s), ` +
+        `🧵 Cloud Spool Sync: ${result.spoolsUpdated} atualizado(s), ${result.inboxQueued} na caixa de entrada, ` +
           `${result.profilesUpserted} perfil(is), ${result.skippedRecords} registro(s) ignorado(s) de ${result.totalRecords}.`
       );
 
@@ -792,12 +792,20 @@ async function finalizeJob(
     // do escopo desta fase). RLS já isola por user_id; o filtro por
     // bambu_dev_id aqui isola por impressora, repetido em JS dentro de
     // groupBambuCandidatesBySlot como segunda camada.
-    const { data: bambuCandidateRows, error: bambuCandidateError } = await supabase
-      .from("spools")
-      .select("id, bambu_dev_id, bambu_slot_id, bambu_in_printer, weight_confirmed_at")
-      .eq("bambu_dev_id", PRINTER_SERIAL)
-      .eq("bambu_in_printer", true)
-      .in("bambu_slot_id", usedSlotIndexes.map(String));
+    // Arquivados (decisão D4) não são candidatos; banco sem archived_at -> consulta anterior.
+    //    Colunas por extenso (sem template) para o R-CONTRATO validar as duas consultas.
+    const onlyThisPrinterSlots = (q: any) =>
+      q.eq("bambu_dev_id", PRINTER_SERIAL).eq("bambu_in_printer", true).in("bambu_slot_id", usedSlotIndexes.map(String));
+    let { data: bambuCandidateRows, error: bambuCandidateError } = await onlyThisPrinterSlots(
+      supabase.from("spools").select("id, bambu_dev_id, bambu_slot_id, bambu_in_printer, weight_confirmed_at, archived_at")
+    );
+    if (bambuCandidateError && isMissingArchivedColumn(bambuCandidateError)) {
+      ({ data: bambuCandidateRows, error: bambuCandidateError } = await onlyThisPrinterSlots(
+        supabase.from("spools").select("id, bambu_dev_id, bambu_slot_id, bambu_in_printer, weight_confirmed_at")
+      ));
+    } else if (!bambuCandidateError) {
+      bambuCandidateRows = ((bambuCandidateRows || []) as any[]).filter((r) => !r.archived_at);
+    }
     if (bambuCandidateError) throw bambuCandidateError;
 
     const bambuRows: BambuSyncedSpoolRow[] = ((bambuCandidateRows || []) as any[]).map((r) => {

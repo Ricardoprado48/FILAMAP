@@ -12,7 +12,8 @@ import {
   syncBambuCloudSpoolsFromParsed,
   normalizeColorHex,
   resolveSpoolColorName,
-  buildSpoolInsertRow,
+  buildInboxRow,
+  isOfficialFilamentId,
   findStrongReconciliationCandidate,
   isStrongCandidateMatch,
   resolveSpoolBrand,
@@ -246,16 +247,21 @@ test("parseBambuCloudSpoolRecord ignora registro sem filamentId mesmo com id de 
 // ---------------------------------------------------------------------------
 
 class FakeSupabaseClient {
-  tables: { user_filament_profiles: any[]; spools: any[] };
+  tables: { user_filament_profiles: any[]; spools: any[]; spool_inbox: any[] };
+  missingInbox = false;
 
-  constructor(seed: { profiles?: any[]; spools?: any[] } = {}) {
+  constructor(seed: { profiles?: any[]; spools?: any[]; inbox?: any[] } = {}) {
     this.tables = {
       user_filament_profiles: seed.profiles ? [...seed.profiles] : [],
       spools: seed.spools ? [...seed.spools] : [],
+      spool_inbox: seed.inbox ? [...seed.inbox] : [],
     };
   }
 
-  from(table: "user_filament_profiles" | "spools") {
+  from(table: "user_filament_profiles" | "spools" | "spool_inbox") {
+    if (table === "spool_inbox" && this.missingInbox) {
+      return new FakeQueryBuilder([], { code: "PGRST205", message: "Could not find the table 'public.spool_inbox' in the schema cache" });
+    }
     return new FakeQueryBuilder(this.tables[table]);
   }
 }
@@ -264,7 +270,7 @@ type FakeOp =
   | { type: "select" }
   | { type: "insert"; rows: any[] }
   | { type: "update"; payload: any }
-  | { type: "upsert"; rows: any[]; onConflict: string };
+  | { type: "upsert"; rows: any[]; onConflict: string; ignoreDuplicates?: boolean };
 
 class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
   private filters: { col: string; val: any }[] = [];
@@ -272,7 +278,7 @@ class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
   private selectedCols: string[] | null = null;
   private op: FakeOp = { type: "select" };
 
-  constructor(private rows: any[]) {}
+  constructor(private rows: any[], private forcedError: any = null) {}
 
   select(cols?: string) {
     this.selectedCols = cols ? cols.split(",").map((c) => c.trim()) : null;
@@ -299,8 +305,8 @@ class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
     return this;
   }
 
-  upsert(rows: any[], opts: { onConflict: string }) {
-    this.op = { type: "upsert", rows, onConflict: opts.onConflict };
+  upsert(rows: any[], opts: { onConflict: string; ignoreDuplicates?: boolean }) {
+    this.op = { type: "upsert", rows, onConflict: opts.onConflict, ignoreDuplicates: opts.ignoreDuplicates };
     return this;
   }
 
@@ -329,6 +335,7 @@ class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
   }
 
   private async execute(): Promise<{ data: any; error: any }> {
+    if (this.forcedError) return { data: null, error: this.forcedError };
     if (this.op.type === "insert") {
       const now = new Date().toISOString();
       const inserted = this.op.rows.map((row) => ({
@@ -362,7 +369,7 @@ class FakeQueryBuilder implements PromiseLike<{ data: any; error: any }> {
         );
 
         if (existing) {
-          Object.assign(existing, row);
+          if (!this.op.ignoreDuplicates) Object.assign(existing, row);
           result.push(existing);
         } else {
           const created = { id: randomUUID(), ...row };
@@ -391,24 +398,72 @@ function silkSpool(overrides: Partial<ParsedBambuCloudSpool> = {}): ParsedBambuC
 // Sync: perfil + spool físico
 // ---------------------------------------------------------------------------
 
-test("novo perfil + novo spool são criados e ligados por filament_profile_id", async () => {
+test("carretel da nuvem desconhecido vai para a caixa de entrada; nenhum spool é criado (R1/R5)", async () => {
   const client = new FakeSupabaseClient();
 
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]);
 
-  assert.deepEqual(result, { profilesUpserted: 1, spoolsInserted: 1, spoolsUpdated: 0 });
+  assert.deepEqual(result, { profilesUpserted: 1, spoolsUpdated: 0, inboxQueued: 1 });
+  assert.equal(client.tables.spools.length, 0, "a nuvem nunca cria spool físico");
   assert.equal(client.tables.user_filament_profiles.length, 1);
-  assert.equal(client.tables.spools.length, 1);
+  assert.equal(client.tables.user_filament_profiles[0].source, "bambu_cloud");
+  assert.equal(client.tables.user_filament_profiles[0].source_key, "P790d873");
 
-  const profile = client.tables.user_filament_profiles[0];
-  const spool = client.tables.spools[0];
+  const item = client.tables.spool_inbox[0];
+  assert.equal(item.source, "bambu_cloud");
+  assert.equal(item.external_id, "15582983");
+  assert.equal(item.user_id, USER_ID);
+  assert.equal(item.suggested_spool_id, null);
+  assert.equal(item.payload.filament_id, "P790d873");
+  assert.equal(item.payload.filament_type, "PLA");
+  assert.ok(item.payload.suggested_brand, "marca por texto vai só como sugestão");
+});
 
-  assert.equal(profile.source, "bambu_cloud");
-  assert.equal(profile.source_key, "P790d873");
-  assert.equal(spool.bambu_spool_id, "15582983");
-  assert.equal(spool.filament_profile_id, profile.id);
-  assert.equal(spool.brand, "Bambu Lab");
-  assert.equal(spool.material, "PLA");
+test("preset oficial Bambu (GF...) vira perfil 'bambu_official'; preset de usuário continua 'bambu_cloud'", async () => {
+  const client = new FakeSupabaseClient();
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [
+    silkSpool({ bambuSpoolId: "8594733", filamentId: "GFA18", filamentName: "PLA Lite", filamentVendor: "Bambu Lab" }),
+    silkSpool(),
+  ]);
+  const byKey = new Map(client.tables.user_filament_profiles.map((p: any) => [p.source_key, p.source]));
+  assert.equal(byKey.get("GFA18"), "bambu_official");
+  assert.equal(byKey.get("P790d873"), "bambu_cloud");
+});
+
+test("isOfficialFilamentId: GF + 2..6 alfanuméricos; presets de usuário (P + hex) não casam", () => {
+  for (const id of ["GFA18", "GFA00", "GFL99", "GFSNL02"]) assert.equal(isOfficialFilamentId(id), true, id);
+  for (const id of ["P790d873", "P86318ba", "", null, undefined, "GF", "gfa18"]) assert.equal(isOfficialFilamentId(id as any), false, String(id));
+});
+
+test("vínculo existente com outro perfil NÃO é reescrito pela nuvem (bloqueio R8)", async () => {
+  const perfilEscolhido = randomUUID();
+  const client = new FakeSupabaseClient({
+    spools: [{ id: "s1", user_id: USER_ID, bambu_spool_id: "15582983", filament_profile_id: perfilEscolhido, brand: "VIDAS BUENAS", material: "PLA", color_name: "Vermelho Ultra Silk" }],
+  });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]);
+  const s = client.tables.spools[0];
+  assert.equal(s.filament_profile_id, perfilEscolhido);
+  assert.equal(s.brand, "VIDAS BUENAS");
+  assert.equal(s.color_name, "Vermelho Ultra Silk");
+  assert.equal(s.bambu_slot_id, "1", "posição continua sendo atualizada");
+});
+
+test("banco sem a tabela spool_inbox: não falha e não cria spool", async () => {
+  const client = new FakeSupabaseClient();
+  client.missingInbox = true;
+  const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]);
+  assert.equal(result.inboxQueued, 0);
+  assert.equal(client.tables.spools.length, 0);
+});
+
+test("item da caixa de entrada já resolvido pelo usuário não é reaberto nem sobrescrito", async () => {
+  const client = new FakeSupabaseClient({
+    inbox: [{ id: "i1", user_id: USER_ID, source: "bambu_cloud", external_id: "15582983", status: "ignored", payload: { antigo: true } }],
+  });
+  await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]);
+  assert.equal(client.tables.spool_inbox.length, 1);
+  assert.equal(client.tables.spool_inbox[0].status, "ignored");
+  assert.deepEqual(client.tables.spool_inbox[0].payload, { antigo: true });
 });
 
 test("spool físico já existente é atualizado, não duplicado", async () => {
@@ -446,13 +501,13 @@ test("spool físico já existente é atualizado, não duplicado", async () => {
 
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]);
 
-  assert.equal(result.spoolsInserted, 0);
+  assert.equal(result.inboxQueued, 0);
   assert.equal(result.spoolsUpdated, 1);
   assert.equal(client.tables.spools.length, 1, "não deve duplicar o spool físico");
   assert.equal(client.tables.spools[0].id, existingSpoolId);
 });
 
-test("dois spools físicos com o mesmo filamentId compartilham um único perfil, sem duplicá-lo", async () => {
+test("dois carretéis da nuvem com o mesmo filamentId: um único perfil e dois itens distintos na caixa de entrada", async () => {
   const client = new FakeSupabaseClient();
 
   const spoolA = parseBambuCloudSpoolRecord(
@@ -465,13 +520,10 @@ test("dois spools físicos com o mesmo filamentId compartilham um único perfil,
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [spoolA, spoolB]);
 
   assert.equal(result.profilesUpserted, 1, "mesmo filamentId não deve gerar dois perfis");
-  assert.equal(result.spoolsInserted, 2, "spools físicos distintos devem ser preservados");
+  assert.equal(result.inboxQueued, 2, "carretéis físicos distintos viram itens distintos");
   assert.equal(client.tables.user_filament_profiles.length, 1);
-  assert.equal(client.tables.spools.length, 2);
-
-  const [rowA, rowB] = client.tables.spools;
-  assert.equal(rowA.filament_profile_id, rowB.filament_profile_id);
-  assert.notEqual(rowA.bambu_spool_id, rowB.bambu_spool_id);
+  assert.equal(client.tables.spools.length, 0);
+  assert.deepEqual(client.tables.spool_inbox.map((i: any) => i.external_id).sort(), ["20000001", "20000002"]);
 });
 
 test("atualização de AMS/slot reflete a nova localização sem criar linha nova", async () => {
@@ -567,8 +619,8 @@ test("execução repetida é idempotente: não duplica perfis nem spools", async
     spoolB,
   ]);
 
-  assert.equal(first.spoolsInserted, 3);
-  assert.equal(client.tables.spools.length, 3);
+  assert.equal(first.inboxQueued, 3);
+  assert.equal(client.tables.spools.length, 0);
   assert.equal(client.tables.user_filament_profiles.length, 2);
 
   const second = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [
@@ -577,9 +629,9 @@ test("execução repetida é idempotente: não duplica perfis nem spools", async
     spoolB,
   ]);
 
-  assert.equal(second.spoolsInserted, 0, "segunda rodada não deve inserir spool novo");
-  assert.equal(second.spoolsUpdated, 3);
-  assert.equal(client.tables.spools.length, 3, "número de spools não pode crescer");
+  assert.equal(second.spoolsUpdated, 0);
+  assert.equal(client.tables.spools.length, 0, "a nuvem nunca cria spool, nem na repetição");
+  assert.equal(client.tables.spool_inbox.length, 3, "caixa de entrada não duplica itens");
   assert.equal(client.tables.user_filament_profiles.length, 2, "número de perfis não pode crescer");
 });
 
@@ -604,17 +656,16 @@ test("resolveSpoolColorName prioriza display_name do perfil ou filamentName leg�
   assert.equal(resolveSpoolColorName(hexSpool, null), "Bambu Lab PLA Basic");
 });
 
-test("buildSpoolInsertRow preenche color_name amigável e color_hex normalizado", () => {
-  const spool = silkSpool();
-  const row = buildSpoolInsertRow(spool, USER_ID, "profile-123", "Bambu PLA Seda Vermelho", "2026-09-26T00:00:00Z");
-
-  assert.equal(row.color_name, "Bambu PLA Seda Vermelho");
-  assert.equal(row.color_hex, "#FF0000");
+test("buildInboxRow leva cor normalizada e nome amigável só como sugestão", () => {
+  const row = buildInboxRow(silkSpool(), USER_ID, null, "Bambu PLA Seda Vermelho");
+  assert.equal(row.payload.suggested_color_name, "Bambu PLA Seda Vermelho");
+  assert.equal(row.payload.color, "#FF0000");
   assert.equal(row.user_id, USER_ID);
-  assert.equal(row.material, "PLA");
+  assert.equal(row.payload.filament_type, "PLA");
+  assert.ok(!("brand" in row) && !("material" in row), "item da caixa de entrada não é um spool");
 });
 
-test("syncBambuCloudSpoolsFromParsed auto-corrige registros legados com color_name em HEX e color_hex nulo", () => {
+test("syncBambuCloudSpoolsFromParsed NÃO reclassifica cor/nome de spool legado (R1); só atualiza posição", () => {
   const existingProfileId = randomUUID();
   const existingSpoolId = randomUUID();
   const now = new Date().toISOString();
@@ -651,9 +702,11 @@ test("syncBambuCloudSpoolsFromParsed auto-corrige registros legados com color_na
   return syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [silkSpool()]).then((result) => {
     assert.equal(result.spoolsUpdated, 1);
     const updated = client.tables.spools[0];
-    assert.equal(updated.color_name, "PLA VERMELHO_ULTRA_SILK");
-    assert.equal(updated.color_hex, "#FF0000");
+    assert.equal(updated.color_name, "#161616", "identidade do spool não é reescrita pela nuvem");
+    assert.equal(updated.color_hex, null);
+    assert.equal(updated.filament_profile_id, existingProfileId);
     assert.equal(updated.current_weight, 900, "peso deve ser estritamente preservado");
+    assert.equal(updated.bambu_slot_id, "1");
   });
 });
 
@@ -783,7 +836,7 @@ test("resolveSpoolBrand identifica fabricante correto", () => {
   );
 });
 
-test("syncBambuCloudSpoolsFromParsed reconcilia carretel desvinculado e preserva dados físicos locais", async () => {
+test("candidato por texto vira SUGESTÃO na caixa de entrada; o spool desvinculado não é alterado (R2)", async () => {
   const unlinkedId = randomUUID();
   const now = new Date().toISOString();
 
@@ -816,18 +869,20 @@ test("syncBambuCloudSpoolsFromParsed reconcilia carretel desvinculado e preserva
 
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [cloudSpool]);
 
-  assert.equal(result.spoolsInserted, 0, "deve reconciliar sem inserir nova linha");
-  assert.equal(result.spoolsUpdated, 1);
+  assert.equal(result.spoolsUpdated, 0, "nada é religado sozinho");
+  assert.equal(result.inboxQueued, 1);
   assert.equal(client.tables.spools.length, 1);
 
   const spool = client.tables.spools[0];
   assert.equal(spool.id, unlinkedId);
-  assert.equal(spool.bambu_spool_id, "14479573");
-  assert.equal(spool.nfc_uid, "NFC-PRETO-VELVET", "NFC deve ser estritamente preservado");
-  assert.equal(spool.current_weight, 900, "peso real deve ser preservado");
+  assert.equal(spool.bambu_spool_id, null, "vínculo só por decisão humana");
+  assert.equal(spool.nfc_uid, "NFC-PRETO-VELVET");
+  assert.equal(spool.current_weight, 900);
   assert.equal(spool.price_paid, 110);
-  assert.equal(spool.bambu_in_printer, true);
-  assert.equal(spool.bambu_slot_id, "0");
+
+  const item = client.tables.spool_inbox[0];
+  assert.equal(item.external_id, "14479573");
+  assert.equal(item.suggested_spool_id, unlinkedId, "o candidato por texto vai como sugestão");
 });
 
 test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e não insere nova linha", async () => {
@@ -861,7 +916,7 @@ test("syncBambuCloudSpoolsFromParsed reconhece duplicata secundária conhecida e
 
   const result = await syncBambuCloudSpoolsFromParsed(asSupabase(client), USER_ID, [secondaryCloudSpool]);
 
-  assert.equal(result.spoolsInserted, 0, "não deve inserir linha duplicada para ID secundário");
+  assert.equal(result.inboxQueued, 0, "id secundário já decidido não vai para a caixa de entrada");
   assert.equal(client.tables.spools.length, 1);
   assert.equal(client.tables.spools[0].id, survivingId);
   assert.equal(client.tables.spools[0].bambu_spool_id, "15147446", "deve manter o ID primário");

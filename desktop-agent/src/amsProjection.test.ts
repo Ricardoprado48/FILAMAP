@@ -546,3 +546,58 @@ test("syncAmsProjection: banco sem a coluna assigned_by (antes da migration) con
   assert.equal(slot0[1].spool_id, "s1");
   assert.ok(!("assigned_by" in slot0[1]));
 });
+
+test("syncAmsProjection: carretel arquivado (D4) não entra no AMS", async () => {
+  const upserts: any[] = [];
+  const mockSupabase: any = {
+    from(table: string) {
+      if (table === "ams_slots") {
+        return {
+          select() { return { eq() { return Promise.resolve({ data: [], error: null }); } }; },
+          upsert(record: any) { upserts.push(record); return Promise.resolve({ error: null }); },
+        };
+      }
+      return {
+        select(cols: string) {
+          assert.ok(cols.includes("archived_at"));
+          return Promise.resolve({ data: [
+            { ...spool("arquivado", "PETG", { bambu_dev_id: "P1", bambu_slot_id: "0", bambu_in_printer: true }), archived_at: "2026-09-28T00:00:00Z" },
+            { ...spool("ativo", "PETG", { bambu_dev_id: "P1", bambu_slot_id: "0", bambu_in_printer: true }), archived_at: null },
+          ], error: null });
+        },
+        update() { return { eq() { return Promise.resolve({ error: null }); } }; },
+      };
+    },
+  };
+  const payload = { print: { ams: { ams: [{ id: "0", tray: [{ id: "0", tray_type: "PETG", tray_color: "FFFFFFFF" }, { id: "1" }, { id: "2" }, { id: "3" }] }], tray_exist_bits: "1" } } };
+  await syncAmsProjection(mockSupabase, "printer-1", "P1", payload);
+  const slot0 = upserts.find((u) => u.slot_index === 0);
+  assert.equal(slot0.spool_id, "ativo");
+});
+
+test("syncAmsProjection: banco sem a coluna archived_at continua funcionando (consulta anterior)", async () => {
+  const selects: string[] = [];
+  const mockSupabase: any = {
+    from(table: string) {
+      if (table === "ams_slots") {
+        return {
+          select() { return { eq() { return Promise.resolve({ data: [], error: null }); } }; },
+          upsert() { return Promise.resolve({ error: null }); },
+        };
+      }
+      return {
+        select(cols: string) {
+          selects.push(cols);
+          if (cols.includes("archived_at")) return Promise.resolve({ data: null, error: { code: "42703", message: "column spools.archived_at does not exist" } });
+          return Promise.resolve({ data: [spool("s1", "PETG")], error: null });
+        },
+        update() { return { eq() { return Promise.resolve({ error: null }); } }; },
+      };
+    },
+  };
+  const payload = { print: { ams: { ams: [{ id: "0", tray: [{ id: "0", tray_type: "PETG", tray_color: "FFFFFFFF" }, { id: "1" }, { id: "2" }, { id: "3" }] }], tray_exist_bits: "1" } } };
+  const counts = await syncAmsProjection(mockSupabase, "printer-1", "P1", payload);
+  assert.equal(selects.length, 2);
+  assert.ok(!selects[1].includes("archived_at"));
+  assert.equal(counts.slotsUpdated, 4);
+});

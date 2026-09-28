@@ -280,5 +280,44 @@ export async function syncBambuStudioFilamentProfiles(
     throw unlistError;
   }
 
+  await queueMissingProductPresets(supabase, userId, presentKeys);
+
   return rows.length;
+}
+
+/**
+ * Preset que sumiu do fatiador (rename gera filament_id novo) mas ja representa um
+ * FILAMENT_PRODUCT (decisao D6): vira pendencia 'preset_renamed' na caixa de entrada para
+ * o usuario confirmar qual preset novo e o mesmo produto. Nunca religa nada sozinho e
+ * nunca derruba o sync (banco sem as tabelas/colunas novas -> nao faz nada).
+ */
+export async function queueMissingProductPresets(
+  supabase: SupabaseClient,
+  userId: string,
+  presentKeys: string
+): Promise<number> {
+  try {
+    const { data, error } = await supabase
+      .from("user_filament_profiles")
+      .select("source_key, display_name, filament_product_id")
+      .eq("user_id", userId)
+      .eq("source", "bambu_studio")
+      .not("source_key", "in", `(${presentKeys})`)
+      .not("filament_product_id", "is", null);
+    if (error || !data || data.length === 0) return 0;
+
+    const inbox = data.map((p: any) => ({
+      user_id: userId,
+      source: "preset_renamed",
+      external_id: p.source_key,
+      suggested_product_id: p.filament_product_id,
+      payload: { old_source_key: p.source_key, old_display_name: p.display_name },
+    }));
+    const { error: inboxError } = await supabase
+      .from("spool_inbox")
+      .upsert(inbox, { onConflict: "user_id,source,external_id", ignoreDuplicates: true });
+    return inboxError ? 0 : inbox.length;
+  } catch {
+    return 0;
+  }
 }

@@ -29,8 +29,24 @@ import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
 import { syncAmsProjection } from "./amsProjection";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
+import { SessionSupervisor } from "./sessionSupervisor";
 
 dotenv.config();
+
+// agent.log não tinha horário em nenhuma linha -- impossível correlacionar
+// com last_seen_at do banco numa investigação (incidente 2026-09-27).
+for (const level of ["log", "warn", "error"] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => original(`[${new Date().toISOString()}]`, ...args);
+}
+
+// Rejeição não tratada em integração (MQTT/FTPS/Supabase/bridge) não pode
+// derrubar o Agent inteiro: registra com stack e segue. Exceção síncrona
+// não capturada continua encerrando o processo (estado pode estar
+// corrompido) -- o Task Scheduler relança via run-agent.vbs.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("❌ Promise rejeitada sem tratamento (Agent segue rodando):", reason?.stack || reason);
+});
 
 // Preenchidas por bootstrapRuntimeConfig() antes do resto do Agent rodar.
 // Se as 5 variáveis de sempre estiverem no .env, o valor é exatamente o
@@ -173,6 +189,27 @@ async function startAgent() {
 
   const authenticatedUserId = authResult.userId;
 
+  const sessionSupervisor = new SessionSupervisor({
+    auth: supabase.auth,
+    expectedUserId: authenticatedUserId,
+    initialSession: authResult.session ?? null,
+    getAgentEmail: () => AGENT_EMAIL,
+    persistRefreshToken: (refreshToken) =>
+      persistSessionSecrets(activeSecretStore, refreshToken, PRINTER_ACCESS_CODE),
+    askPassword: async () => {
+      if (process.platform === "win32") {
+        resetGuiPrompts();
+        return createGuiPrompts().askPassword();
+      }
+      try {
+        return await createCliPrompts().askPassword();
+      } finally {
+        closeCliPrompts();
+      }
+    },
+  });
+  sessionSupervisor.start();
+
   // Sincroniza os presets pessoais do Bambu Studio mesmo quando
   // a impressora estiver desligada. filament_id é a identidade estável.
   let filamentSyncInProgress = false;
@@ -303,11 +340,36 @@ async function startAgent() {
     // Heartbeat a cada 15s — grava last_seen_at independente do estado da
     // conexão MQTT com a impressora, é o sinal de "o processo do Agent
     // ainda está rodando" que o frontend usa pra decidir online/offline.
+    // O resultado é conferido: sem sessão o supabase-js cai na anon key e o
+    // UPDATE afeta 0 linhas sem erro nenhum -- foi exatamente assim que o
+    // Agent ficou "offline" com o processo vivo no incidente 2026-09-27.
+    let heartbeatFailures = 0;
     setInterval(async () => {
+      let failure: string | null = null;
       try {
         const nowIso = new Date().toISOString();
-        await supabase.from("printers").update({ is_online: true, updated_at: nowIso, last_seen_at: nowIso }).eq("id", printer.id);
-      } catch (e) {}
+        const { data, error } = await supabase
+          .from("printers")
+          .update({ is_online: true, updated_at: nowIso, last_seen_at: nowIso })
+          .eq("id", printer.id)
+          .select("id");
+        if (error) failure = error.message;
+        else if (!data || data.length === 0) failure = "UPDATE sem efeito (0 linhas -- sessão ausente/RLS)";
+      } catch (e: any) {
+        failure = e?.message || String(e);
+      }
+
+      if (failure) {
+        heartbeatFailures++;
+        // 1ª falha e depois a cada ~5 min, para não inundar o log.
+        if (heartbeatFailures === 1 || heartbeatFailures % 20 === 0) {
+          console.warn(`💔 Heartbeat falhou (${heartbeatFailures}x seguidas): ${failure}`);
+        }
+        sessionSupervisor.reportSessionLost(`heartbeat: ${failure}`);
+      } else if (heartbeatFailures > 0) {
+        console.log(`💚 Heartbeat restabelecido após ${heartbeatFailures} falha(s).`);
+        heartbeatFailures = 0;
+      }
     }, 15000);
 
     // Gravação de is_online:false num encerramento limpo (Ctrl+C, `kill`).
@@ -437,6 +499,14 @@ async function startAgent() {
           if (client.connected) requestStatusPush();
         }, 10000);
       }
+    });
+
+    // mqtt.js emite 'error' em keepalive timeout e em erros de stream
+    // (ECONNRESET/EHOSTUNREACH -- impressora desligada no meio da conexão).
+    // Sem listener, o EventEmitter lança e derruba o processo inteiro. A
+    // recuperação em si continua sendo feita pelo handler de 'close'.
+    client.on("error", (err: any) => {
+      console.warn(`⚠️ Erro na conexão MQTT: ${err?.code || ""} ${err?.message || err}`.trim());
     });
 
     client.on("close", () => {

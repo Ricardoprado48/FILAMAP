@@ -14,7 +14,7 @@ import {
   getPrinterBadgeProps,
 } from "./utils/status";
 import { groupPrintLogsByJob, formatGramsDisplay } from "./utils/history";
-import { generateAutoTagId, getNfcStatus } from "./utils/nfc";
+import { generateAutoTagId } from "./utils/nfc";
 import { filterInventory, groupInventoryByMaterial, getSpoolDisplayName, getSpoolSwatchColor, getSpoolBrandDisplay, getInPrinterCountDisplay, formatActiveSlotDisplay } from "./utils/inventory";
 import { getPendingWeighingLogs, getWriterSpool, getActivePrinter } from "./utils/selectors";
 import {
@@ -1025,10 +1025,10 @@ export default function App() {
             <strong style={{ fontSize: 13, color: "#f8fafc" }}>{spoolTitle(spool)}</strong>
             <div style={{ fontSize: 11, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
               <span>{getSpoolBrandDisplay(spool.brand, spool.material)} • {spool.material}</span>
-              {getNfcStatus(spool) === "written" ? (
-                <span title={`Tag física gravada em ${new Date(spool.nfc_written_at!).toLocaleString()} — ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>✅ Tag gravada</span>
-              ) : getNfcStatus(spool) === "pending" ? (
-                <span title={`Possui nfc_uid ("${spool.nfc_uid}") mas nenhuma escrita física confirmada ainda`} style={{ background: "rgba(251, 191, 36, 0.15)", color: "#fbbf24", border: "1px solid #d97706", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>⏳ Aguardando gravação</span>
+              {/* Tag é opcional: só dois estados. Tag só entra por caminho físico
+                  (gravar 🏷️ ou ler 📶), então ter nfc_uid = ter o chip. */}
+              {spool.nfc_uid ? (
+                <span title={`Tag NFC: ${spool.nfc_uid}`} style={{ background: "rgba(52, 211, 153, 0.15)", color: "#34d399", border: "1px solid #059669", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>🏷️ Com tag</span>
               ) : (
                 <span title="Tag NFC é opcional: grave uma (🏷️) só se quiser identificar este carretel pelo celular" style={{ background: "rgba(148, 163, 184, 0.12)", color: "#94a3b8", border: "1px solid #475569", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>Sem tag</span>
               )}
@@ -1789,12 +1789,10 @@ export default function App() {
               >
                 <option value="">Selecione um carretel do estoque...</option>
                 {inventory.map((s) => {
-                  const nfcStatus = getNfcStatus(s);
                   return (
                     <option key={s.id} value={s.id}>
-                      {nfcStatus === "written" ? "✅ " : nfcStatus === "pending" ? "⏳ " : ""}
                       {spoolTitle(s)}
-                      {nfcStatus === "written" ? " (tag gravada)" : nfcStatus === "pending" ? " (aguardando gravação física)" : " (sem tag)"}
+                      {s.nfc_uid ? " (com tag)" : " (sem tag)"}
                     </option>
                   );
                 })}
@@ -2149,16 +2147,13 @@ export default function App() {
                 </div>
               </div>
 
-              <div>
-                <label style={{ fontSize: 11, color: "#94a3b8" }}>Tag NFC (Opcional)</label>
-                <input
-                  type="text"
-                  value={createNfcUid}
-                  onChange={(e) => setCreateNfcUid(e.target.value)}
-                  placeholder="ID da tag (ou deixe vazio para associar depois)"
-                  style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#38bdf8" }}
-                />
-              </div>
+              {/* Sem campo para digitar código de tag: a tag só entra lida do chip
+                  (caixa de entrada) ou depois, gravando com 🏷️ / lendo com 📶. */}
+              {createNfcUid ? (
+                <div style={{ fontSize: 12, color: "#34d399" }}>🏷️ Tag lida: {createNfcUid}</div>
+              ) : (
+                <div style={{ fontSize: 11, color: "#64748b" }}>Tag NFC é opcional: depois de cadastrar, grave uma com 🏷️ ou leia uma existente com 📶.</div>
+              )}
 
               <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                 <button

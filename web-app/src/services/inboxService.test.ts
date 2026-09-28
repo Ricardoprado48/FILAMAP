@@ -4,7 +4,7 @@ vi.mock("../lib/supabase", () => ({ supabase: { from: vi.fn() } }));
 
 import { supabase } from "../lib/supabase";
 import { createFakeSupabase, type FakeQueryCall } from "../testUtils/fakeSupabase";
-import { queueUnknownNfcTag, linkInboxItemToSpool, applyPresetRename, canLinkInboxItem } from "./inboxService";
+import { queueUnknownNfcTag, linkInboxItemToSpool, applyPresetRename, canLinkInboxItem, reopenInboxItem } from "./inboxService";
 import { archiveSpool } from "./spoolService";
 import type { Spool, SpoolInboxItem, UserFilamentProfile } from "../types";
 
@@ -87,6 +87,15 @@ describe("applyPresetRename (D6)", () => {
     expect(calls[1]).toMatchObject({ table: "filament_products", payload: { name: "+ PLA NOME NOVO" } });
     expect(calls[1].filters).toEqual([{ col: "id", val: "p1" }]);
     expect(calls[2].payload).toMatchObject({ status: "linked" });
+  });
+});
+
+describe("reopenInboxItem", () => {
+  it("volta para pendente só se estava ignorado, limpando a resolução", async () => {
+    await reopenInboxItem("i9", "2026-09-29T10:00:00Z");
+    expect(calls[0]).toMatchObject({ table: "spool_inbox", method: "update" });
+    expect(calls[0].payload).toEqual({ status: "pending", resolved_spool_id: null, resolved_at: null, updated_at: "2026-09-29T10:00:00Z" });
+    expect(calls[0].filters).toEqual([{ col: "id", val: "i9" }, { col: "status", val: "ignored" }]);
   });
 });
 

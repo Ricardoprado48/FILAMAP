@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Nfc } from "lucide-react";
 import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
+import { useInstallPrompt } from "./hooks/useInstallPrompt";
 import { FilamapLogo, FilamapIcon } from "./components/Brand";
 
 import type { Printer, Spool, CatalogItem, PrintLog, UserFilamentProfile, FilamentProduct, SpoolInboxItem } from "./types";
@@ -54,6 +55,8 @@ import {
 import { fetchProducts, createProduct, createProductFromProfile, updateProductBrand } from "./services/productService";
 import {
   fetchPendingInbox,
+  fetchIgnoredInbox,
+  reopenInboxItem,
   queueUnknownNfcTag,
   resolveInboxItem,
   linkInboxItemToSpool,
@@ -132,6 +135,26 @@ export default function App() {
   // Produtos de filamento e caixa de entrada (F7)
   const [products, setProducts] = useState<FilamentProduct[]>([]);
   const [inboxItems, setInboxItems] = useState<SpoolInboxItem[]>([]);
+  const [ignoredInboxItems, setIgnoredInboxItems] = useState<SpoolInboxItem[]>([]);
+  const { canInstall, install } = useInstallPrompt();
+  // Histórico de impressões recolhível; lembra a escolha neste aparelho.
+  const [historyOpen, setHistoryOpen] = useState(() => {
+    try {
+      return localStorage.getItem("filamap_history_open") === "1";
+    } catch {
+      return false;
+    }
+  });
+  function toggleHistory() {
+    setHistoryOpen((open) => {
+      try {
+        localStorage.setItem("filamap_history_open", open ? "0" : "1");
+      } catch {
+        // sem armazenamento local: só não lembra a escolha
+      }
+      return !open;
+    });
+  }
   const [showInbox, setShowInbox] = useState(false);
   const [inboxBusy, setInboxBusy] = useState(false);
 
@@ -234,6 +257,7 @@ export default function App() {
 
     setProducts(await fetchProducts());
     setInboxItems(await fetchPendingInbox());
+    setIgnoredInboxItems(await fetchIgnoredInbox());
   }
   useEffect(() => {
     if (session) {
@@ -887,6 +911,17 @@ export default function App() {
     await loadData();
   }
 
+  async function handleInboxReopen(item: SpoolInboxItem) {
+    setInboxBusy(true);
+    const { error } = await reopenInboxItem(item.id);
+    setInboxBusy(false);
+    if (error) {
+      alert("Erro ao reabrir: " + error.message);
+      return;
+    }
+    await loadData();
+  }
+
   async function handleInboxRename(item: SpoolInboxItem, profile: UserFilamentProfile) {
     const product = products.find((p) => p.id === item.suggested_product_id);
     const ok = window.confirm(
@@ -1172,6 +1207,11 @@ export default function App() {
               <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: printerBadge.dotColor }} />
               {printerBadge.label}
             </span>
+            {canInstall && (
+              <button onClick={install} title="Instalar o Filamap como app neste aparelho" style={{ background: "#0284c7", color: "#fff", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                📲 Instalar
+              </button>
+            )}
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
@@ -1211,6 +1251,8 @@ export default function App() {
       {showInbox && (
         <InboxPanel
           items={inboxItems}
+          ignoredItems={ignoredInboxItems}
+          onReopen={handleInboxReopen}
           inventory={inventory}
           profiles={filamentProfiles}
           products={products}
@@ -1350,11 +1392,19 @@ export default function App() {
 
           {/* Histórico Recente */}
           <div style={{ background: "#1e293b", padding: 16, borderRadius: 12, border: "1px solid #334155" }}>
-            <h3 style={{ fontSize: 15, margin: "0 0 12px", color: "#f8fafc" }}>📋 Histórico de Impressões</h3>
-            {printLogs.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "16px", color: "#64748b", fontSize: 12 }}>Nenhuma impressão registrada.</div>
+            <button
+              type="button"
+              onClick={toggleHistory}
+              aria-expanded={historyOpen}
+              style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none", padding: 0, cursor: "pointer", color: "#f8fafc", fontSize: 15, fontWeight: 700 }}
+            >
+              <span>📋 Histórico de Impressões</span>
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>{historyOpen ? "▾ recolher" : "▸ ver"}</span>
+            </button>
+            {!historyOpen ? null : printLogs.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "16px", color: "#64748b", fontSize: 12, marginTop: 12 }}>Nenhuma impressão registrada.</div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
                 {groupPrintLogsByJob(printLogs).map((job) => (
                   <div key={job.key} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: "12px 14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
@@ -1420,6 +1470,14 @@ export default function App() {
               <p style={{ color: "#94a3b8", fontSize: 12, margin: "2px 0 0" }}>Na impressora primeiro, demais separados por material</p>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => setShowInbox(true)}
+                title="Caixa de entrada: itens da nuvem Bambu e tags aguardando decisão (inclui os ignorados)"
+                style={{ padding: "8px 12px", background: "#0f172a", color: inboxItems.length > 0 ? "#fbbf24" : "#94a3b8", border: "1px solid #334155", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+              >
+                📥 {inboxItems.length > 0 ? inboxItems.length : ""}
+              </button>
               <button
                 type="button"
                 onClick={() => openCreateModal()}

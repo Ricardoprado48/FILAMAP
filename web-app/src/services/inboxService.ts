@@ -38,6 +38,27 @@ export async function queueUnknownNfcTag(uid: string, printerId: string | null, 
     .single();
 }
 
+// Itens ignorados (para "Ver ignorados -> Reabrir": ignorar não é definitivo).
+export async function fetchIgnoredInbox(): Promise<SpoolInboxItem[]> {
+  const { data, error } = await supabase
+    .from("spool_inbox")
+    .select("id, source, external_id, payload, suggested_spool_id, suggested_product_id, status, resolved_spool_id, created_at")
+    .eq("status", "ignored")
+    .order("updated_at", { ascending: false })
+    .limit(50);
+  if (error) return [];
+  return (data as SpoolInboxItem[]) || [];
+}
+
+export async function reopenInboxItem(itemId: string, nowIso = new Date().toISOString()) {
+  return supabase
+    .from("spool_inbox")
+    .update({ status: "pending", resolved_spool_id: null, resolved_at: null, updated_at: nowIso })
+    .eq("id", itemId)
+    .eq("status", "ignored")
+    .select("id");
+}
+
 export async function resolveInboxItem(
   itemId: string,
   status: "linked" | "created" | "ignored",

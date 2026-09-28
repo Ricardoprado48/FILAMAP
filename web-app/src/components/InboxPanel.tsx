@@ -108,6 +108,8 @@ function InboxItemCard({
 
 export function InboxPanel(props: {
   items: SpoolInboxItem[];
+  ignoredItems: SpoolInboxItem[];
+  onReopen: (item: SpoolInboxItem) => void;
   inventory: Spool[];
   profiles: UserFilamentProfile[];
   products: FilamentProduct[];
@@ -119,7 +121,8 @@ export function InboxPanel(props: {
   onRename: (item: SpoolInboxItem, profile: UserFilamentProfile) => void;
   onClose: () => void;
 }) {
-  const { items, onClose, ...cardProps } = props;
+  const { items, ignoredItems, onReopen, onClose, ...cardProps } = props;
+  const [showIgnored, setShowIgnored] = useState(false);
   return (
     <div
       role="dialog"
@@ -146,6 +149,25 @@ export function InboxPanel(props: {
             {items.map((item) => (
               <InboxItemCard key={item.id} item={item} {...cardProps} />
             ))}
+          </div>
+        )}
+        {ignoredItems.length > 0 && (
+          <div style={{ marginTop: 14, borderTop: "1px solid #334155", paddingTop: 10 }}>
+            <button type="button" onClick={() => setShowIgnored((v) => !v)} style={{ background: "transparent", border: "none", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+              {showIgnored ? "▾" : "▸"} Ignorados ({ignoredItems.length})
+            </button>
+            {showIgnored && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                {ignoredItems.map((item) => (
+                  <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: "6px 10px" }}>
+                    <span style={{ fontSize: 12, color: "#94a3b8", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{describeInboxItem(item).title}</span>
+                    <button type="button" disabled={cardProps.busy} onClick={() => onReopen(item)} style={{ ...btn, background: "#334155", color: "#e2e8f0", flexShrink: 0 }}>
+                      Reabrir
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

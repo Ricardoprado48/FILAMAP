@@ -8,7 +8,7 @@ import { supabase } from "../lib/supabase";
 import { fetchInventory, fetchUserFilamentProfiles } from "./dataService";
 import { fetchProducts, createProduct, createProductFromProfile, updateProductBrand } from "./productService";
 import { createSpool, archiveSpool } from "./spoolService";
-import { fetchPendingInbox, queueUnknownNfcTag, linkInboxItemToSpool, resolveInboxItem, applyPresetRename } from "./inboxService";
+import { fetchPendingInbox, fetchIgnoredInbox, reopenInboxItem, queueUnknownNfcTag, linkInboxItemToSpool, resolveInboxItem, applyPresetRename } from "./inboxService";
 import { identityFromProduct, profilesWithoutProduct } from "../utils/products";
 import type { FilamentProduct, SpoolInboxItem, UserFilamentProfile } from "../types";
 
@@ -79,6 +79,11 @@ describe("F7 contra o banco de teste", () => {
     expect((again.data as SpoolInboxItem).status).toBe("pending");
     const ign = await resolveInboxItem(item.id, "ignored", null);
     expect(ign.error).toBeNull();
+    expect((await fetchIgnoredInbox()).some((i) => i.id === item.id)).toBe(true);
+    const reo = await reopenInboxItem(item.id);
+    expect(reo.error).toBeNull();
+    expect((await fetchPendingInbox()).some((i) => i.id === item.id)).toBe(true);
+    await resolveInboxItem(item.id, "ignored", null);
   });
 
   it("marca do produto é editável", async () => {

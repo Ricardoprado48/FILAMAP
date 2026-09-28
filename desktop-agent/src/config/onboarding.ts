@@ -55,9 +55,12 @@ export function hasCompleteEnvConfig(env: EnvOverrides): boolean {
   );
 }
 
+// pairing_code: fluxo de produção (credencial por dispositivo, ver
+// devicePairing.ts). password: só modo dev/CI via .env completo.
 export type AuthStrategy =
   | { type: "password"; password: string }
-  | { type: "refresh_token"; refreshToken: string };
+  | { type: "refresh_token"; refreshToken: string }
+  | { type: "pairing_code"; code: string };
 
 export interface ResolvedRuntimeConfig {
   supabaseUrl: string;
@@ -82,8 +85,10 @@ export interface KnownState {
 export function computeMissingFields(state: KnownState): MissingField[] {
   const missing: MissingField[] = [];
 
+  // E-mail só é necessário no login por senha (modo dev). No pareamento o
+  // servidor já sabe de quem é o código.
   const email = state.env.agentEmail || state.nonSecret.agentEmail;
-  if (!email) missing.push("agentEmail");
+  if (state.env.agentPassword && !email) missing.push("agentEmail");
 
   const hasPassword = Boolean(state.env.agentPassword);
   const hasRefreshToken = Boolean(state.secrets.supabaseRefreshToken);
@@ -100,8 +105,12 @@ export function computeMissingFields(state: KnownState): MissingField[] {
 
 export interface OnboardingPrompts {
   notify(message: string): void;
+  // Opcional: avisa tudo que vai ser perguntado, antes da primeira pergunta
+  // (a tela gráfica usa isso para juntar código + Access Code num formulário só).
+  prepare?(missing: MissingField[]): void;
   askEmail(): Promise<string>;
-  askPassword(): Promise<string>;
+  // Código gerado na Web em "Conectar computador" (substitui e-mail + senha).
+  askPairingCode(): Promise<string>;
   askPrinterSerial(): Promise<string>;
   askPrinterAccessCode(): Promise<string>;
   // Chamado quando não há terminal interativo e falta configuração --
@@ -215,15 +224,17 @@ export async function resolveAgentRuntimeConfig(
     prompts.onCannotPrompt(missing);
   }
 
+  prompts.prepare?.(missing);
+
   let agentEmail = env.agentEmail || nonSecret.agentEmail;
   if (missing.includes("agentEmail")) {
     agentEmail = await prompts.askEmail();
   }
 
-  let password = env.agentPassword;
   const hasRefreshToken = Boolean(secrets.supabaseRefreshToken);
+  let pairingCode = "";
   if (missing.includes("agentAuth") && !hasRefreshToken) {
-    password = await prompts.askPassword();
+    pairingCode = await prompts.askPairingCode();
   }
 
   if (missing.includes("printerSerial")) {
@@ -259,7 +270,9 @@ export async function resolveAgentRuntimeConfig(
 
   const auth: AuthStrategy = hasRefreshToken
     ? { type: "refresh_token", refreshToken: secrets.supabaseRefreshToken as string }
-    : { type: "password", password: password || "" };
+    : env.agentPassword
+      ? { type: "password", password: env.agentPassword }
+      : { type: "pairing_code", code: pairingCode };
 
   return {
     supabaseUrl,

@@ -40,12 +40,6 @@ function fakeAuth() {
       if (r.data?.session) state.current = r.data.session;
       return r;
     },
-    async signInWithPassword({ password }: { password: string }) {
-      state.signInCalls++;
-      const r = await state.signInImpl(password);
-      if (r.data?.session) state.current = r.data.session;
-      return r;
-    },
     async signOut(opts: any) {
       state.signOutCalls.push(opts);
       state.current = null;
@@ -65,9 +59,14 @@ function build(overrides: Partial<ConstructorParameters<typeof SessionSupervisor
     auth,
     expectedUserId: USER,
     initialSession: session("rt-0"),
-    getAgentEmail: () => "a@b.c",
     persistRefreshToken: async (rt) => { persisted.push(rt); },
-    askPassword: async () => { prompts.count++; return "secret"; },
+    reauthenticate: async () => {
+      prompts.count++;
+      state.signInCalls++;
+      const r = await state.signInImpl("codigo");
+      if (r.data?.session) state.current = r.data.session;
+      return { session: r.data?.session ?? null, error: r.error };
+    },
     sleep: async (ms) => { sleeps.push(ms); clock += ms; },
     now: () => clock,
     logInfo: () => {},
@@ -138,7 +137,23 @@ test("Supabase/internet fora: backoff crescente, token preservado, recupera quan
   assert.equal(sup.isHealthy(), true);
 });
 
-test("sessão revogada (cenário do incidente): pede senha, faz login e persiste", async () => {
+test("falha de rede no login interativo: backoff sem cooldown do diálogo", async () => {
+  let n = 0;
+  const { sup, state, sleeps, prompts } = build({ loginPromptCooldownMs: 900_000 });
+  state.refreshImpl = async () => ({ data: { session: null }, error: new AuthApiError("revoked", 400, "invalid_grant") });
+  state.signInImpl = async () => {
+    n++;
+    if (n === 1) return { data: { session: null }, error: new AuthRetryableFetchError("fetch failed", 0) };
+    return { data: { session: session("rt-3") }, error: null };
+  };
+  sup.reportSessionLost("teste");
+  await sup.currentRecovery();
+  assert.equal(prompts.count, 2);
+  assert.deepEqual(sleeps, [5000]);
+  assert.equal(sup.isHealthy(), true);
+});
+
+test("sessão revogada (cenário do incidente): pede novo login, entra e persiste", async () => {
   const { sup, state, prompts, persisted } = build();
   state.refreshImpl = async () => ({
     data: { session: null },
@@ -155,12 +170,14 @@ test("sessão revogada (cenário do incidente): pede senha, faz login e persiste
 test("usuário cancela o diálogo: respeita cooldown e pergunta de novo, sem derrubar nada", async () => {
   let asked = 0;
   const { sup, state, sleeps } = build({
-    askPassword: async () => {
+    reauthenticate: async () => {
       asked++;
       if (asked === 1) throw new Error("Login do Filamap foi cancelado.");
-      return "secret";
+      const s = session("rt-2");
+      state.current = s;
+      return { session: s, error: null };
     },
-    passwordPromptCooldownMs: 900_000,
+    loginPromptCooldownMs: 900_000,
   });
   state.refreshImpl = async () => ({ data: { session: null }, error: new AuthApiError("revoked", 400, "invalid_grant") });
   sup.reportSessionLost("teste");
@@ -172,7 +189,7 @@ test("usuário cancela o diálogo: respeita cooldown e pergunta de novo, sem der
 
 test("login com outra conta é rejeitado e descartado localmente", async () => {
   let n = 0;
-  const { sup, state, persisted } = build({ passwordPromptCooldownMs: 1 });
+  const { sup, state, persisted } = build({ loginPromptCooldownMs: 1 });
   state.refreshImpl = async () => ({ data: { session: null }, error: new AuthApiError("revoked", 400, "invalid_grant") });
   state.signInImpl = async () => {
     n++;

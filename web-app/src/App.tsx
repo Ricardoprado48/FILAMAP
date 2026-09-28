@@ -4,6 +4,7 @@ import { supabase } from "./lib/supabase";
 import { useNfc } from "./hooks/useNfc";
 import { useInstallPrompt } from "./hooks/useInstallPrompt";
 import { FilamapLogo, FilamapIcon } from "./components/Brand";
+import { AgentDevicesPanel } from "./components/AgentDevicesPanel";
 
 import type { Printer, Spool, CatalogItem, PrintLog, UserFilamentProfile, FilamentProduct, SpoolInboxItem } from "./types";
 import {
@@ -83,6 +84,7 @@ export default function App() {
   // Slot do AMS com a lista "escolher do estoque" aberta (sem tag NFC).
   const [pickingSlot, setPickingSlot] = useState<number | null>(null);
   const [savingSlotPick, setSavingSlotPick] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
   const [calcSubTab, setCalcSubTab] = useState<"catalog" | "calculator">("catalog");
   const [catalogViewMode, setCatalogViewMode] = useState<"list" | "grid">("list");
 
@@ -1237,6 +1239,9 @@ export default function App() {
             <button onClick={() => setShowSupport(true)} title="Enviar diagnóstico ao suporte" style={{ background: "#334155", color: "#e2e8f0", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               🛟 Suporte
             </button>
+            <button onClick={() => setShowDevices((v) => !v)} title="Computadores conectados" style={{ background: showDevices ? "#0284c7" : "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              💻 Computadores
+            </button>
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
@@ -1303,6 +1308,8 @@ export default function App() {
           📥 {inboxItems.length === 1 ? "1 item" : `${inboxItems.length} itens`} na caixa de entrada: toque para resolver
         </button>
       )}
+
+      {showDevices && <AgentDevicesPanel onClose={() => setShowDevices(false)} />}
 
       {feedbackMsg && (
         <div style={{ marginBottom: 16, padding: 10, background: "rgba(52, 211, 153, 0.12)", border: "1px solid #059669", borderRadius: 8, color: "#34d399", fontSize: 13, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>

@@ -12,7 +12,7 @@ import type { MissingField, OnboardingPrompts } from "./onboarding";
 
 const MISSING_FIELD_LABEL: Record<MissingField, string> = {
   agentEmail: "e-mail da conta Filamap",
-  agentAuth: "senha da conta Filamap (ou sessão salva)",
+  agentAuth: "código de pareamento do computador (ou sessão salva)",
   printerSerial: "número de série da impressora",
   printerAccessCode: "Access Code da impressora",
 };
@@ -62,8 +62,9 @@ export function createCliPrompts(): OnboardingPrompts {
       return ask("E-mail da sua conta Filamap: ");
     },
 
-    async askPassword() {
-      return askHidden("Senha da sua conta Filamap (não fica salva em disco): ");
+    async askPairingCode() {
+      console.log('Na Web do Filamap, abra "Computadores conectados" e clique em "Conectar computador".');
+      return ask("Código de pareamento (ex.: ABCDE-FGHJK): ");
     },
 
     async askPrinterSerial() {

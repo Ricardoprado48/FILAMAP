@@ -18,29 +18,35 @@ import { isTokenRevokedAuthError, isTransitoryAuthError } from "./config/session
 // 2. Receber sinais de sessão perdida (evento SIGNED_OUT do supabase-js
 //    ou heartbeat sem efeito) e recuperar em single-flight:
 //      refresh com o último token conhecido (backoff em erro transitório)
-//      -> se revogado, pede a senha pelo diálogo já existente, com
-//         cooldown entre pedidos e verificação do mesmo user_id.
+//      -> se revogado, pede novo login interativo (hoje: código de
+//         pareamento do computador), com cooldown entre pedidos e
+//         verificação do mesmo user_id.
 // 3. Nunca derrubar o processo: todo erro vira log + nova tentativa.
 
 type AuthClient = Pick<
   SupabaseClient["auth"],
-  "onAuthStateChange" | "getSession" | "refreshSession" | "signInWithPassword" | "signOut"
+  "onAuthStateChange" | "getSession" | "refreshSession" | "signOut"
 >;
+
+// Login interativo usado quando o refresh token não serve mais. Deve deixar
+// a sessão nova ativa no client (setSession) antes de devolvê-la. Erros de
+// rede devem vir em `error` (ou lançados) para o supervisor aplicar backoff;
+// cancelamento pelo usuário deve lançar.
+export type Reauthenticate = () => Promise<{ session: Session | null; error: unknown }>;
 
 export interface SessionSupervisorOptions {
   auth: AuthClient;
   expectedUserId: string;
   initialSession: Session | null;
-  getAgentEmail: () => string;
   persistRefreshToken: (refreshToken: string) => Promise<void>;
-  askPassword: () => Promise<string>;
+  reauthenticate: Reauthenticate;
   // Chamado após cada recuperação bem-sucedida (ex.: reenviar finalizações
   // que ficaram na fila enquanto não havia sessão).
   onRecovered?: () => void;
   // Observabilidade: chamado quando a recuperação começa de fato.
   onLost?: (reason: string) => void;
   retryDelayMs?: (attempt: number) => number;
-  passwordPromptCooldownMs?: number;
+  loginPromptCooldownMs?: number;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   logInfo?: (message: string) => void;
@@ -55,14 +61,14 @@ export class SessionSupervisor {
   private lastKnownRefreshToken: string | null;
   private lastPersistedRefreshToken: string | null;
   private recovering: Promise<void> | null = null;
-  private lastPasswordPromptAt = 0;
+  private lastLoginPromptAt = 0;
   private healthy = true;
   private unsubscribe: (() => void) | null = null;
 
   constructor(options: SessionSupervisorOptions) {
     this.opts = {
       retryDelayMs: (attempt) => Math.min(5000 * Math.pow(2, attempt), 60_000),
-      passwordPromptCooldownMs: 15 * 60_000,
+      loginPromptCooldownMs: 15 * 60_000,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => Date.now(),
       logInfo: console.log,
@@ -173,7 +179,7 @@ export class SessionSupervisor {
             continue;
           } else {
             // Revogado ou erro não conclusivo: o token não serve mais para
-            // este processo. Só a senha recupera.
+            // este processo. Só um novo login interativo recupera.
             this.opts.logWarn(
               `⚠️ Refresh token rejeitado pelo servidor (${error?.message || "sem detalhe"}${
                 isTokenRevokedAuthError(error) ? ", revogado" : ""
@@ -183,48 +189,49 @@ export class SessionSupervisor {
           }
         }
 
-        const wait = this.lastPasswordPromptAt
-          ? this.lastPasswordPromptAt + this.opts.passwordPromptCooldownMs - this.opts.now()
+        const wait = this.lastLoginPromptAt
+          ? this.lastLoginPromptAt + this.opts.loginPromptCooldownMs - this.opts.now()
           : 0;
         if (wait > 0) await this.opts.sleep(wait);
 
-        this.lastPasswordPromptAt = this.opts.now();
-        let password: string;
+        this.lastLoginPromptAt = this.opts.now();
+        let result: { session: Session | null; error: unknown };
         try {
-          password = await this.opts.askPassword();
+          result = await this.opts.reauthenticate();
         } catch (e: any) {
-          this.opts.logWarn(
-            `⚠️ Login não informado (${e?.message || e}). Novo pedido em ${Math.round(
-              this.opts.passwordPromptCooldownMs / 60_000
-            )} min; heartbeat e telemetria seguem suspensos até lá.`
-          );
-          continue;
+          if (isTransitoryAuthError(e)) {
+            result = { session: null, error: e };
+          } else {
+            this.opts.logWarn(
+              `⚠️ Login não concluído (${e?.message || e}). Novo pedido em ${Math.round(
+                this.opts.loginPromptCooldownMs / 60_000
+              )} min; heartbeat e telemetria seguem suspensos até lá.`
+            );
+            continue;
+          }
         }
 
-        const { data, error } = await this.opts.auth.signInWithPassword({
-          email: this.opts.getAgentEmail(),
-          password,
-        });
-        if (error || !data.session) {
+        const { session, error } = result;
+        if (error || !session) {
           if (isTransitoryAuthError(error)) {
-            // Senha pode estar certa: não impõe o cooldown do diálogo.
-            this.lastPasswordPromptAt = 0;
+            // O login pode ter sido correto: não impõe o cooldown do diálogo.
+            this.lastLoginPromptAt = 0;
             const delay = this.opts.retryDelayMs(attempt++);
-            this.opts.logWarn(`⚠️ Falha de rede no login: ${error?.message}. Nova tentativa em ${Math.round(delay / 1000)}s.`);
+            this.opts.logWarn(`⚠️ Falha de rede no login: ${(error as any)?.message}. Nova tentativa em ${Math.round(delay / 1000)}s.`);
             await this.opts.sleep(delay);
           } else {
-            this.opts.logWarn(`⚠️ Falha no login: ${error?.message || "sessão inválida"}.`);
+            this.opts.logWarn(`⚠️ Falha no login: ${(error as any)?.message || "sessão inválida"}.`);
           }
           continue;
         }
-        if (data.session.user?.id !== this.opts.expectedUserId) {
+        if (session.user?.id !== this.opts.expectedUserId) {
           this.opts.logWarn(
             "⚠️ Login feito com outra conta Filamap -- o Agent continua vinculado à conta original. Sessão descartada."
           );
           await this.opts.auth.signOut({ scope: "local" });
           continue;
         }
-        await this.handleNewSession(data.session);
+        await this.handleNewSession(session);
         break;
       } catch (e: any) {
         const delay = this.opts.retryDelayMs(attempt++);

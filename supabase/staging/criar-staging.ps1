@@ -4,15 +4,18 @@
 # Executar em PowerShell normal:
 #   powershell -ExecutionPolicy Bypass -File C:\FILAMAP-device-pairing\supabase\staging\criar-staging.ps1
 #
-# - Projeto "filamap-staging" na organizacao Rprado3d (a outra org ja tem 2 projetos ativos,
-#   limite do plano gratuito). Regiao sa-east-1. Custo zero; pausa sozinho apos 7 dias sem uso.
+# - Projeto "filamap-staging" numa CONTA Supabase separada (o plano gratuito limita 2 projetos
+#   ativos por conta, e a conta do Filamap ja tem 2). Regiao sa-east-1. Custo zero; pausa
+#   sozinho apos 7 dias sem uso.
+# - Na primeira vez pede o Access Token da conta de staging (supabase.com > Account >
+#   Access Tokens) com a digitacao oculta. O login do CLI desta maquina NAO muda: continua
+#   apontando para a conta de producao.
 # - Senha do banco e chaves ficam em %APPDATA%\Filamap-dev, criptografadas com DPAPI
 #   (so este usuario do Windows consegue ler). Nada e impresso na tela.
 # - Rodar de novo e seguro: reaproveita o projeto e reaplica o que faltar.
 $ErrorActionPreference = "Stop"
 
 $Repo    = "C:\FILAMAP-device-pairing"
-$OrgId   = "femhztrnkpxuydozsnca"
 $Name    = "filamap-staging"
 $Region  = "sa-east-1"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
@@ -20,21 +23,34 @@ $DevDir  = Join-Path $env:APPDATA "Filamap-dev"
 $PwFile  = Join-Path $DevDir "staging-db-password.dpapi"
 $RefFile = Join-Path $DevDir "staging-ref.txt"
 $KeyFile = Join-Path $DevDir "staging-keys.dpapi"
+$TokFile = Join-Path $DevDir "staging-access-token.dpapi"
 
 function Protect-ToFile([string]$Plain, [string]$Path) {
     $Plain | ConvertTo-SecureString -AsPlainText -Force | ConvertFrom-SecureString | Set-Content $Path -Encoding ascii
 }
 function Unprotect-FromFile([string]$Path) {
-    $sec = Get-Content $Path -Raw | ConvertTo-SecureString
+    $sec = (Get-Content $Path -Raw).Trim() | ConvertTo-SecureString
     return [System.Net.NetworkCredential]::new("", $sec).Password
 }
+function Hide-Secret([string]$Text) {
+    if ($script:DbPassword) { $Text = $Text.Replace($script:DbPassword, "********") }
+    if ($env:SUPABASE_ACCESS_TOKEN) { $Text = $Text.Replace($env:SUPABASE_ACCESS_TOKEN, "********") }
+    return $Text
+}
 function Invoke-Supabase {
-    # O CLI escreve avisos de versao no stderr; so o codigo de saida importa.
+    # O CLI escreve avisos de versao no stderr; em caso de erro mostra o motivo
+    # real, sempre com a senha mascarada.
+    $errFile = [System.IO.Path]::GetTempFileName()
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $out = & supabase @args 2>$null
+    $out = & supabase @args 2>$errFile
     $code = $LASTEXITCODE
     $ErrorActionPreference = $prev
-    if ($code -ne 0) { throw "supabase $($args -join ' ') falhou (codigo $code)" }
+    $err = Get-Content $errFile -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch 'new version|recommend updating|getting-started#updating' }
+    Remove-Item $errFile -ErrorAction SilentlyContinue
+    if ($code -ne 0) {
+        $motivo = Hide-Secret (($err + $out) -join [Environment]::NewLine)
+        throw (Hide-Secret "supabase $($args -join ' ') falhou (codigo $code):") + [Environment]::NewLine + $motivo
+    }
     return $out
 }
 
@@ -48,8 +64,28 @@ if (-not (Test-Path $PwFile)) {
 }
 $DbPassword = Unprotect-FromFile $PwFile
 
-# 2. Projeto (cria so se ainda nao existe)
+# 1b. Conta de staging: token so deste processo (o login salvo do CLI fica intacto)
+if (-not (Test-Path $TokFile)) {
+    Write-Host "Cole o Access Token da conta Supabase de STAGING (supabase.com > Account > Access Tokens)."
+    Write-Host "A digitacao fica oculta. Ele sera guardado criptografado so para este usuario do Windows."
+    $secTok = Read-Host "Access Token" -AsSecureString
+    $plainTok = [System.Net.NetworkCredential]::new("", $secTok).Password.Trim()
+    if ($plainTok -notmatch '^sbp_') { throw "Isso nao parece um Access Token do Supabase (comeca com sbp_)." }
+    Protect-ToFile $plainTok $TokFile
+}
+$env:SUPABASE_ACCESS_TOKEN = Unprotect-FromFile $TokFile
+
+# Trava de seguranca: esta conta NAO pode enxergar o projeto de producao.
 $projects = (Invoke-Supabase projects list -o json | Out-String | ConvertFrom-Json).projects
+if ($projects | Where-Object { $_.id -eq $ProdRef }) {
+    throw "O token informado e da conta de PRODUCAO. Use o token da conta nova de staging (apague $TokFile e rode de novo)."
+}
+$orgs = @((Invoke-Supabase orgs list -o json | Out-String | ConvertFrom-Json).organizations)
+if ($orgs.Count -ne 1) { throw "A conta de staging deve ter exatamente 1 organizacao (tem $($orgs.Count))." }
+$OrgId = $orgs[0].id
+Write-Host "Conta de staging OK (organizacao $($orgs[0].name))."
+
+# 2. Projeto (cria so se ainda nao existe)
 $existing = $projects | Where-Object { $_.name -eq $Name -and $_.organization_id -eq $OrgId } | Select-Object -First 1
 if ($existing) {
     $Ref = $existing.id

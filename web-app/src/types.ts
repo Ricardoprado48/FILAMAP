@@ -64,6 +64,9 @@ export interface UserFilamentProfile {
   model_name?: string | null;
   brand?: string | null;
   source_metadata?: Record<string, unknown> | null;
+  // false = perfil de pasta antiga do fatiador (guardado, fora da lista do
+  // "Novo Carretel"). Ausente em banco sem a migration 20260928110000.
+  is_listed?: boolean;
   last_seen_at?: string | null;
   created_at?: string;
   updated_at?: string;

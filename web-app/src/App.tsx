@@ -1731,7 +1731,7 @@ export default function App() {
                   style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #0284c7", borderRadius: 6, color: "#fff", fontSize: 12 }}
                 >
                   <option value="">-- Preenchimento 100% manual --</option>
-                  {filamentProfiles.map((p) => (
+                  {filamentProfiles.filter((p) => p.is_listed !== false).map((p) => (
                     <option key={p.id} value={p.source_key || p.id}>
                       {p.display_name} ({p.material}{p.brand ? ` • ${p.brand}` : ""})
                     </option>

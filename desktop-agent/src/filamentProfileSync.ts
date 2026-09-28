@@ -13,6 +13,9 @@ export interface BambuFilamentProfile {
   model_name: string | null;
   brand: string | null;
   source_metadata: Record<string, unknown>;
+  // true = aparece na lista do "Novo Carretel" (veio da pasta do fatiador
+  // em uso). Perfis de pastas antigas ficam guardados, fora da lista.
+  listed: boolean;
 }
 
 function firstString(value: unknown): string {
@@ -67,6 +70,7 @@ export function parseBambuFilamentPreset(
       : "";
 
   return {
+    listed: true,
     source: "bambu_studio",
     source_key: filamentId,
     source_profile_name: sourceProfileName,
@@ -127,12 +131,35 @@ export function getBambuStudioBaseDirectories(
   return baseDirs;
 }
 
+// Pasta do fatiador (BambuStudio, BambuStudioBeta, OrcaSlicer) de um
+// diretório .../<slicer>/user/<id>/filament/base.
+function slicerDirOf(baseDir: string): string {
+  return path.basename(path.resolve(baseDir, "..", "..", "..", ".."));
+}
+
+/**
+ * Lê os presets de filamento de todas as pastas de fatiador conhecidas.
+ *
+ * Só UM fatiador está em uso de fato: quando o Bambu Studio muda de canal
+ * (estável -> beta), os dados passam para outra pasta e a antiga fica
+ * parada, com cópias dos mesmos produtos sob outros filament_id (renomear
+ * um preset também gera filament_id novo). Mostrar tudo duplicaria a lista.
+ *
+ * Regra (sem comparar nomes): a pasta com o preset alterado mais
+ * recentemente é a "em uso"; só os perfis dela ficam listed=true. Os das
+ * outras pastas continuam sendo retornados (listed=false) porque carretéis,
+ * AMS e nuvem Bambu ainda podem referenciar esses filament_id.
+ */
 export function readBambuStudioFilamentProfiles(
   appData?: string
 ): BambuFilamentProfile[] {
-  const profiles = new Map<string, BambuFilamentProfile>();
+  const bySlicer = new Map<string, { newestMtimeMs: number; profiles: BambuFilamentProfile[] }>();
 
   for (const baseDir of getBambuStudioBaseDirectories(appData)) {
+    const slicerDir = slicerDirOf(baseDir);
+    const bucket = bySlicer.get(slicerDir) ?? { newestMtimeMs: 0, profiles: [] };
+    bySlicer.set(slicerDir, bucket);
+
     const files = fs
       .readdirSync(baseDir, { withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"));
@@ -149,10 +176,9 @@ export function readBambuStudioFilamentProfiles(
 
         if (!profile) continue;
 
-        // filament_id é a identidade do produto.
-        // Se o mesmo ID aparecer em mais de uma pasta de usuário local,
-        // mantém apenas uma entrada para o UPSERT.
-        profiles.set(profile.source_key, profile);
+        profile.source_metadata.slicer_dir = slicerDir;
+        bucket.profiles.push(profile);
+        bucket.newestMtimeMs = Math.max(bucket.newestMtimeMs, fs.statSync(fullPath).mtimeMs);
       } catch (error: any) {
         console.warn(
           `⚠️ Não foi possível ler preset Bambu Studio "${file.name}":`,
@@ -162,7 +188,35 @@ export function readBambuStudioFilamentProfiles(
     }
   }
 
+  let activeSlicer: string | null = null;
+  let activeMtime = -1;
+  for (const [slicerDir, bucket] of bySlicer) {
+    if (bucket.profiles.length > 0 && bucket.newestMtimeMs > activeMtime) {
+      activeSlicer = slicerDir;
+      activeMtime = bucket.newestMtimeMs;
+    }
+  }
+
+  // filament_id é a identidade do preset. Se o mesmo ID aparece em mais de
+  // uma pasta, fica uma entrada só -- a da pasta em uso, quando existir.
+  const profiles = new Map<string, BambuFilamentProfile>();
+  const ordered = [...bySlicer.entries()].sort(([a], [b]) =>
+    a === activeSlicer ? 1 : b === activeSlicer ? -1 : 0
+  );
+  for (const [slicerDir, bucket] of ordered) {
+    for (const profile of bucket.profiles) {
+      profile.listed = slicerDir === activeSlicer;
+      profiles.set(profile.source_key, profile);
+    }
+  }
+
   return [...profiles.values()];
+}
+
+// Banco sem a migration 20260928110000 (coluna is_listed).
+function isMissingIsListedColumn(error: any): boolean {
+  const text = `${error?.code ?? ""} ${error?.message ?? ""}`;
+  return /42703|PGRST204/.test(text) && /is_listed/.test(text);
 }
 
 export async function syncBambuStudioFilamentProfiles(
@@ -179,6 +233,7 @@ export async function syncBambuStudioFilamentProfiles(
   const now = new Date().toISOString();
 
   const rows = profiles.map((profile) => ({
+    is_listed: profile.listed,
     user_id: userId,
     source: profile.source,
     source_key: profile.source_key,
@@ -193,14 +248,36 @@ export async function syncBambuStudioFilamentProfiles(
     updated_at: now,
   }));
 
-  const { error } = await supabase
+  let { error } = await supabase
     .from("user_filament_profiles")
     .upsert(rows, {
       onConflict: "user_id,source,source_key",
     });
 
+  if (error && isMissingIsListedColumn(error)) {
+    const legacyRows = rows.map(({ is_listed: _ignored, ...rest }) => rest);
+    ({ error } = await supabase
+      .from("user_filament_profiles")
+      .upsert(legacyRows, { onConflict: "user_id,source,source_key" }));
+    if (error) throw error;
+    return rows.length;
+  }
+
   if (error) {
     throw error;
+  }
+
+  // Preset apagado no fatiador sai da lista (a linha fica: carretéis podem
+  // apontar para ela).
+  const presentKeys = rows.map((r) => `"${r.source_key.replace(/"/g, '\\"')}"`).join(",");
+  const { error: unlistError } = await supabase
+    .from("user_filament_profiles")
+    .update({ is_listed: false })
+    .eq("user_id", userId)
+    .eq("source", "bambu_studio")
+    .not("source_key", "in", `(${presentKeys})`);
+  if (unlistError && !isMissingIsListedColumn(unlistError)) {
+    throw unlistError;
   }
 
   return rows.length;

@@ -137,7 +137,8 @@ async function cleanup(
     // apagar a impressora já limpa os slots de teste.
     await supabase.from("printers").delete().eq("id", printerId);
   }
-  await supabase.auth.signOut();
+  // scope "local": o padrão do supabase-js é "global", que revoga TODAS as sessões da conta -- inclusive a do Agent em produção (incidente 2026-09-27).
+  await supabase.auth.signOut({ scope: "local" });
 }
 
 /** Replica exatamente as duas queries + o pipeline de resolução que finalizeJob() roda em index.ts. */

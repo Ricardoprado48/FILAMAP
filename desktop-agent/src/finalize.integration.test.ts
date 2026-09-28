@@ -171,7 +171,8 @@ async function cleanup(
       .eq("id", printerId);
   }
 
-  await supabase.auth.signOut();
+  // scope "local": o padrão do supabase-js é "global", que revoga TODAS as sessões da conta -- inclusive a do Agent em produção (incidente 2026-09-27).
+  await supabase.auth.signOut({ scope: "local" });
 }
 
 test(

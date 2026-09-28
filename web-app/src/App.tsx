@@ -1767,7 +1767,10 @@ export default function App() {
                   style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #0284c7", borderRadius: 6, color: "#fff", fontSize: 12 }}
                 >
                   <option value="">-- Preenchimento 100% manual --</option>
-                  {filamentProfiles.filter((p) => p.is_listed !== false).map((p) => (
+                  {/* Só presets do fatiador em uso. Perfis 'bambu_cloud' (criados pelo
+                      Cloud Spool Sync) e de pastas antigas do fatiador ficam fora:
+                      duplicariam produtos na lista. */}
+                  {filamentProfiles.filter((p) => p.source === "bambu_studio" && p.is_listed !== false).map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.display_name} ({p.material}{p.brand ? ` • ${p.brand}` : ""})
                     </option>

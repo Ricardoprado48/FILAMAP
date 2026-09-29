@@ -50,7 +50,7 @@ GRANT SELECT ON public.agent_devices TO authenticated;
 DROP POLICY IF EXISTS "owner_select" ON public.agent_devices;
 CREATE POLICY "owner_select" ON public.agent_devices
     FOR SELECT TO authenticated
-    USING (user_id = auth.uid());
+    USING (user_id = (SELECT auth.uid()));
 
 -- Web (usuário logado): gera um código. Devolve o código em claro UMA vez;
 -- no banco fica só o SHA-256. Alfabeto sem 0/O/1/I/L para ditar sem erro.

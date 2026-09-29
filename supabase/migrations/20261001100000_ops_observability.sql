@@ -358,17 +358,18 @@ AS $$
 $$;
 
 -- ---------------------------------------------------------------- RLS
+-- (SELECT f()) em vez de f(): o Postgres avalia uma vez por consulta, nao por linha (padrao Supabase).
 
 ALTER TABLE public.ops_admins ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ops_installations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ops_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY ops_admins_self_read ON public.ops_admins
-    FOR SELECT TO authenticated USING (user_id = auth.uid());
+    FOR SELECT TO authenticated USING (user_id = (SELECT auth.uid()));
 CREATE POLICY ops_installations_admin_read ON public.ops_installations
-    FOR SELECT TO authenticated USING (public.ops_is_admin());
+    FOR SELECT TO authenticated USING ((SELECT public.ops_is_admin()));
 CREATE POLICY ops_events_admin_read ON public.ops_events
-    FOR SELECT TO authenticated USING (public.ops_is_admin());
+    FOR SELECT TO authenticated USING ((SELECT public.ops_is_admin()));
 -- Sem policy de INSERT/UPDATE/DELETE: escrita so pelas funcoes SECURITY DEFINER.
 
 -- ---------------------------------------------------------------- GRANT

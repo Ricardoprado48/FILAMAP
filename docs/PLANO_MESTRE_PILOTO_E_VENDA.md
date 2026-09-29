@@ -57,6 +57,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 
 - F8 uso real: resolver os 2 itens ignorados (PETG Prata, Branco Ultra Silk) e ligar carretéis aos slots. 👤
 - F9 travas no banco (depois de alguns dias limpos).
+- Antes da Onda A: revisão de falhas silenciosas no Agent (checklist do agente silent-failure-hunter do ECC, aplicado sem instalar), separando o que é engolido de propósito (telemetria) do que é bug. Candidatos já vistos: updateStatus sem conferir resultado; catch vazio no encerramento.
 - Investigar: o log real mostra ~195 reconciliações/dia da projeção AMS pós-Cloud Sync e ~208 avisos "Bambu Cloud apontava carretel ..." — possível vai-e-volta entre nuvem e projeção. Não muda estoque (só ams_slots), mas a Central vai mostrar; analisar com evidência antes de mexer.
 
 ---
@@ -74,3 +75,4 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 2026-09-29 | 2.1/2.2/2.4 | Evidência: SMTP padrão do Supabase só entrega para a equipe do projeto (2/h) → cadastro aberto vai para o Bloco 4; piloto usa contas criadas no painel. Aviso de privacidade do piloto rascunhado. CI verde no GitHub |
 | 2026-09-29 | 2.3 | Porta do pareamento (13af7da) para o código atual. Provado antes no banco de teste: postgres pode apagar auth.sessions; generate_link+verify cria sessão própria sem e-mail; apagar a sessão do computador não afeta a da Web. Bug achado no e2e (coluna expires_at ambígua em create_agent_pairing_code — nunca teria funcionado) corrigido; rollback→reaplicação→e2e 15/15. Agent 281/281, Web 15/15 |
 | 2026-09-29 | INCIDENTE | Ao ensaiar o O5 "no teste", o wrapper do agente repassou `-EnsaioNoTeste` como texto e o script rodou no modo produção: histórico lido, ensaio com ROLLBACK (conferido sem rastro), backup somente leitura extra (prod-20260929-051617), cancelado no pedido de APLICAR. Produção verificada limpa (sem ops_events/agent_devices, histórico sem as versões). Prevenção: scripts de ops recusam parâmetro não reconhecido; wrapper testado em script inofensivo antes de uso |
+| 2026-09-29 | revisão ECC | 9 skills + 2 agentes lidos inteiros; nenhum instalado. Aplicado o padrão (SELECT f()) nas 4 políticas RLS novas (checklist database-reviewer); rollback→reaplicação no teste; Central 26/26, emissor 8/8, pareamento 15/15, ensaio O5 11/11; hashes do O5 atualizados |

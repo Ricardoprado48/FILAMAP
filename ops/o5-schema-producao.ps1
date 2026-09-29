@@ -24,8 +24,8 @@ $Mig = "$Stg\supabase\migrations"
 $Rb = "$Stg\supabase\rollbacks"
 $Ops = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Esperadas = [ordered]@{
-    "20261001100000_ops_observability"     = "D5960E8282955B215B9F593FF0005B6945162C80EC7FB6F82027733DE0153D4E"
-    "20261002100000_agent_device_pairing"  = "091E03B5A04300C70660E728ACADF504B70DFD737C1CACAF0968368DA7225C92"
+    "20261001100000_ops_observability"     = "93C040B60893B45D3222170D675C88F0B6DC91844BBC3740F8AFAA684FF89949"
+    "20261002100000_agent_device_pairing"  = "974EF46A6D019534E394542CD0169CBFA4D97A92F58655EC5D9710EBFC4D6D50"
 }
 $Versoes = @($Esperadas.Keys | ForEach-Object { $_.Split("_")[0] })
 $ListaSql = ($Versoes | ForEach-Object { "'$_'" }) -join ","

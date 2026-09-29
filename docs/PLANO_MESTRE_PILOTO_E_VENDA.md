@@ -57,6 +57,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 
 - F8 uso real: resolver os 2 itens ignorados (PETG Prata, Branco Ultra Silk) e ligar carretéis aos slots. 👤
 - F9 travas no banco (depois de alguns dias limpos).
+- **Antes dos testers (Agent 4.2.1):** (a) a limpeza de eventos deixa passar IP local (ex.: `connect ETIMEDOUT 192.168.x.x:8883` no MQTT_ERROR) — o aviso de privacidade promete sem IP → mascarar IPs no sanitize compartilhado Agent/Web; (b) modelo da impressora gravado sempre "A1" (index.ts); (c) JOB_DETECTED com grams=0. Limitação documentada: tarefa de início automático é uma por PC.
 - Antes da Onda A: revisão de falhas silenciosas no Agent (checklist do agente silent-failure-hunter do ECC, aplicado sem instalar), separando o que é engolido de propósito (telemetria) do que é bug. Candidatos já vistos: updateStatus sem conferir resultado; catch vazio no encerramento.
 - Investigar: o log real mostra ~195 reconciliações/dia da projeção AMS pós-Cloud Sync e ~208 avisos "Bambu Cloud apontava carretel ..." — possível vai-e-volta entre nuvem e projeção. Não muda estoque (só ams_slots), mas a Central vai mostrar; analisar com evidência antes de mexer.
 

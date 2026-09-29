@@ -1,5 +1,7 @@
 # Roteiro — Instalação limpa (item 2.5 do plano)
 
+**Caminho escolhido pelo Ricardo (29/09):** desinstalar tudo do próprio PC (`ops/desinstalar-tudo.ps1`, guarda a pasta de dados; `-Restaurar` volta) e reinstalar seguindo só o **Guia do Tester** (https://claude.ai/code/artifact/7b32725a-16f4-48c4-9324-b89211396e59), com a própria conta. O caminho abaixo (usuário Windows separado + conta nova) fica como alternativa para testar conta vazia.
+
 Objetivo: fazer, neste PC, exatamente o que um tester vai fazer — conta nova, Windows sem nada do Filamap, baixar, instalar, parear, imprimir, ver o desconto — e anotar cada tropeço.
 
 **Onde:** um usuário novo do Windows (`FilamapTeste`) e uma conta nova do Filamap na produção. A sua conta e o seu estoque não são tocados (a impressão de teste gasta ~1 g de filamento de verdade que a sua conta não vai registrar).

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  getConfigDir,
   resolveConfigDir,
   mergeNonSecretConfig,
   loadNonSecretConfig,
@@ -87,4 +88,17 @@ test("loadNonSecretConfig: retorna null se arquivo não existe", (t) => {
   });
 
   assert.equal(loadNonSecretConfig(), null);
+});
+
+test("FILAMAP_CONFIG_DIR isola a pasta do Agent de teste", () => {
+  const before = process.env.FILAMAP_CONFIG_DIR;
+  try {
+    process.env.FILAMAP_CONFIG_DIR = "C:\teste-isolado\Filamap";
+    assert.equal(getConfigDir(), "C:\teste-isolado\Filamap");
+    delete process.env.FILAMAP_CONFIG_DIR;
+    assert.notEqual(getConfigDir(), "C:\teste-isolado\Filamap");
+  } finally {
+    if (before === undefined) delete process.env.FILAMAP_CONFIG_DIR;
+    else process.env.FILAMAP_CONFIG_DIR = before;
+  }
 });

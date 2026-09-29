@@ -50,7 +50,12 @@ export function resolveConfigDir(
   return path.posix.join(base, "filamap");
 }
 
+// FILAMAP_CONFIG_DIR: só para teste isolado (ops/o4-teste-agent.ps1) -- um
+// Agent de teste NUNCA pode ler agent-state/fila de finalização da produção.
+// Não muda APPDATA (o Bambu Studio continua sendo lido do lugar de sempre).
 export function getConfigDir(): string {
+  const override = (process.env.FILAMAP_CONFIG_DIR || "").trim();
+  if (override) return override;
   return resolveConfigDir(process.platform, os.homedir(), process.env);
 }
 

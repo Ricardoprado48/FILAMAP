@@ -33,6 +33,7 @@ $ok = $true
 function Check([bool]$c, [string]$m) { if ($c) { Write-Host "OK        $m" } else { Write-Host "BLOQUEADO $m" -ForegroundColor Red; $script:ok = $false } }
 Check (Test-Path $Origem) "script de backup encontrado"
 Check ($null -ne (Get-Command supabase -ErrorAction SilentlyContinue)) "Supabase CLI instalada"
+Check (Test-Path (Join-Path $env:APPDATA "Filamap-dev\prod-access-token.dpapi")) "token da producao salvo (ops\salvar-token-producao.ps1)"
 $ref = ""
 try { $ref = (Get-Content (Join-Path $Projeto "supabase\.temp\project-ref") -Raw).Trim() } catch {}
 Check ($ref -eq "gqtlszffgvxsqcmefhyd") "C:\FILAMAP ligado ao projeto de producao ($ref)"

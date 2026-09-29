@@ -10,6 +10,12 @@ param(
     [int]$Manter = 0
 )
 $ErrorActionPreference = "Stop"
+# Token da conta da producao (ops\salvar-token-producao.ps1), so para esta execucao:
+# nao depende do "supabase login", que e compartilhado com outros projetos deste PC.
+$TokArq = Join-Path $env:APPDATA "Filamap-dev\prod-access-token.dpapi"
+if (-not (Test-Path $TokArq)) { throw "Token da producao nao encontrado. Rode uma vez: ops\salvar-token-producao.ps1. Nada foi feito." }
+$env:SUPABASE_ACCESS_TOKEN = [System.Net.NetworkCredential]::new("", ((Get-Content $TokArq -Raw).Trim() | ConvertTo-SecureString)).Password
+trap { $env:SUPABASE_ACCESS_TOKEN = $null; break }
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 # A CLI do Supabase responde {"rows":[...]} quando detecta agente de IA e [...] num terminal comum.
 # Aceita os dois formatos (causa raiz dos erros de 28/09 no terminal do usuario).
@@ -46,6 +52,7 @@ $manifesto = foreach ($t in $tabelas) {
 $manifesto | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $pasta "MANIFESTO.json")
 $manifesto | Format-Table -AutoSize
 Write-Host "Backup em: $pasta"
+$env:SUPABASE_ACCESS_TOKEN = $null
 
 # Retencao: so depois de um backup completo e conferido.
 if ($Manter -gt 0) {

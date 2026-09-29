@@ -14,6 +14,10 @@ param([switch]$SoEnsaio, [switch]$EnsaioNoTeste)
 # repassado como texto fez o script rodar no modo producao).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
 $ErrorActionPreference = "Stop"
+# Token da conta da producao (ops\salvar-token-producao.ps1), so para esta execucao:
+# nao depende do "supabase login", que e compartilhado com outros projetos deste PC.
+$TokArq = Join-Path $env:APPDATA "Filamap-dev\prod-access-token.dpapi"
+if (-not $EnsaioNoTeste -and -not (Test-Path $TokArq)) { throw "Token da producao nao encontrado. Rode uma vez: ops\salvar-token-producao.ps1. Nada foi feito." }
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
@@ -51,7 +55,10 @@ function Invoke-Db([string]$Sql) {
         $alvo = @("--linked", "--project-ref", $TestRef)
         $sec = (Get-Content "$env:APPDATA\Filamap-dev\staging-access-token.dpapi" -Raw).Trim() | ConvertTo-SecureString
         $env:SUPABASE_ACCESS_TOKEN = [System.Net.NetworkCredential]::new("", $sec).Password
-    } else { $alvo = @("--linked") }
+    } else {
+        $alvo = @("--linked")
+        $env:SUPABASE_ACCESS_TOKEN = [System.Net.NetworkCredential]::new("", ((Get-Content $TokArq -Raw).Trim() | ConvertTo-SecureString)).Password
+    }
     $ErrorActionPreference = "Continue"
     $out = & supabase db query @alvo --agent no -o json -f $arq 2> $err | Out-String
     $code = $LASTEXITCODE

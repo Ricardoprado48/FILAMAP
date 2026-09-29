@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { signupWithInvite } from "../services/inviteService";
+import { TERMS_VERSION } from "./PublicPages";
 
 // Criar conta com convite (tela de login). Depois de criar, já entra.
 
@@ -12,6 +13,7 @@ export function InviteSignupForm({ initialCode, onBack }: { initialCode: string;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,9 +22,10 @@ export function InviteSignupForm({ initialCode, onBack }: { initialCode: string;
     setError(null);
     if (password.length < 8) return setError("A senha precisa ter pelo menos 8 caracteres.");
     if (password !== confirm) return setError("As duas senhas não são iguais.");
+    if (!accepted) return setError("Para criar a conta, aceite o aviso de privacidade do piloto.");
     setBusy(true);
     const cleanEmail = email.trim().toLowerCase();
-    const failure = await signupWithInvite(supabase, { code: code.trim(), email: cleanEmail, password });
+    const failure = await signupWithInvite(supabase, { code: code.trim(), email: cleanEmail, password, terms_version: TERMS_VERSION });
     if (failure) {
       setBusy(false);
       return setError(failure);
@@ -52,6 +55,13 @@ export function InviteSignupForm({ initialCode, onBack }: { initialCode: string;
         <label style={label}>Repita a senha</label>
         <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required style={input} />
       </div>
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, color: "#cbd5e1", cursor: "pointer" }}>
+        <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          Li e aceito o <a href="/privacidade" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>aviso de privacidade do piloto</a>.{" "}
+          <a href="/guia" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>Ver o guia</a>
+        </span>
+      </label>
       {error && <div style={{ color: "#f87171", fontSize: 12, background: "rgba(239, 68, 68, 0.1)", padding: 8, borderRadius: 6, border: "1px solid #dc2626" }}>{error}</div>}
       <button type="submit" disabled={busy} style={{ padding: 12, background: busy ? "#047857" : "#059669", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}>
         {busy ? "Criando..." : "Criar conta e entrar"}

@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
 
-  let body: { code?: unknown; email?: unknown; password?: unknown };
+  let body: { code?: unknown; email?: unknown; password?: unknown; terms_version?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -48,6 +48,9 @@ Deno.serve(async (req) => {
   if (code.length < 10 || code.length > 20) return json(400, { error: "invalid_invite" });
   if (!EMAIL_RE.test(email) || email.length > 254) return json(400, { error: "invalid_email" });
   if (password.length < 8 || password.length > 72) return json(400, { error: "weak_password" });
+  // Aceite do aviso de privacidade do piloto (LGPD): versão aceita + quando, na conta.
+  const termsVersion = typeof body.terms_version === "string" ? body.terms_version.trim() : "";
+  if (!termsVersion || termsVersion.length > 40) return json(400, { error: "terms_required" });
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -64,6 +67,7 @@ Deno.serve(async (req) => {
     email,
     password,
     email_confirm: true,
+    user_metadata: { terms_version: termsVersion, terms_accepted_at: new Date().toISOString() },
   });
   if (createError || !created?.user) {
     await admin.rpc("release_signup_invite", { p_id: inviteId });

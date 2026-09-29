@@ -40,6 +40,7 @@ describe("link e código do convite", () => {
     const m = inviteMessage("ABCDE-FGHJK", "https://filamap.pages.dev", "2026-10-10T12:00:00Z");
     expect(m).toContain("https://filamap.pages.dev/?convite=ABCDE-FGHJK");
     expect(m).toContain("ABCDE-FGHJK");
+    expect(m).toContain("https://filamap.pages.dev/guia");
   });
 });
 

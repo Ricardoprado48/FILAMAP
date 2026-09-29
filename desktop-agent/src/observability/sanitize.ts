@@ -23,6 +23,11 @@ const PATTERNS: Array<[RegExp, string]> = [
   [/([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, "$1***@$2"],
   [/([A-Za-z]:\\Users\\)[^\\/\s"']+/gi, "$1<user>"],
   [/(\/(?:home|Users)\/)[^/\s"']+/g, "$1<user>"],
+  // Endereços IP (o aviso de privacidade promete "sem IP"). Versão "4.2.0" tem 3 partes e passa;
+  // horário "10:57:41" tem 2 dois-pontos e passa.
+  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "<ip>"],
+  [/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, "<ip>"],
+  [/\b[0-9a-f]{1,4}::(?:[0-9a-f]{1,4}:?){0,6}\b/gi, "<ip>"],
 ];
 
 export interface Sanitizer {

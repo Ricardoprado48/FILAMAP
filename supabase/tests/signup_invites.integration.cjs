@@ -18,7 +18,7 @@ async function signup(body) {
   const r = await fetch(`${K.url}/functions/v1/signup-invite`, {
     method: "POST",
     headers: { apikey: K.anon, Authorization: `Bearer ${K.anon}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ terms_version: "piloto-2026-09-29", ...body }),
   });
   let j = {};
   try { j = await r.json(); } catch {}
@@ -63,17 +63,23 @@ async function signup(body) {
     ok(r.status === 400 && r.body.error === "weak_password", "senha curta recusada", r);
     r = await signup({ code, email: "nao-e-email", password: SENHA });
     ok(r.status === 400 && r.body.error === "invalid_email", "e-mail invalido recusado", r);
+    r = await signup({ code, email: mail(0), password: SENHA, terms_version: "" });
+    ok(r.status === 400 && r.body.error === "terms_required", "sem aceite do aviso de privacidade recusado", r);
+    let st = (await svc.from("signup_invites").select("used_count").eq("id", inv.id).single()).data;
+    ok(st.used_count === 0, "recusas antes de criar a conta nao gastam o convite", st);
 
     r = await signup({ code: code.toLowerCase(), email: mail(1), password: SENHA });
     ok(r.status === 200 && r.body.ok, "convite valido cria a conta (codigo em minusculas aceito)", r);
     const n1 = createClient(K.url, K.anon, opts);
     const l1 = await n1.auth.signInWithPassword({ email: mail(1), password: SENHA });
     ok(!l1.error && !!l1.data.user?.email_confirmed_at, "conta nova entra direto, e-mail ja confirmado", l1.error);
+    const meta = l1.data.user?.user_metadata || {};
+    ok(meta.terms_version === "piloto-2026-09-29" && !!meta.terms_accepted_at, "aceite do aviso gravado na conta (versao + data)", meta);
     if (l1.data.user) criados.push(l1.data.user.id);
 
     r = await signup({ code, email: mail(1), password: SENHA });
     ok(r.status === 409 && r.body.error === "email_exists", "e-mail repetido recusado (409)", r);
-    let st = (await svc.from("signup_invites").select("used_count").eq("id", inv.id).single()).data;
+    st =(await svc.from("signup_invites").select("used_count").eq("id", inv.id).single()).data;
     ok(st.used_count === 1, "e-mail repetido devolve o uso (used_count=1)", st);
 
     r = await signup({ code, email: mail(2), password: SENHA });

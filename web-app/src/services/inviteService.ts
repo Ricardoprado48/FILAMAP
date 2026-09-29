@@ -49,6 +49,8 @@ export function inviteMessage(code: string, origin: string, expiresAt: string): 
     inviteLink(code, origin),
     "",
     `Se pedir, o código do convite é ${code}.`,
+    "",
+    `Guia de instalação: ${origin.replace(/\/+$/, "")}/guia`,
   ].join("\n");
 }
 
@@ -57,6 +59,7 @@ const SIGNUP_ERRORS: Record<string, string> = {
   invalid_email: "Digite um e-mail válido.",
   weak_password: "A senha precisa ter pelo menos 8 caracteres.",
   email_exists: "Este e-mail já tem conta. Use \"Entrar\" com a sua senha.",
+  terms_required: "Para criar a conta, aceite o aviso de privacidade do piloto.",
 };
 
 export function signupErrorMessage(code: string | undefined): string {
@@ -85,7 +88,7 @@ export async function revokeInvite(client: SupabaseClient, id: string): Promise<
 // Cria a conta pelo convite. Devolve null se deu certo, ou a mensagem de erro.
 export async function signupWithInvite(
   client: SupabaseClient,
-  input: { code: string; email: string; password: string }
+  input: { code: string; email: string; password: string; terms_version: string }
 ): Promise<string | null> {
   const { error } = await client.functions.invoke("signup-invite", { body: input });
   if (!error) return null;

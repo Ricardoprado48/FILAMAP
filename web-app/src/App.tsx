@@ -70,6 +70,8 @@ import { SupportDialog } from "./components/SupportDialog";
 import { InviteSignupForm } from "./components/InviteSignupForm";
 import { ChangePasswordDialog } from "./components/ChangePasswordDialog";
 import { inviteCodeFromSearch } from "./services/inviteService";
+import { FirstStepsPanel } from "./components/FirstStepsPanel";
+import { computeFirstSteps, firstStepsComplete, wantsComputersPanel } from "./utils/firstSteps";
 import { isOpsAdmin } from "./services/opsService";
 import { resolveSpoolTitle, identityFromProduct, profilesWithoutProduct, parseGrams, parseOptionalPrice } from "./utils/products";
 export default function App() {
@@ -91,7 +93,11 @@ export default function App() {
   // Slot do AMS com a lista "escolher do estoque" aberta (sem tag NFC).
   const [pickingSlot, setPickingSlot] = useState<number | null>(null);
   const [savingSlotPick, setSavingSlotPick] = useState(false);
-  const [showDevices, setShowDevices] = useState(false);
+  // Link do Agent (?computadores=1) abre direto o painel com o código de pareamento.
+  const [showDevices, setShowDevices] = useState(() => wantsComputersPanel(window.location.search));
+  const [firstStepsHidden, setFirstStepsHidden] = useState(() => {
+    try { return localStorage.getItem("filamap_first_steps_hidden") === "1"; } catch { return false; }
+  });
   const [calcSubTab, setCalcSubTab] = useState<"catalog" | "calculator">("catalog");
   const [catalogViewMode, setCatalogViewMode] = useState<"list" | "grid">("list");
 
@@ -1070,6 +1076,15 @@ export default function App() {
   const printerStatus = getPrinterStatus(activePrinter, currentTick);
   const printerOperationalText = formatPrinterOperationalState(activePrinter, agentStatus, printerStatus, currentTick);
   const isPrinting = isPrinterLivePrinting(activePrinter, currentTick);
+  const firstSteps = computeFirstSteps({
+    agentOnline: agentStatus === "ONLINE",
+    hasPrinter: printers.length > 0,
+    spoolCount: inventory.length,
+    inboxCount: inboxItems.length,
+    slotsWithSpool: Object.values(activeSlots).filter(Boolean).length,
+    printCount: printLogs.length,
+  });
+  const showFirstSteps = !firstStepsHidden && !firstStepsComplete(firstSteps);
   const agentBadge = getAgentBadgeProps(agentStatus);
   const printerBadge = getPrinterBadgeProps(printerStatus);
 
@@ -1198,7 +1213,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
             <FilamapLogo height={36} alt="FILAMAP" />
             <div className="filamap-header-sub" style={{ borderLeft: "1px solid #334155", paddingLeft: 10, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11, fontWeight: 500, whiteSpace: "nowrap" }}>Bambu Lab A1 &amp; Estoque NFC</p>
+              <p style={{ margin: 0, color: "#94a3b8", fontSize: 11, fontWeight: 500, whiteSpace: "nowrap" }}>Bambu Lab {activePrinter?.model || ""} &amp; Estoque NFC</p>
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1339,6 +1354,17 @@ export default function App() {
       {/* ABA 1: MONITOR AMS */}
       {activeTab === "ams" && (
         <div>
+          {showFirstSteps && (
+            <FirstStepsPanel
+              steps={firstSteps}
+              onOpenComputers={() => setShowDevices(true)}
+              onNewSpool={() => setShowCreateModal(true)}
+              onHide={() => {
+                setFirstStepsHidden(true);
+                try { localStorage.setItem("filamap_first_steps_hidden", "1"); } catch {}
+              }}
+            />
+          )}
 
           <div style={{ background: isPrinting ? "linear-gradient(145deg, #0f172a, #172554)" : "#1e293b", border: `1px solid ${isPrinting ? "#38bdf8" : "#334155"}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
@@ -1748,7 +1774,7 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <h2 style={{ fontSize: 16, color: "#f8fafc", margin: 0 }}>Calculadora de Custo e Preço</h2>
-                    <p style={{ color: "#94a3b8", fontSize: 11, margin: "2px 0 0" }}>Bambu Lab A1 (Energia + Depreciação + Filamento)</p>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: "2px 0 0" }}>Bambu Lab {activePrinter?.model || ""} (Energia + Depreciação + Filamento)</p>
                   </div>
                   <button onClick={() => setShowConfigPanel(!showConfigPanel)} style={{ background: showConfigPanel ? "#0284c7" : "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                     ⚙️ {showConfigPanel ? "Fechar Custos" : "Custos da Oficina"}

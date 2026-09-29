@@ -37,6 +37,19 @@ test("UUID de job continua legível; e-mail e pasta de usuário mascarados", () 
   assert.equal(out.includes("fulano"), false);
 });
 
+test("IP da rede (v4 e v6) mascarado; versão, horário e UUID continuam legíveis", () => {
+  const s = createSanitizer();
+  const out = s.text(
+    "Error: connect ETIMEDOUT 192.168.15.17:8883 fe80::1ff:fe23:4567:890a 2001:db8:85a3:0:0:8a2e:370:7334 " +
+      "Agent 4.2.0 em 2026-09-29T10:57:41.855Z job 0f8fad5b-d9cb-469f-a165-70867728950e"
+  );
+  for (const leak of ["192.168.15.17", "fe80::1ff", "2001:db8"]) assert.equal(out.includes(leak), false, `vazou: ${leak}`);
+  assert.ok(out.includes("<ip>:8883"));
+  assert.ok(out.includes("Agent 4.2.0"));
+  assert.ok(out.includes("10:57:41.855Z"));
+  assert.ok(out.includes("0f8fad5b-d9cb-469f-a165-70867728950e"));
+});
+
 test("página HTML de erro (Cloudflare) vira só o título", () => {
   const s = createSanitizer();
   assert.equal(s.text("<html><head><title>502 Bad Gateway</title></head><body>cookie=abc</body></html>"), "[html] 502 Bad Gateway");

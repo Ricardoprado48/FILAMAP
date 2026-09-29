@@ -16,7 +16,8 @@ export interface AuthenticateSessionOptions {
   printerAccessCode: string;
   getPrinterAccessCode?: () => string;
   secretStore: SecretStore;
-  promptLogin?: () => Promise<AuthStrategy>;
+  // reason: por que está pedindo de novo (ex.: código de pareamento recusado), para mostrar à pessoa.
+  promptLogin?: (reason?: string) => Promise<AuthStrategy>;
   // Troca código de pareamento por sessão própria do computador
   // (devicePairing.pairAgentDevice já ligado a URL/anon key).
   pairDevice?: (code: string) => Promise<PairingResult>;
@@ -245,7 +246,7 @@ export async function authenticateAgentSession(
           e instanceof PairingError && (e.kind === "invalid_code" || e.kind === "invalid_format");
         if (!retryable || !options.promptLogin || tries >= 5) throw e;
         logWarn(`⚠️ ${(e as Error).message}`);
-        currentAuth = await options.promptLogin();
+        currentAuth = await options.promptLogin((e as Error).message);
       }
     }
   }

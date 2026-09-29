@@ -19,6 +19,7 @@ import {
 } from "./consumption";
 import { decideRediscovery } from "./networkRediscovery";
 import { discoverPrinterIp } from "./printerDiscovery";
+import { printerModelFromSerial } from "./printerModel";
 import type { JobConsumptionItem, SpoolPhysicalInfo, BambuSyncedSpoolRow, AmsSlotPhysicalCandidate } from "./consumption";
 import { getConfigDir } from "./config/configStore";
 import { resolveAgentRuntimeConfig, persistSessionSecrets } from "./config/onboarding";
@@ -26,7 +27,9 @@ import { mergeNonSecretConfig } from "./config/configStore";
 import { pairAgentDevice, PairingError } from "./config/devicePairing";
 import { authenticateAgentSession } from "./config/sessionManager";
 import { createCliPrompts, closeCliPrompts } from "./config/onboardingCli";
-import { createGuiPrompts, resetGuiPrompts } from "./config/onboardingGui";
+import { createGuiPrompts, resetGuiPrompts, SetupCancelledError, wasSetupShownThisRun } from "./config/onboardingGui";
+import { showDesktopNotice } from "./config/desktopNotice";
+import { isAccessCodeRejected } from "./mqttAuth";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
 import { syncAmsProjection, isMissingArchivedColumn } from "./amsProjection";
@@ -55,6 +58,11 @@ for (const level of ["log", "warn", "error"] as const) {
 // não capturada continua encerrando o processo (estado pode estar
 // corrompido) -- o Task Scheduler relança via run-agent.vbs.
 process.on("unhandledRejection", (reason: any) => {
+  // Janela de configuração fechada pela pessoa: não é falha. Encerra limpo (volta pelo atalho).
+  if (reason instanceof SetupCancelledError) {
+    console.log(`ℹ️ ${reason.message} Encerrando; o atalho "Filamap" abre a configuração de novo.`);
+    process.exit(0);
+  }
   console.error("❌ Promise rejeitada sem tratamento (Agent segue rodando):", reason?.stack || reason);
   opsEmit("UNHANDLED_REJECTION", { error: reason });
 });
@@ -69,6 +77,7 @@ function opsEmit(type: EventType, fields?: EmitFields) {
     ops?.emit(type, fields);
   } catch {}
 }
+let setupSuccessShown = false;
 const opsState = {
   mqtt: "unknown" as "unknown" | "connected" | "disconnected",
   mqttDownSince: 0,
@@ -204,7 +213,16 @@ function pairWithServer(code: string) {
 async function startAgent() {
   console.log("🧵 Iniciando Desktop Agent Filamap (com leitura de dados do fatiador)...");
 
-  const auth = await bootstrapRuntimeConfig();
+  let auth;
+  try {
+    auth = await bootstrapRuntimeConfig();
+  } catch (error: any) {
+    if (error instanceof SetupCancelledError) {
+      console.log(`ℹ️ ${error.message} Encerrando; o atalho "Filamap" abre a configuração de novo.`);
+      process.exit(0);
+    }
+    throw error;
+  }
 
   let authResult;
   try {
@@ -216,12 +234,24 @@ async function startAgent() {
       printerAccessCode: PRINTER_ACCESS_CODE,
       getPrinterAccessCode: () => PRINTER_ACCESS_CODE,
       secretStore: activeSecretStore,
-      promptLogin: async () => {
+      promptLogin: async (reason?: string) => {
+        if (reason) {
+          await showDesktopNotice("Filamap Agent", [
+            "O código de pareamento não foi aceito.",
+            reason,
+            "",
+            "Gere um código novo no site do Filamap (Computadores > Conectar computador) e digite na próxima janela.",
+          ], "warning");
+        }
         return bootstrapRuntimeConfig();
       },
       pairDevice: (code) => pairWithServer(code),
     });
   } catch (error: any) {
+    if (error instanceof SetupCancelledError) {
+      console.log(`ℹ️ ${error.message} Encerrando; o atalho "Filamap" abre a configuração de novo.`);
+      process.exit(0);
+    }
     console.error("❌ Falha na autenticação do agente:", error?.message || error);
     process.exit(1);
   }
@@ -455,6 +485,7 @@ async function startAgent() {
       .eq("serial", PRINTER_SERIAL);
 
     let printer = existingPrinters?.[0];
+    const detectedModel = printerModelFromSerial(PRINTER_SERIAL);
 
     if (!printer) {
       const { data: inserted, error: insertError } = await supabase
@@ -462,7 +493,7 @@ async function startAgent() {
         .insert({
           user_id: authenticatedUserId,
           serial: PRINTER_SERIAL,
-          model: "A1",
+          model: detectedModel ?? "Bambu Lab",
           ip_address: PRINTER_IP,
           is_online: true,
         })
@@ -471,7 +502,9 @@ async function startAgent() {
       if (insertError) throw insertError;
       printer = inserted;
     } else {
-      await supabase.from("printers").update({ ip_address: PRINTER_IP, is_online: true }).eq("id", printer.id);
+      const patch: Record<string, unknown> = { ip_address: PRINTER_IP, is_online: true };
+      if (detectedModel && printer.model !== detectedModel) patch.model = detectedModel;
+      await supabase.from("printers").update(patch).eq("id", printer.id);
     }
 
     activePrinterRecord = printer;
@@ -642,7 +675,17 @@ async function startAgent() {
       }
     }
     client.on("connect", () => {
-      console.log(`✅ Conectado ao broker MQTT da Bambu Lab A1 em ${PRINTER_IP}!`);
+      console.log(`✅ Conectado ao broker MQTT da Bambu Lab ${printerModelFromSerial(PRINTER_SERIAL) ?? ""} em ${PRINTER_IP}!`.replace("  ", " "));
+      // Primeira configuração (ou novo Access Code/código): confirma para a pessoa que deu certo.
+      if (wasSetupShownThisRun() && !setupSuccessShown) {
+        setupSuccessShown = true;
+        void showDesktopNotice("Filamap Agent", [
+          `Pronto! Este computador está conectado ao Filamap e à impressora ${printerModelFromSerial(PRINTER_SERIAL) ?? "Bambu Lab"}.`,
+          "",
+          "O Filamap Agent continua funcionando escondido e liga sozinho com o Windows.",
+          "Pode fechar este aviso e voltar ao site do Filamap.",
+        ]);
+      }
       updateStatus(printer.id, true);
       if (ops?.changed("mqtt", "connected")) opsEmit("MQTT_CONNECTED");
       opsState.mqtt = "connected";
@@ -663,7 +706,36 @@ async function startAgent() {
     client.on("error", (err: any) => {
       console.warn(`⚠️ Erro na conexão MQTT: ${err?.code || ""} ${err?.message || err}`.trim());
       opsEmit("MQTT_ERROR", { error: err });
+      if (isAccessCodeRejected(err)) void handleAccessCodeRejected();
     });
+
+    // A impressora recusou o Access Code (digitado errado, ou trocado na impressora).
+    // Sem impressão em andamento: apaga o Access Code salvo, avisa e encerra limpo;
+    // o atalho "Filamap" abre a janela pedindo só o Access Code. Com impressão em
+    // andamento: não mexe em nada (só registra) para não arriscar o desconto.
+    let accessCodeHandling = false;
+    async function handleAccessCodeRejected() {
+      if (accessCodeHandling) return;
+      accessCodeHandling = true;
+      if (loadJobState()) {
+        console.warn("⚠️ Access Code recusado pela impressora durante uma impressão; nada foi alterado.");
+        accessCodeHandling = false;
+        return;
+      }
+      console.warn("⚠️ A impressora recusou o Access Code. Pedindo de novo.");
+      try {
+        const current = await activeSecretStore.load();
+        await activeSecretStore.save({ ...current, printerAccessCode: null });
+      } catch (e: any) {
+        console.error("❌ Não foi possível limpar o Access Code salvo:", e?.message || e);
+      }
+      await showDesktopNotice("Filamap Agent", [
+        "A impressora não aceitou o Access Code.",
+        "",
+        "Confira o código na tela da impressora (configurações de rede, WLAN/LAN) e abra o atalho \"Filamap\" na Área de Trabalho para digitar de novo.",
+      ], "warning");
+      process.exit(0);
+    }
 
     client.on("close", () => {
       console.log("🔌 Conexão MQTT fechada.");
@@ -739,7 +811,8 @@ async function startAgent() {
             saveJobState(action.job);
             console.log(`🧵 Novo trabalho de impressão detectado: "${action.job.subtaskName}" (JobId: ${action.job.jobId})`);
             opsState.activeJob = true;
-            opsEmit("JOB_DETECTED", { job_id: action.job.jobId, metadata: { job: action.job.jobId, subtask: action.job.subtaskName, grams: action.job.filamentGrams } });
+            // JOB_DETECTED sai depois da leitura do fatiador (FTPS), para levar os gramas reais.
+            let detectedGrams = action.job.filamentGrams;
             if (action.job.filamentGrams > 0) {
               console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${action.job.filamentGrams}g`);
             }
@@ -752,11 +825,13 @@ async function startAgent() {
                 console.log("ℹ️ Informações de slice_info.config carregadas com sucesso!");
                 jobStateMachine.attachSliceInfo(sliceInfo);
                 saveJobState(jobStateMachine.getCurrentJob());
+                detectedGrams = Math.round(sliceInfo.reduce((sum, f) => sum + (f.totalGrams || 0), 0) * 100) / 100;
               }
             } catch (e: any) {
               console.error("❌ Erro ao carregar slice_info.config:", e.message);
               opsEmit("FTPS_FAILED", { error: e, job_id: action.job.jobId, metadata: { job: action.job.jobId } });
             }
+            opsEmit("JOB_DETECTED", { job_id: action.job.jobId, metadata: { job: action.job.jobId, subtask: action.job.subtaskName, grams: detectedGrams } });
           } else if (action.type === "update_job") {
             saveJobState(action.job);
             if (action.reason === "slot_added") {

@@ -1,4 +1,4 @@
-param([switch]$Ensaio, [switch]$Restaurar)
+param([switch]$Ensaio, [switch]$Restaurar, [switch]$Limpo)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
 # repassado como texto fez o script rodar no modo producao).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
@@ -15,6 +15,9 @@ if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). N
 #
 #   -Ensaio     so confere, nao para nem inicia nada
 #   -Restaurar  so religa o Agent de producao (use se a janela foi fechada no meio)
+#   -Limpo      instalacao limpa: pasta vazia e SEM credenciais -> a janela de configuracao
+#               aparece como para um tester (codigo do site de STAGING + Access Code).
+#               Ao fechar o Agent, pergunta se quer abrir de novo (como o atalho).
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -22,7 +25,7 @@ $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TaskName = "FilamapAgentAutoStart"
 $Repo = "C:\FILAMAP-staging\desktop-agent"
 $ProdDir = Join-Path $env:APPDATA "Filamap"
-$TestDir = Join-Path $env:APPDATA "Filamap-teste-o4"
+$TestDir = Join-Path $env:APPDATA $(if ($Limpo) { "Filamap-teste-limpo" } else { "Filamap-teste-o4" })
 $Bridge = "C:\Program Files\Filamap Agent\bambu-bridge\filamap-bambu-bridge.exe"
 
 function Start-ProdAgent {
@@ -79,7 +82,8 @@ if ($Ensaio) {
 }
 
 Write-Host ""
-Write-Host "Vai PARAR o Agent de producao e rodar o 4.2 contra o banco de TESTE." -ForegroundColor Yellow
+Write-Host "Vai PARAR o Agent de producao e rodar o Agent novo contra o banco de TESTE." -ForegroundColor Yellow
+if ($Limpo) { Write-Host "Modo LIMPO: o codigo de pareamento vem do site de TESTE: https://staging.filamap.pages.dev (Computadores > Conectar computador)." -ForegroundColor Cyan }
 Write-Host "Impressoes durante o teste NAO descontam do seu estoque real."
 $resp = Read-Host "Digite TESTAR para continuar"
 if ($resp -cne "TESTAR") { Write-Host "Cancelado. Nada foi alterado."; return }
@@ -91,23 +95,38 @@ Start-Sleep -Seconds 2
 Write-Host "Agent de producao parado." -ForegroundColor Yellow
 
 try {
+    if ($Limpo -and (Test-Path $TestDir)) {
+        $velha = "$TestDir-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+        Move-Item $TestDir $velha
+        Write-Host "Pasta de teste anterior guardada em $velha (comeca do zero)."
+    }
     New-Item -ItemType Directory -Force -Path $TestDir | Out-Null
     $env:FILAMAP_CONFIG_DIR = $TestDir
     $env:FILAMAP_BAMBU_BRIDGE_PATH = $Bridge
     $env:SUPABASE_URL = $keys.url
     $env:SUPABASE_ANON_KEY = $keys.anon
-    $env:AGENT_EMAIL = $keys.email
-    $env:AGENT_PASSWORD = $keys.password
-    $env:PRINTER_SERIAL = [string]$cfg.printerSerial
-    $env:PRINTER_IP = [string]$cfg.lastKnownPrinterIp
-    $env:PRINTER_ACCESS_CODE = [string]$code
+    if ($Limpo) {
+        $env:FILAMAP_WEB_URL = "https://staging.filamap.pages.dev"
+    } else {
+        $env:AGENT_EMAIL = $keys.email
+        $env:AGENT_PASSWORD = $keys.password
+        $env:PRINTER_SERIAL = [string]$cfg.printerSerial
+        $env:PRINTER_IP = [string]$cfg.lastKnownPrinterIp
+        $env:PRINTER_ACCESS_CODE = [string]$code
+    }
     Write-Host ""
-    Write-Host "Agent 4.2 de TESTE rodando. Quando terminar o roteiro, aperte Ctrl+C." -ForegroundColor Cyan
+    Write-Host "Agent de TESTE rodando. Quando terminar o roteiro, aperte Ctrl+C." -ForegroundColor Cyan
     Write-Host ""
     Push-Location $Repo
-    try { & node dist\index.js } finally { Pop-Location }
+    try {
+        do {
+            & node dist\index.js
+            $denovo = ""
+            if ($Limpo) { $denovo = Read-Host "O Agent encerrou. Digite DENOVO para abrir de novo (como o atalho Filamap) ou Enter para terminar" }
+        } while ($denovo -ceq "DENOVO")
+    } finally { Pop-Location }
 } finally {
-    foreach ($v in "FILAMAP_CONFIG_DIR", "FILAMAP_BAMBU_BRIDGE_PATH", "SUPABASE_URL", "SUPABASE_ANON_KEY", "AGENT_EMAIL", "AGENT_PASSWORD", "PRINTER_SERIAL", "PRINTER_IP", "PRINTER_ACCESS_CODE") {
+    foreach ($v in "FILAMAP_CONFIG_DIR", "FILAMAP_BAMBU_BRIDGE_PATH", "FILAMAP_WEB_URL", "SUPABASE_URL", "SUPABASE_ANON_KEY", "AGENT_EMAIL", "AGENT_PASSWORD", "PRINTER_SERIAL", "PRINTER_IP", "PRINTER_ACCESS_CODE") {
         Remove-Item "Env:$v" -ErrorAction SilentlyContinue
     }
     $code = $null

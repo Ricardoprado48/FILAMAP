@@ -18,7 +18,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 1.4 | O3 — Web: tela de recuperação de erro, versão do build, aba "Central" (só admin), botão "Enviar diagnóstico" | ✅ código |
 | 1.5 | O4 — teste real: Agent 4.2 de teste + impressora + banco de teste (16 validações) | 🔨 script pronto (`ops/o4-teste-agent.ps1`) · 👤 rodar com a impressora parada |
 | 1.6 | Keepalive diário (GitHub Actions) para o Supabase grátis não pausar | ✅ `.github/workflows/keepalive.yml` (sem segredo: chave anon é pública); passa a valer com a O5 na main |
-| 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | 🔨 `ops/agendar-backup-semanal.ps1` pronto (ensaio OK) · 👤 rodar |
+| 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | ✅ agendado (domingo 12:00); 1º backup semanal-20260929-050456, 11 tabelas conferidas |
 | 1.8 | O5 — produção: migration, publicar Web, instalar Agent 4.2 (fora de impressão), você vira admin, 7 dias de observação | ⏳ 👤 rodar scripts |
 
 ## BLOCO 2 — Entrada do cliente (sem isso ninguém de fora consegue usar)
@@ -27,7 +27,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 |---|---|---|
 | 2.1a | Piloto: contas dos testers criadas pelo Ricardo no painel do Supabase (Add user, e-mail já confirmado; não envia e-mail) | 👤 na Onda A |
 | 2.1b | Venda: cadastro aberto + "esqueci minha senha" — exige SMTP próprio (o e-mail padrão do Supabase só envia para a equipe do projeto, 2/hora) → depende do domínio (4.5) | ⏳ Bloco 4 |
-| 2.2 | Aviso de privacidade do piloto (`docs/PRIVACIDADE_PILOTO.md`) | 🔨 rascunho pronto · 👤 aprovar + informar e-mail de contato |
+| 2.2 | Aviso de privacidade do piloto (`docs/PRIVACIDADE_PILOTO.md`) | ✅ aprovado; contato rprado3d@gmail.com |
 | 2.2b | Termos de Uso + Política de Privacidade completos (revisão de advogado) | ⏳ antes da venda |
 | 2.3 | Pareamento do Agent por código de 6 dígitos (Agent deixa de pedir a senha Filamap) | ⏳ |
 | 2.4 | Checagem automática no GitHub (testes + typecheck a cada push) | ✅ `.github/workflows/ci.yml` — 1º run verde (64c5ee5) |
@@ -50,6 +50,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 4.3 | Cobrança integrada (webhook idempotente, plano no banco, bloqueio por atraso) | ⏳ depois de 4.2 |
 | 4.4 | Assinatura digital do instalador (tira o aviso do Windows) | 👤 compra do certificado |
 | 4.5 | Domínio próprio | 👤 compra |
+| 4.7 | Repositório GitHub privado (hoje público por necessidade; Actions continua funcionando no privado) | 👤 decidido: vai ficar privado |
 | 4.6 | Supabase pago (backup gerenciado) quando houver receita | 👤 |
 
 ## Pendências antigas (paralelas, quando você puder)

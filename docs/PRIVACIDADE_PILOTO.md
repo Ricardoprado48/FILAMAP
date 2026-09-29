@@ -1,6 +1,6 @@
 # Filamap — Aviso de Privacidade do Piloto
 
-*Rascunho para aprovação do Ricardo. Texto para entregar a cada tester junto com o convite. Não substitui uma Política de Privacidade completa revisada por advogado, que será exigida antes da venda.*
+*Aprovado pelo Ricardo em 2026-09-29. Texto para entregar a cada tester junto com o convite. Não substitui uma Política de Privacidade completa revisada por advogado, que será exigida antes da venda.*
 
 ---
 
@@ -52,6 +52,6 @@ Você pode, a qualquer momento:
 - pedir a correção ou a exclusão dos seus dados;
 - desligar os eventos técnicos no seu computador (colocando `"telemetry": false` no arquivo de configuração do Agent). O app continua funcionando, mas o suporte fica mais difícil.
 
-Para qualquer pedido, fale com: **[e-mail de contato do Ricardo]**.
+Para qualquer pedido, fale com: **rprado3d@gmail.com**.
 
 Ao participar do piloto, você concorda com este aviso.

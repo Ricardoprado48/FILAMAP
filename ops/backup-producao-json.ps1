@@ -1,6 +1,14 @@
 # Backup SOMENTE LEITURA da producao: exporta cada tabela public em JSON (1 arquivo por tabela)
 # + manifesto com contagem de linhas e SHA256. Substitui "supabase db dump" (exige Docker).
-param([string]$Destino = "$env:APPDATA\Filamap-dev\backups")
+# -Prefixo: nome das pastas (padrao "prod"; o agendamento semanal usa "semanal").
+# -Manter N: apaga as pastas <Prefixo>-* mais antigas, mantendo as N mais recentes (0 = nao apaga).
+#            So toca pastas do MESMO prefixo: backups manuais (prod-*) nunca sao apagados pelo semanal.
+param(
+    [string]$Destino = "$env:APPDATA\Filamap-dev\backups",
+    [string]$Projeto = "C:\FILAMAP",
+    [string]$Prefixo = "prod",
+    [int]$Manter = 0
+)
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 # A CLI do Supabase responde {"rows":[...]} quando detecta agente de IA e [...] num terminal comum.
@@ -10,10 +18,13 @@ function ConvertFrom-SbRows([string]$Raw) {
     if ($null -ne $p -and -not ($p -is [array]) -and ($p.PSObject.Properties.Name -contains "rows")) { return ,@($p.rows) }
     return ,@($p)
 }
-$pasta = Join-Path $Destino ("prod-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+if ($Prefixo -notmatch '^[a-z]+$') { throw "Prefixo invalido: $Prefixo" }
+$pasta = Join-Path $Destino ($Prefixo + "-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 New-Item -ItemType Directory -Force -Path $pasta | Out-Null
-Set-Location C:\FILAMAP
-$tabelas = "printers","spools","ams_slots","print_logs","user_filament_profiles","catalog_items","filament_presets","print_jobs"
+Set-Location $Projeto
+# Dados do usuario (estoque, historico, perfis, caixa de entrada). ops_* (telemetria) fica de fora.
+$tabelas = "printers","spools","ams_slots","print_logs","user_filament_profiles","catalog_items","filament_presets","print_jobs",
+           "filament_products","spool_inbox","spools_identity_backup"
 $manifesto = foreach ($t in $tabelas) {
     $ErrorActionPreference = "Continue"
     $raw = supabase db query --linked -o json "select count(*) as n, coalesce(json_agg(t), '[]'::json)::text as j from public.$t t" 2>$null | Out-String
@@ -35,3 +46,14 @@ $manifesto = foreach ($t in $tabelas) {
 $manifesto | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $pasta "MANIFESTO.json")
 $manifesto | Format-Table -AutoSize
 Write-Host "Backup em: $pasta"
+
+# Retencao: so depois de um backup completo e conferido.
+if ($Manter -gt 0) {
+    $antigas = @(Get-ChildItem $Destino -Directory -Filter "$Prefixo-*" | Sort-Object Name -Descending | Select-Object -Skip $Manter)
+    foreach ($a in $antigas) {
+        if (Test-Path (Join-Path $a.FullName "MANIFESTO.json")) {
+            Remove-Item $a.FullName -Recurse -Force
+            Write-Host "Removido backup antigo: $($a.Name)"
+        }
+    }
+}

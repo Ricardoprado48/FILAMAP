@@ -1,0 +1,47 @@
+# Checagem automatica a cada push/PR: typecheck + testes do app Web e do Agent.
+# Nao publica nada e nao acessa banco (testes de integracao rodam so localmente,
+# contra o banco de TESTE, com credenciais que nao ficam no repositorio).
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
+  agent:
+    # Windows: o Agent roda no Windows e tem testes do cofre DPAPI.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop-agent/package-lock.json
+      - run: npm ci
+      - run: npm test

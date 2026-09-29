@@ -17,8 +17,8 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 1.3 | O2 — Agent 4.2: eventos, limpeza de segredos, fila, installation_id, versão, rotação do agent.log, menos ruído | ✅ código (instalador sai na O4) |
 | 1.4 | O3 — Web: tela de recuperação de erro, versão do build, aba "Central" (só admin), botão "Enviar diagnóstico" | ✅ código |
 | 1.5 | O4 — teste real: Agent 4.2 de teste + impressora + banco de teste (16 validações) | 🔨 script pronto (`ops/o4-teste-agent.ps1`) · 👤 rodar com a impressora parada |
-| 1.6 | Keepalive diário (GitHub Actions) para o Supabase grátis não pausar | ⏳ 👤 cadastrar 1 segredo no GitHub (script pronto) |
-| 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | ⏳ 👤 rodar script que agenda |
+| 1.6 | Keepalive diário (GitHub Actions) para o Supabase grátis não pausar | ✅ `.github/workflows/keepalive.yml` (sem segredo: chave anon é pública); passa a valer com a O5 na main |
+| 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | 🔨 `ops/agendar-backup-semanal.ps1` pronto (ensaio OK) · 👤 rodar |
 | 1.8 | O5 — produção: migration, publicar Web, instalar Agent 4.2 (fora de impressão), você vira admin, 7 dias de observação | ⏳ 👤 rodar scripts |
 
 ## BLOCO 2 — Entrada do cliente (sem isso ninguém de fora consegue usar)
@@ -28,7 +28,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 2.1 | Cadastro de conta + "esqueci minha senha" + confirmação de e-mail | ⏳ |
 | 2.2 | Termos de Uso + Política de Privacidade (LGPD) + aceite no cadastro + texto do piloto | ⏳ 👤 revisar e aprovar o texto |
 | 2.3 | Pareamento do Agent por código de 6 dígitos (Agent deixa de pedir a senha Filamap) | ⏳ |
-| 2.4 | Checagem automática no GitHub (testes + typecheck a cada push) | ⏳ |
+| 2.4 | Checagem automática no GitHub (testes + typecheck a cada push) | 🔨 `.github/workflows/ci.yml` (Web ubuntu + Agent windows, Node 24) — prova no 1º push |
 | 2.5 | Teste ponta a ponta do cliente novo: cadastro → instalar → parear → imprimir → desconto | ⏳ |
 
 ## BLOCO 3 — Piloto fechado
@@ -67,3 +67,4 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 2026-09-29 | 1.3 | Agent 4.2 (código): emissor, sanitização, installation_id, marca de crash, 30 eventos ligados, log de perfis só na mudança, rotação 5 MB no run-agent.vbs. Suíte Agent 269/269; integração real no banco de teste 8/8 (segredo fictício não chega, central fora do ar = 0 ms e fila preservada) |
 | 2026-09-29 | 1.4 | Web: ErrorBoundary + onerror/unhandledrejection → WEB_ERROR, versão do build (hash do commit), botão 📡 Central (só admin: instalações, saúde, timeline, filtros, erros agrupados, purga), botão 🛟 Suporte (SUPPORT_REQUEST). Sanitização idêntica à do Agent (teste trava). Web 14/14 arquivos de teste + typecheck; Agent 270/270 |
 | 2026-09-29 | 1.5 prep | A1 aceita 1 conexão MQTT (fonte: allaboutbambu.com, ha-bambulab #174) → O4 exige parar o Agent de produção. Script O4 com ensaio (bloqueia se há impressão ativa ou finalize pendente; pasta isolada via FILAMAP_CONFIG_DIR para nunca ler a fila da produção). Staging web publicado (staging.filamap.pages.dev), usuário de teste admin, replay do agent.log de 28/09 na Central de teste (195 eventos, incidente visível) |
+| 2026-09-29 | 1.6/1.7/2.4 | keepalive() testado no banco de teste (HTTP 200); backup inclui filament_products/spool_inbox/spools_identity_backup e só apaga pastas semanal-* (backups manuais preservados); CI criado. Observação: o repositório GitHub é PÚBLICO (sem segredos commitados; decidir se deve virar privado antes da venda) |

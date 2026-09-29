@@ -1,0 +1,29 @@
+# Sinal diario para o Supabase gratis nao pausar o projeto (pausa apos 7 dias sem
+# atividade de BANCO). Chama a funcao keepalive(), que faz uma leitura real no banco
+# e nao expoe dado nenhum. A chave anon e publica (a mesma do app Web).
+# Se falhar, o GitHub avisa por e-mail: sinal de que o banco esta fora do ar/pausado.
+name: supabase-keepalive
+
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: keepalive()
+        env:
+          SUPABASE_URL: https://gqtlszffgvxsqcmefhyd.supabase.co
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdGxzemZmZ3Z4c3FjbWVmaHlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NTA3OTQsImV4cCI6MjEwNTIyNjc5NH0.YH6OHOF2lV1uIjQ3A9kLFhIGlovgZc2ywdXmRykxkkM
+        run: |
+          code=$(curl -s -o body.txt -w "%{http_code}" -X POST "$SUPABASE_URL/rest/v1/rpc/keepalive" \
+            -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" -d '{}')
+          echo "HTTP $code: $(cat body.txt)"
+          test "$code" = "200"

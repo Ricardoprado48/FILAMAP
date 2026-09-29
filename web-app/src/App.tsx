@@ -1257,7 +1257,7 @@ export default function App() {
             📦 Estoque ({inventory.length})
           </button>
           <button onClick={() => setActiveTab("calc")} style={{ padding: "10px 4px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: activeTab === "calc" ? "#0284c7" : "#1e293b", color: activeTab === "calc" ? "#fff" : "#94a3b8" }}>
-            🧮 Orçamento ({catalog.length})
+            🧮 Calculadora ({catalog.length})
           </button>
           <button onClick={() => setActiveTab("writer")} style={{ padding: "10px 4px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", background: activeTab === "writer" ? "#0284c7" : "#1e293b", color: activeTab === "writer" ? "#fff" : "#94a3b8" }}>
             🏷️ Tags
@@ -1612,7 +1612,7 @@ export default function App() {
                 color: calcSubTab === "calculator" ? "#fff" : "#94a3b8",
               }}
             >
-              🧮 Novo Orçamento (Calculadora)
+              🧮 Novo Cálculo
             </button>
           </div>
 
@@ -1729,7 +1729,7 @@ export default function App() {
               <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <h2 style={{ fontSize: 16, color: "#f8fafc", margin: 0 }}>Simulador de Orçamento</h2>
+                    <h2 style={{ fontSize: 16, color: "#f8fafc", margin: 0 }}>Calculadora de Custo e Preço</h2>
                     <p style={{ color: "#94a3b8", fontSize: 11, margin: "2px 0 0" }}>Bambu Lab A1 (Energia + Depreciação + Filamento)</p>
                   </div>
                   <button onClick={() => setShowConfigPanel(!showConfigPanel)} style={{ background: showConfigPanel ? "#0284c7" : "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>

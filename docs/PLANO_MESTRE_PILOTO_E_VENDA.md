@@ -46,7 +46,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | # | Tarefa | Quem |
 |---|---|---|
 | 4.1 | Atualização automática do Agent | ⏳ |
-| 4.2 | Modelo de cobrança (mensal / único / por impressora) e plataforma | 👤 decidir |
+| 4.2 | Modelo de cobrança e plataforma — proposta em `docs/PROPOSTA_PRECOS_E_MONETIZACAO.md` (Grátis / Maker R$ 19,90 / Pro R$ 39,90; oferta Fundador; kit NFC; parceria com lojas) | 👤 decidir |
 | 4.3 | Cobrança integrada (webhook idempotente, plano no banco, bloqueio por atraso) | ⏳ depois de 4.2 |
 | 4.4 | Assinatura digital do instalador (tira o aviso do Windows) | 👤 compra do certificado |
 | 4.5 | Domínio próprio | 👤 compra |

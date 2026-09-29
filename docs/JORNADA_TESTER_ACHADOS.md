@@ -14,3 +14,13 @@ Resultado: **funcionou** (pareado 13:56Z, impressora achada sozinha, MQTT conect
 | J7 | Site | Abre direto no estoque (sessão salva do navegador) | Normal; guia orienta janela anônima para testar como tester | ✅ guia |
 
 Já na lista da 4.2.1: IP local nos eventos (privacidade), modelo gravado sempre "A1", JOB_DETECTED com 0 g.
+
+## Implementado (4612db4, Agent 4.2.1 — instalador 5E8505B8…, agent 680A0F0E…)
+
+- J3 janela no canto, sem ficar presa na frente; botão "Abrir o Filamap para pegar o código" (`?computadores=1` abre o painel)
+- J4 fechar a janela: aviso "abra o atalho Filamap" + encerra limpo (código 0; não vira UNHANDLED_REJECTION)
+- J5 aviso "Pronto! Este computador está conectado…" no primeiro MQTT conectado após a configuração
+- Novos: código de pareamento recusado → aviso com o motivo; Access Code recusado pela impressora (fora de impressão) → aviso + janela só do Access Code
+- Web: 🚀 Primeiros passos (lista automática), /guia (Access Code por modelo; A1 exige LAN Only Mode ligado para ver o código — confirmar na A1 do Ricardo), /privacidade, aceite do aviso no cadastro (signup-invite grava versão + data)
+- Privacidade: IP mascarado nos eventos; modelo real da impressora; JOB_DETECTED com gramas
+- Teste real: `ops/o4-teste-agent.ps1 -Limpo` (banco de teste, pasta vazia, site de staging)

@@ -8,7 +8,7 @@
         "build": "tsc",
         "start": "tsc && node dist/index.js",
         "package-exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\\\package-exe.ps1",
-        "test": "tsc && node --test dist/consumption.test.js dist/jobStateMachine.test.js dist/ftpsParser.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js dist/config/sessionManager.test.js dist/filamentProfileSync.test.js dist/bambuCloudSpoolSync.test.js dist/amsProjection.test.js dist/sessionSupervisor.test.js dist/runtimeState.test.js dist/finalizeOutbox.test.js dist/noGlobalSignOut.test.js",
+        "test": "tsc && node --test dist/consumption.test.js dist/jobStateMachine.test.js dist/ftpsParser.test.js dist/networkRediscovery.test.js dist/config/configStore.test.js dist/config/secretStore.test.js dist/config/dpapiSecretStore.test.js dist/config/onboarding.test.js dist/config/sessionManager.test.js dist/filamentProfileSync.test.js dist/bambuCloudSpoolSync.test.js dist/amsProjection.test.js dist/sessionSupervisor.test.js dist/runtimeState.test.js dist/finalizeOutbox.test.js dist/noGlobalSignOut.test.js dist/observability/sanitize.test.js dist/observability/emitter.test.js dist/observability/installationId.test.js",
         "test:integration": "tsc && node --test dist/finalize.integration.test.js dist/resolution.integration.test.js",
         "build-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\\\build-installer.ps1"
     },

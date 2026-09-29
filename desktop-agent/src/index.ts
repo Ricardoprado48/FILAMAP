@@ -32,6 +32,12 @@ import { resolveSecretStore, SecretStore } from "./config/secretStore";
 import { SessionSupervisor } from "./sessionSupervisor";
 import { FinalizeOutbox } from "./finalizeOutbox";
 import { buildTelemetryUpdate, initialGcodeStateFor, isPrinterReportTopic } from "./runtimeState";
+import { loadNonSecretConfig } from "./config/configStore";
+import { createSanitizer } from "./observability/sanitize";
+import { OpsEmitter, EmitFields } from "./observability/emitter";
+import type { EventType } from "./observability/eventCatalog";
+import { loadOrCreateInstallationId, machineHint, markRunStart, markRunStopped } from "./observability/installationId";
+import { AGENT_VERSION } from "./observability/version";
 
 dotenv.config();
 
@@ -48,7 +54,30 @@ for (const level of ["log", "warn", "error"] as const) {
 // corrompido) -- o Task Scheduler relança via run-agent.vbs.
 process.on("unhandledRejection", (reason: any) => {
   console.error("❌ Promise rejeitada sem tratamento (Agent segue rodando):", reason?.stack || reason);
+  opsEmit("UNHANDLED_REJECTION", { error: reason });
 });
+
+// Central de Observabilidade (docs/PACOTE_CONSTRUCAO_OBSERVABILIDADE_FILAMAP_V1.md).
+// Só observa: nenhum evento decide estoque, identidade, peso ou finalize, e
+// opsEmit() nunca lança nem espera rede. null até a sessão existir.
+const opsSanitizer = createSanitizer();
+let ops: OpsEmitter | null = null;
+function opsEmit(type: EventType, fields?: EmitFields) {
+  try {
+    ops?.emit(type, fields);
+  } catch {}
+}
+const opsState = {
+  mqtt: "unknown" as "unknown" | "connected" | "disconnected",
+  mqttDownSince: 0,
+  bambuSync: "unknown" as "unknown" | "ok" | "failing",
+  profileSync: "unknown" as "unknown" | "ok" | "failing",
+  lastBambuSyncAt: null as string | null,
+  lastProfileSyncAt: null as string | null,
+  lastInboxCount: -1,
+  printerId: null as string | null,
+  activeJob: false,
+};
 
 // Preenchidas por bootstrapRuntimeConfig() antes do resto do Agent rodar.
 // Se as 5 variáveis de sempre estiverem no .env, o valor é exatamente o
@@ -90,6 +119,8 @@ async function bootstrapRuntimeConfig() {
   PRINTER_IP = resolved.printerIp;
   PRINTER_SERIAL = resolved.printerSerial;
   PRINTER_ACCESS_CODE = resolved.printerAccessCode;
+  opsSanitizer.registerSecret(PRINTER_ACCESS_CODE);
+  opsSanitizer.registerSecret(SUPABASE_ANON_KEY);
 
   if (!supabase) {
     supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -182,6 +213,8 @@ async function startAgent() {
     process.exit(1);
   }
 
+  opsSanitizer.registerSecret(authResult?.session?.access_token);
+  opsSanitizer.registerSecret(authResult?.session?.refresh_token);
   if (authResult?.session?.access_token && authResult?.session?.refresh_token) {
     await supabase.auth.setSession({
       access_token: authResult.session.access_token,
@@ -196,8 +229,10 @@ async function startAgent() {
     expectedUserId: authenticatedUserId,
     initialSession: authResult.session ?? null,
     getAgentEmail: () => AGENT_EMAIL,
-    persistRefreshToken: (refreshToken) =>
-      persistSessionSecrets(activeSecretStore, refreshToken, PRINTER_ACCESS_CODE),
+    persistRefreshToken: (refreshToken) => {
+      opsSanitizer.registerSecret(refreshToken);
+      return persistSessionSecrets(activeSecretStore, refreshToken, PRINTER_ACCESS_CODE);
+    },
     askPassword: async () => {
       if (process.platform === "win32") {
         resetGuiPrompts();
@@ -209,7 +244,11 @@ async function startAgent() {
         closeCliPrompts();
       }
     },
-    onRecovered: () => void finalizeOutbox.flush(),
+    onRecovered: () => {
+      opsEmit("SESSION_RECOVERED");
+      void finalizeOutbox.flush();
+    },
+    onLost: (reason) => opsEmit("SESSION_LOST", { message: reason }),
   });
   sessionSupervisor.start();
 
@@ -225,7 +264,11 @@ async function startAgent() {
     },
     execute: (p) =>
       finalizeJob(p.printerId, p.printSnapshot, p.percentExecuted, p.finishStatus, p.job, p.mqttTrays),
+    onRetry: (p) =>
+      opsEmit("FINALIZE_RETRY", { message: p.lastError, job_id: p.jobId, printer_id: p.printerId, metadata: { job: p.jobId, attempts: p.attempts, enqueued_at: p.enqueuedAt } }),
   });
+
+  startObservability(sessionSupervisor, finalizeOutbox);
   if (finalizeOutbox.size() > 0) {
     console.log(`📮 ${finalizeOutbox.size()} finalização(ões) pendente(s) de execução anterior -- reenviando.`);
   }
@@ -235,6 +278,7 @@ async function startAgent() {
   // Sincroniza os presets pessoais do Bambu Studio mesmo quando
   // a impressora estiver desligada. filament_id é a identidade estável.
   let filamentSyncInProgress = false;
+  let lastProfileCount = -1;
 
   async function syncFilamentProfiles() {
     if (filamentSyncInProgress) return;
@@ -247,14 +291,23 @@ async function startAgent() {
         authenticatedUserId
       );
 
-      console.log(
-        `🧵 Perfis de filamento sincronizados do Bambu Studio: ${count}`
-      );
+      // Só loga quando muda (antes: ~1.000 linhas/dia repetindo o mesmo número).
+      if (count !== lastProfileCount) {
+        console.log(
+          `🧵 Perfis de filamento sincronizados do Bambu Studio: ${count}`
+        );
+        lastProfileCount = count;
+      }
+      opsState.lastProfileSyncAt = new Date().toISOString();
+      if (opsState.profileSync === "failing") opsEmit("PROFILE_SYNC_RECOVERED");
+      opsState.profileSync = "ok";
     } catch (error: any) {
       console.warn(
         "⚠️ Falha ao sincronizar perfis do Bambu Studio:",
         error?.message || error
       );
+      if (opsState.profileSync !== "failing") opsEmit("PROFILE_SYNC_FAILED", { error });
+      opsState.profileSync = "failing";
     } finally {
       filamentSyncInProgress = false;
     }
@@ -288,6 +341,13 @@ async function startAgent() {
         `🧵 Cloud Spool Sync: ${result.spoolsUpdated} atualizado(s), ${result.inboxQueued} na caixa de entrada, ` +
           `${result.profilesUpserted} perfil(is), ${result.skippedRecords} registro(s) ignorado(s) de ${result.totalRecords}.`
       );
+      opsState.lastBambuSyncAt = new Date().toISOString();
+      if (opsState.bambuSync === "failing") opsEmit("BAMBU_SYNC_RECOVERED");
+      opsState.bambuSync = "ok";
+      if (result.inboxQueued !== opsState.lastInboxCount) {
+        if (result.inboxQueued > 0) opsEmit("INBOX_ITEM_CREATED", { metadata: { inbox_queued: result.inboxQueued } });
+        opsState.lastInboxCount = result.inboxQueued;
+      }
 
       if (lastMqttPrintPayload && activePrinterRecord) {
         try {
@@ -304,6 +364,7 @@ async function startAgent() {
           }
         } catch (projErr: any) {
           console.warn("⚠️ Falha na projeção AMS pós-Cloud Sync:", projErr?.message || projErr);
+          opsEmit("AGENT_ERROR", { component: "ams_projection", error: projErr });
         }
       }
     } catch (error: any) {
@@ -311,6 +372,8 @@ async function startAgent() {
         "⚠️ Falha ao sincronizar spools da conta Bambu:",
         error?.message || error
       );
+      if (opsState.bambuSync !== "failing") opsEmit("BAMBU_SYNC_FAILED", { error });
+      opsState.bambuSync = "failing";
     } finally {
       bambuCloudSyncInProgress = false;
     }
@@ -327,9 +390,11 @@ async function startAgent() {
 
     if (!PRINTER_IP) {
       console.warn("⚠️ Impressora ainda não encontrada. Nova tentativa em 15 segundos...");
+      if (ops?.changed("printer", "offline")) opsEmit("PRINTER_OFFLINE", { message: "impressora não encontrada na rede no início" });
       await new Promise((resolve) => setTimeout(resolve, 15000));
     }
   }
+  if (ops?.changed("printer", "online")) opsEmit("PRINTER_ONLINE");
 
   try {
     const { data: existingPrinters } = await supabase
@@ -358,6 +423,7 @@ async function startAgent() {
     }
 
     activePrinterRecord = printer;
+    opsState.printerId = printer.id;
 
     // Heartbeat a cada 15s — grava last_seen_at independente do estado da
     // conexão MQTT com a impressora, é o sinal de "o processo do Agent
@@ -384,9 +450,11 @@ async function startAgent() {
         if (previous === 0 || (previous + 1) % 20 === 0) {
           console.warn(`💔 ${label} falhou (${previous + 1}x seguidas): ${failure}`);
         }
+        if (previous === 0) opsEmit("TELEMETRY_DEGRADED", { message: failure, metadata: { channel: label } });
         sessionSupervisor.reportSessionLost(`${label}: ${failure}`);
       } else if (previous > 0) {
         console.log(`💚 ${label} restabelecido após ${previous} falha(s).`);
+        opsEmit("TELEMETRY_RESTORED", { metadata: { channel: label, failures: previous } });
         updateFailures[label] = 0;
       }
     }
@@ -408,6 +476,11 @@ async function startAgent() {
       try {
         await supabase.from("printers").update({ is_online: false }).eq("id", printer.id);
       } catch (e) {}
+      opsEmit("AGENT_STOPPED");
+      try {
+        await ops?.shutdown(3000);
+        if (ops) markRunStopped(getConfigDir(), ops.bootId);
+      } catch {}
       process.exit(0);
     }
     process.on("SIGINT", gracefulShutdown);
@@ -484,6 +557,7 @@ async function startAgent() {
             client.options.host = decision.targetIp;
             client.options.hostname = decision.targetIp;
 
+            if (ops?.changed("printer", "online")) opsEmit("PRINTER_ONLINE", { metadata: { ip_changed: decision.action === "reconnect_new_ip" } });
             if (decision.action === "reconnect_same_ip") {
               console.log(`✅ Impressora reencontrada no mesmo IP: ${decision.targetIp}`);
             } else {
@@ -501,6 +575,7 @@ async function startAgent() {
 
           PRINTER_IP = previousIp;
           console.warn("⚠️ Impressora ainda não encontrada. Nova tentativa em 15 segundos...");
+          if (ops?.changed("printer", "offline")) opsEmit("PRINTER_OFFLINE");
           await new Promise((resolve) => setTimeout(resolve, 15000));
         }
       } catch (error: any) {
@@ -509,6 +584,7 @@ async function startAgent() {
           "❌ Falha durante a redescoberta da impressora:",
           error?.message ?? error
         );
+        opsEmit("AGENT_ERROR", { component: "discovery", error });
       } finally {
         rediscoveryInProgress = false;
       }
@@ -516,6 +592,8 @@ async function startAgent() {
     client.on("connect", () => {
       console.log(`✅ Conectado ao broker MQTT da Bambu Lab A1 em ${PRINTER_IP}!`);
       updateStatus(printer.id, true);
+      if (ops?.changed("mqtt", "connected")) opsEmit("MQTT_CONNECTED");
+      opsState.mqtt = "connected";
 
       client.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
 
@@ -532,11 +610,15 @@ async function startAgent() {
     // recuperação em si continua sendo feita pelo handler de 'close'.
     client.on("error", (err: any) => {
       console.warn(`⚠️ Erro na conexão MQTT: ${err?.code || ""} ${err?.message || err}`.trim());
+      opsEmit("MQTT_ERROR", { error: err });
     });
 
     client.on("close", () => {
       console.log("🔌 Conexão MQTT fechada.");
       updateStatus(printer.id, false);
+      if (ops?.changed("mqtt", "disconnected")) opsEmit("MQTT_DISCONNECTED");
+      if (opsState.mqtt !== "disconnected") opsState.mqttDownSince = Date.now();
+      opsState.mqtt = "disconnected";
 
       void rediscoverPrinter();
     });
@@ -593,6 +675,7 @@ async function startAgent() {
               }
             } catch (projErr: any) {
               console.warn("⚠️ Falha na projeção AMS via MQTT:", projErr?.message || projErr);
+              opsEmit("AGENT_ERROR", { component: "ams_projection", error: projErr });
             }
           }
         }
@@ -603,6 +686,8 @@ async function startAgent() {
           if (action.type === "create_job") {
             saveJobState(action.job);
             console.log(`🧵 Novo trabalho de impressão detectado: "${action.job.subtaskName}" (JobId: ${action.job.jobId})`);
+            opsState.activeJob = true;
+            opsEmit("JOB_DETECTED", { job_id: action.job.jobId, metadata: { job: action.job.jobId, subtask: action.job.subtaskName, grams: action.job.filamentGrams } });
             if (action.job.filamentGrams > 0) {
               console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${action.job.filamentGrams}g`);
             }
@@ -618,6 +703,7 @@ async function startAgent() {
               }
             } catch (e: any) {
               console.error("❌ Erro ao carregar slice_info.config:", e.message);
+              opsEmit("FTPS_FAILED", { error: e, job_id: action.job.jobId, metadata: { job: action.job.jobId } });
             }
           } else if (action.type === "update_job") {
             saveJobState(action.job);
@@ -632,6 +718,11 @@ async function startAgent() {
             } else {
               console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%!`);
             }
+            opsState.activeJob = false;
+            opsEmit(action.finishStatus === "COMPLETED" ? "JOB_FINISHED" : "JOB_FAILED", {
+              job_id: action.job.jobId,
+              metadata: { job: action.job.jobId, status: action.finishStatus, percent: action.percentExecuted, slots: action.job.usedSlots },
+            });
             // O job só sai de agent-state.json depois de gravado na fila;
             // a fila só o solta quando o RPC confirmar.
             const queued = finalizeOutbox.enqueue({
@@ -645,12 +736,15 @@ async function startAgent() {
             });
             if (queued) {
               saveJobState(null);
+              opsEmit("FINALIZE_QUEUED", { job_id: action.job.jobId, metadata: { job: action.job.jobId } });
             } else {
               console.error(`❌ Job ${action.job.jobId} não pôde ir para a fila -- mantido em agent-state.json.`);
+              opsEmit("FINALIZE_FAILED", { job_id: action.job.jobId, message: "job não pôde ir para a fila persistente", metadata: { job: action.job.jobId } });
             }
             await finalizeOutbox.flush();
           } else if (action.type === "discard_job") {
             console.log("🧹 Descartando estado de job órfão/fantasma (impressora em IDLE com progresso 0%).");
+            opsState.activeJob = false;
             saveJobState(null);
           }
         }
@@ -676,10 +770,12 @@ async function startAgent() {
         lastGcodeState = currentState;
       } catch (err: any) {
         console.error("Erro no processamento:", err.message);
+        opsEmit("AGENT_ERROR", { component: "mqtt_handler", error: err });
       }
     });
   } catch (err: any) {
     console.error("❌ Erro de inicialização:", err.message || err);
+    opsEmit("AGENT_ERROR", { component: "startup", error: err });
   }
 }
 
@@ -902,6 +998,7 @@ async function finalizeJob(
       );
       if (healError) {
         console.error(`❌ Falha ao atualizar ams_slots para o slot ${heal.slotIndex}:`, healError.message);
+        opsEmit("AGENT_ERROR", { component: "ams_slots", error: healError, printer_id: printerId });
       } else {
         console.log(`🔧 Slot ${heal.slotIndex}: ams_slots atualizado automaticamente para o carretel ${heal.spoolId} identificado pela Bambu Cloud.`);
       }
@@ -912,11 +1009,88 @@ async function finalizeJob(
       0
     );
     console.log(`📝 Job ${jobId} finalizado (${finishStatus}) -- ${logRows?.length ?? items.length} linha(s) de log, ${totalDeducted}g debitados no total.`);
+    opsEmit("FINALIZE_COMPLETED", {
+      job_id: jobId,
+      printer_id: printerId,
+      metadata: {
+        job: jobId,
+        status: finishStatus,
+        deducted_g: totalDeducted,
+        items: items.map((it) => ({
+          slot: it.slot_index,
+          spool_id: it.spool_id,
+          grams: it.grams,
+          orphan: Boolean(it.orphan_slot),
+          source: resolutions.get(it.slot_index)?.source ?? null,
+          weight_confirmed: Boolean(weightConfirmedBySlot.get(it.slot_index)),
+        })),
+      },
+    });
+    for (const it of items) {
+      if (it.orphan_slot) {
+        opsEmit("SPOOL_AMBIGUOUS", { job_id: jobId, printer_id: printerId, metadata: { job: jobId, slot: it.slot_index, grams: it.grams } });
+      }
+    }
   } catch (e: any) {
     // Propaga: quem decide reenviar é a FinalizeOutbox (antes o erro era
     // engolido e o job apagado em seguida -- consumo perdido).
     console.error("❌ Falha ao finalizar trabalho:", e?.message || e);
     throw e;
+  }
+}
+
+// Liga a Central depois que a sessão existe. Qualquer falha aqui só desliga
+// a observabilidade -- o Agent segue igual.
+function startObservability(sessionSupervisor: SessionSupervisor, finalizeOutbox: FinalizeOutbox) {
+  try {
+    const dir = getConfigDir();
+    const enabled = loadNonSecretConfig()?.telemetry !== false;
+    const { id: installationId, created } = loadOrCreateInstallationId(dir);
+    ops = new OpsEmitter({
+      enabled,
+      filePath: path.join(dir, "telemetry-outbox.json"),
+      installationId,
+      kind: "agent",
+      machineHint: machineHint(),
+      appVersion: AGENT_VERSION,
+      sanitizer: opsSanitizer,
+      canSend: () => sessionSupervisor.isHealthy(),
+      getPrinterId: () => opsState.printerId,
+      getStatus: () => {
+        const pending = finalizeOutbox.pending();
+        const oldest = pending.reduce((min, p) => Math.min(min, Date.parse(p.enqueuedAt) || Date.now()), Date.now());
+        return {
+          mqtt: opsState.mqtt,
+          mqtt_down_min: opsState.mqtt === "disconnected" ? Math.round((Date.now() - opsState.mqttDownSince) / 60000) : 0,
+          session: sessionSupervisor.isHealthy() ? "ok" : "lost",
+          bambu_sync: opsState.bambuSync,
+          profile_sync: opsState.profileSync,
+          last_bambu_sync_at: opsState.lastBambuSyncAt,
+          last_profile_sync_at: opsState.lastProfileSyncAt,
+          pending_finalize: pending.length,
+          pending_finalize_oldest_min: pending.length ? Math.round((Date.now() - oldest) / 60000) : 0,
+          active_job: opsState.activeJob,
+        };
+      },
+      send: async (installation, events, signal) => {
+        const { data, error } = await supabase
+          .rpc("ingest_ops_events", { p_installation: installation, p_events: events })
+          .abortSignal(signal);
+        if (error) return { ok: false, reason: error.message };
+        return { ok: (data as any)?.ok === true, reason: (data as any)?.reason };
+      },
+      logWarn: (m) => console.warn(m),
+    });
+    const run = markRunStart(dir, ops.bootId);
+    if (run.uncleanPrevious) {
+      opsEmit("AGENT_CRASH_RECOVERED", { metadata: { previous_started_at: run.previousStartedAt } });
+    }
+    opsEmit("AGENT_STARTED", { metadata: { new_installation: created, platform: process.platform, node: process.version } });
+    ops.start();
+    if (!enabled) console.log("📡 Central de observabilidade desligada (config.json telemetry=false).");
+  } catch (e: any) {
+    ops = null;
+    console.warn("⚠️ Central de observabilidade não iniciada (Agent segue normalmente):", e?.message || e);
   }
 }
 

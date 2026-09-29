@@ -76,6 +76,27 @@ Function AgentAlreadyRunning()
     On Error GoTo 0
 End Function
 
+' ------------------------------------------------------------
+' Rotacao do agent.log (antes crescia ~1 MB/dia para sempre)
+' ------------------------------------------------------------
+' Roda antes de cada inicio, com o Agent parado (o arquivo nao esta
+' em uso). Acima de 5 MB: agent.log -> agent.log.1 (substitui o
+' anterior). Maximo em disco ~10 MB. Qualquer falha aqui e ignorada:
+' log nunca impede o Agent de iniciar.
+
+Sub RotateLog()
+    On Error Resume Next
+    Dim oldPath
+    oldPath = logPath & ".1"
+    If fso.FileExists(logPath) Then
+        If fso.GetFile(logPath).Size > 5242880 Then
+            If fso.FileExists(oldPath) Then fso.DeleteFile oldPath, True
+            fso.MoveFile logPath, oldPath
+        End If
+    End If
+    On Error GoTo 0
+End Sub
+
 Dim rc, delaySec, startedAt
 
 delaySec = 30
@@ -85,6 +106,8 @@ Do
     If AgentAlreadyRunning() Then
         WScript.Quit 0
     End If
+
+    RotateLog
 
     startedAt = Timer
     ' 0    = totalmente oculto

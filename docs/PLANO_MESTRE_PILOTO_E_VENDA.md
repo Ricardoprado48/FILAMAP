@@ -14,8 +14,8 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 |---|---|---|
 | 1.1 | O0 — engenharia e pacote de construção | ✅ |
 | 1.2 | O1 — migration da Central + rollback + testes de segurança no **banco de teste** | ✅ |
-| 1.3 | O2 — Agent 4.2: eventos, limpeza de segredos, fila, installation_id, versão, rotação do agent.log, menos ruído | 🔨 |
-| 1.4 | O3 — Web: tela de recuperação de erro, versão do build, aba "Central" (só admin), botão "Enviar diagnóstico" | ⏳ |
+| 1.3 | O2 — Agent 4.2: eventos, limpeza de segredos, fila, installation_id, versão, rotação do agent.log, menos ruído | ✅ código (instalador sai na O4) |
+| 1.4 | O3 — Web: tela de recuperação de erro, versão do build, aba "Central" (só admin), botão "Enviar diagnóstico" | 🔨 |
 | 1.5 | O4 — teste real: Agent 4.2 de teste + impressora + banco de teste (16 validações) | ⏳ 👤 impressora livre para jobs curtos |
 | 1.6 | Keepalive diário (GitHub Actions) para o Supabase grátis não pausar | ⏳ 👤 cadastrar 1 segredo no GitHub (script pronto) |
 | 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | ⏳ 👤 rodar script que agenda |
@@ -54,6 +54,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 
 - F8 uso real: resolver os 2 itens ignorados (PETG Prata, Branco Ultra Silk) e ligar carretéis aos slots. 👤
 - F9 travas no banco (depois de alguns dias limpos).
+- Investigar: o log real mostra ~195 reconciliações/dia da projeção AMS pós-Cloud Sync e ~208 avisos "Bambu Cloud apontava carretel ..." — possível vai-e-volta entre nuvem e projeção. Não muda estoque (só ams_slots), mas a Central vai mostrar; analisar com evidência antes de mexer.
 
 ---
 
@@ -63,3 +64,4 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 |---|---|---|
 | 2026-09-29 | 1.1 | Pacote de construção fechado; decisões D1–D4 tomadas |
 | 2026-09-29 | 1.2 | Migration 20261001100000 no banco de teste: 26/26 testes (RLS, GRANT, anon, sequestro de ID, duplicado, lote, cota 300, purga 30 d, admin, health); rollback → reaplicação → 26/26; spools/print_logs intactos |
+| 2026-09-29 | 1.3 | Agent 4.2 (código): emissor, sanitização, installation_id, marca de crash, 30 eventos ligados, log de perfis só na mudança, rotação 5 MB no run-agent.vbs. Suíte Agent 269/269; integração real no banco de teste 8/8 (segredo fictício não chega, central fora do ar = 0 ms e fila preservada) |

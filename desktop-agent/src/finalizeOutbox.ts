@@ -36,6 +36,8 @@ export interface FinalizeOutboxOptions {
   canExecute: () => boolean | Promise<boolean>;
   logInfo?: (message: string) => void;
   logWarn?: (message: string) => void;
+  // Observabilidade: chamado junto com o aviso de reenvio (tentativa 1 e a cada 10).
+  onRetry?: (pending: PendingFinalization) => void;
 }
 
 export class FinalizeOutbox {
@@ -44,7 +46,7 @@ export class FinalizeOutbox {
   private readonly opts: Required<FinalizeOutboxOptions>;
 
   constructor(options: FinalizeOutboxOptions) {
-    this.opts = { logInfo: console.log, logWarn: console.warn, ...options };
+    this.opts = { logInfo: console.log, logWarn: console.warn, onRetry: () => {}, ...options };
     this.items = this.load();
   }
 
@@ -95,6 +97,9 @@ export class FinalizeOutbox {
           this.opts.logWarn(
             `📮 Finalização do job ${item.jobId} guardada para reenvio (tentativa ${item.attempts}): ${item.lastError}`
           );
+          try {
+            this.opts.onRetry(item);
+          } catch {}
         }
       }
     }

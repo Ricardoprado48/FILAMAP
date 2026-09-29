@@ -15,6 +15,8 @@ export interface NonSecretAgentConfig {
   lastKnownPrinterIp: string;
   onboardingCompletedAt: string | null;
   updatedAt: string;
+  // false desliga a Central de Observabilidade sem reinstalar (padrão: ligada).
+  telemetry?: boolean;
 }
 
 export const EMPTY_NON_SECRET_CONFIG: NonSecretAgentConfig = {

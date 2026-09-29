@@ -37,6 +37,8 @@ export interface SessionSupervisorOptions {
   // Chamado após cada recuperação bem-sucedida (ex.: reenviar finalizações
   // que ficaram na fila enquanto não havia sessão).
   onRecovered?: () => void;
+  // Observabilidade: chamado quando a recuperação começa de fato.
+  onLost?: (reason: string) => void;
   retryDelayMs?: (attempt: number) => number;
   passwordPromptCooldownMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -66,6 +68,7 @@ export class SessionSupervisor {
       logInfo: console.log,
       logWarn: console.warn,
       onRecovered: () => {},
+      onLost: () => {},
       ...options,
     };
     this.lastKnownRefreshToken = options.initialSession?.refresh_token ?? null;
@@ -140,6 +143,9 @@ export class SessionSupervisor {
 
     this.healthy = false;
     this.opts.logWarn(`🔐 Sessão Supabase perdida (${reason}). Iniciando recuperação automática...`);
+    try {
+      this.opts.onLost(reason);
+    } catch {}
 
     let attempt = 0;
     while (true) {

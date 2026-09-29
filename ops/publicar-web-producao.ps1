@@ -1,4 +1,4 @@
-# Publica a Web aprovada (O5: Central, Suporte, Computadores, Calculadora) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
+# Publica a Web aprovada (+ instalador do Agent em /downloads) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
 #   1) confere que o repositorio esta exatamente na versao homologada pelo usuario
 #   2) roda os testes e o typecheck
 #   3) gera o pacote de PRODUCAO (sem variaveis de teste) e confere que so aponta para a producao
@@ -9,12 +9,14 @@
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi publicado." }
-# Rode DEPOIS do o5-schema-producao.ps1 (a tela nova usa as tabelas da Central).
+# Rode DEPOIS do o6-impressora-por-conta.ps1.
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "C:\FILAMAP-staging"
-$Aprovado = "97c424ad12d0634a655668b36f4ed8d32e073b96"
+$Aprovado = "49e64c6e6c7fd4d658e0f623a8a31e9593e2facc"
+$Setup = "C:\FILAMAP-staging\desktop-agent\installer\output\FilamapAgentSetup.exe"
+$SetupSha = "98866BDB0DB0F732045C944EB1D6BF76A3F8F54377A39FE044060F3B11FD71AF"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 
@@ -61,13 +63,20 @@ $nCentral = [regex]::Matches($texto, "ingest_ops_events").Count
 if ($nProd -lt 1 -or $nTeste -ne 0 -or $nInbox -lt 1 -or $nCentral -lt 1) { throw "Pacote errado (producao=$nProd teste=$nTeste inbox=$nInbox central=$nCentral). Nada foi publicado." }
 $bundle = $js[0].Name
 Write-Host "[3] Pacote de producao: $bundle (aponta so para a producao)."
+# Instalador do Agent servido em /downloads (botao "Baixar o Filamap Agent").
+if (-not (Test-Path $Setup) -or (Get-FileHash $Setup -Algorithm SHA256).Hash -ne $SetupSha) { throw "Instalador do Agent ausente ou diferente do testado. Nada foi publicado." }
+New-Item -ItemType Directory -Force -Path dist\downloads | Out-Null
+Copy-Item -LiteralPath $Setup -Destination dist\downloads\FilamapAgentSetup.exe -Force
+if ((Get-FileHash dist\downloads\FilamapAgentSetup.exe -Algorithm SHA256).Hash -ne $SetupSha) { throw "Copia do instalador corrompida. Nada foi publicado." }
+if (-not (Test-Path dist\_headers)) { throw "dist\_headers ausente. Nada foi publicado." }
+Write-Host "    Instalador do Agent 4.2 incluido em /downloads (SHA256 confere)."
 
 if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""O5 central de observabilidade""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Download do Agent e impressora por conta""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5
@@ -76,6 +85,12 @@ for ($i = 1; $i -le 12; $i++) {
 }
 if ($servido -ne $bundle) { throw "Publicado, mas o site ainda serve '$servido' (esperado $bundle). Me chame antes de repetir." }
 Write-Host "[4] No ar: https://filamap.pages.dev serve $bundle."
+$tmp = Join-Path $env:TEMP "filamap-download-check.exe"
+Invoke-WebRequest -UseBasicParsing "https://filamap.pages.dev/downloads/FilamapAgentSetup.exe" -OutFile $tmp
+$shaServido = (Get-FileHash $tmp -Algorithm SHA256).Hash
+Remove-Item $tmp -Force
+if ($shaServido -ne $SetupSha) { throw "Site no ar, mas o download do Agent nao confere ($($shaServido.Substring(0,12))). Me chame." }
+Write-Host "    Download do Agent confere (SHA256)."
 
 Set-Location $Repo
 $null = Assert-Cmd "git push origin HEAD:main" "Tela publicada, mas o main nao foi atualizado no GitHub. Me chame."

@@ -1,4 +1,7 @@
 param([switch]$Ensaio, [switch]$Remover)
+# Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
+# repassado como texto fez o script rodar no modo producao).
+if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
 # Agenda o backup SOMENTE LEITURA da producao toda semana (domingo 12:00; se o PC
 # estiver desligado, roda assim que possivel). Mantem as 8 copias semanais (pastas semanal-*);
 # backups manuais prod-* nunca sao apagados.

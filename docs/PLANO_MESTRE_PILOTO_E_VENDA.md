@@ -19,7 +19,7 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 1.5 | O4 — teste real: Agent 4.2 de teste + impressora + banco de teste (16 validações) | 🔨 script pronto (`ops/o4-teste-agent.ps1`) · 👤 rodar com a impressora parada |
 | 1.6 | Keepalive diário (GitHub Actions) para o Supabase grátis não pausar | ✅ `.github/workflows/keepalive.yml` (sem segredo: chave anon é pública); passa a valer com a O5 na main |
 | 1.7 | Backup semanal automático do banco de produção no PC (8 cópias) | ✅ agendado (domingo 12:00); 1º backup semanal-20260929-050456, 11 tabelas conferidas |
-| 1.8 | O5 — produção: migration, publicar Web, instalar Agent 4.2 (fora de impressão), você vira admin, 7 dias de observação | ⏳ 👤 rodar scripts |
+| 1.8 | O5 — produção: migration, publicar Web, instalar Agent 4.2 (fora de impressão), você vira admin, 7 dias de observação | 🔨 `ops/o5-schema-producao.ps1` pronto (ensaio no teste 11/11 e ensaio na produção 11/11) · 👤 rodar depois da O4 |
 
 ## BLOCO 2 — Entrada do cliente (sem isso ninguém de fora consegue usar)
 
@@ -73,3 +73,4 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 2026-09-29 | 1.6/1.7/2.4 | keepalive() testado no banco de teste (HTTP 200); backup inclui filament_products/spool_inbox/spools_identity_backup e só apaga pastas semanal-* (backups manuais preservados); CI criado. Observação: o repositório GitHub é PÚBLICO (sem segredos commitados; decidir se deve virar privado antes da venda) |
 | 2026-09-29 | 2.1/2.2/2.4 | Evidência: SMTP padrão do Supabase só entrega para a equipe do projeto (2/h) → cadastro aberto vai para o Bloco 4; piloto usa contas criadas no painel. Aviso de privacidade do piloto rascunhado. CI verde no GitHub |
 | 2026-09-29 | 2.3 | Porta do pareamento (13af7da) para o código atual. Provado antes no banco de teste: postgres pode apagar auth.sessions; generate_link+verify cria sessão própria sem e-mail; apagar a sessão do computador não afeta a da Web. Bug achado no e2e (coluna expires_at ambígua em create_agent_pairing_code — nunca teria funcionado) corrigido; rollback→reaplicação→e2e 15/15. Agent 281/281, Web 15/15 |
+| 2026-09-29 | INCIDENTE | Ao ensaiar o O5 "no teste", o wrapper do agente repassou `-EnsaioNoTeste` como texto e o script rodou no modo produção: histórico lido, ensaio com ROLLBACK (conferido sem rastro), backup somente leitura extra (prod-20260929-051617), cancelado no pedido de APLICAR. Produção verificada limpa (sem ops_events/agent_devices, histórico sem as versões). Prevenção: scripts de ops recusam parâmetro não reconhecido; wrapper testado em script inofensivo antes de uso |

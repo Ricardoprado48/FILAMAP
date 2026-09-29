@@ -1,4 +1,7 @@
 param([switch]$Ensaio, [switch]$Restaurar)
+# Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
+# repassado como texto fez o script rodar no modo producao).
+if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
 # O4 - Agent 4.2 (codigo de C:\FILAMAP-staging) contra o banco de TESTE com a impressora real.
 #
 # A Bambu A1 aceita UMA conexao MQTT por vez: o Agent de producao precisa ficar

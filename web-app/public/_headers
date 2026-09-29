@@ -1,0 +1,4 @@
+/downloads/*
+  Cache-Control: no-cache
+  Content-Disposition: attachment
+  X-Content-Type-Options: nosniff

@@ -12,6 +12,9 @@ import { describeDevicePresence, pairingSecondsLeft } from "../utils/agentDevice
 // "Computadores conectados": gera o código para parear um Desktop Agent e
 // permite desconectar cada computador individualmente.
 
+// Publicado junto com a Web pelo ops/publicar-web-producao.ps1 (instalador conferido por SHA256).
+const AGENT_DOWNLOAD_URL = "/downloads/FilamapAgentSetup.exe";
+
 const card = { background: "#1e293b", border: "1px solid #334155", borderRadius: 12, padding: 16, marginBottom: 16 } as const;
 const primaryButton = { background: "#059669", color: "#fff", border: "none", padding: "10px 14px", borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: "pointer" } as const;
 
@@ -87,6 +90,17 @@ export function AgentDevicesPanel({ onClose }: { onClose: () => void }) {
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 12px" }}>
         O Desktop Agent roda no computador ligado à rede da impressora. Para conectar um computador, gere um código e digite no Agent. Sua senha nunca é pedida no Agent.
       </p>
+
+      <div style={{ background: "#0f172a", borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13, color: "#cbd5e1" }}>
+        <div style={{ fontWeight: 700, color: "#f8fafc", marginBottom: 6 }}>1. Instale o Filamap Agent (Windows)</div>
+        <a href={AGENT_DOWNLOAD_URL} download style={{ ...primaryButton, display: "block", textAlign: "center", textDecoration: "none", background: "#2563eb", marginBottom: 8 }}>
+          ⬇️ Baixar o Filamap Agent
+        </a>
+        <div style={{ color: "#94a3b8", fontSize: 12 }}>
+          Se o Windows mostrar "O Windows protegeu o computador", clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>. Tenha à mão o <strong>Access Code</strong> da impressora (aparece nas configurações de rede/WLAN, na tela da impressora).
+        </div>
+        <div style={{ fontWeight: 700, color: "#f8fafc", marginTop: 10 }}>2. Gere o código e digite no Agent</div>
+      </div>
 
       {pairing && secondsLeft > 0 ? (
         <div style={{ background: "#0f172a", border: "1px solid #059669", borderRadius: 10, padding: 14, marginBottom: 14, textAlign: "center" }}>

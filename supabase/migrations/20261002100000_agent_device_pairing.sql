@@ -72,8 +72,10 @@ BEGIN
     END IF;
 
     -- Um código ativo por vez: gerar outro invalida os anteriores.
-    DELETE FROM public.agent_pairing_codes
-    WHERE user_id = auth.uid() AND (used_at IS NULL OR expires_at < now() - interval '1 day');
+    -- Alias obrigatório: RETURNS TABLE cria a variável expires_at, que tornava
+    -- a coluna ambígua (erro 42702 no teste e2e de 2026-09-29).
+    DELETE FROM public.agent_pairing_codes c
+    WHERE c.user_id = auth.uid() AND (c.used_at IS NULL OR c.expires_at < now() - interval '1 day');
 
     v_bytes := gen_random_bytes(10);
     FOR i IN 0..9 LOOP

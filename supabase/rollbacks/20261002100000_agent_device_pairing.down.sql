@@ -8,3 +8,4 @@ DROP FUNCTION IF EXISTS public.consume_agent_pairing_code(TEXT);
 DROP FUNCTION IF EXISTS public.create_agent_pairing_code();
 DROP TABLE IF EXISTS public.agent_devices;
 DROP TABLE IF EXISTS public.agent_pairing_codes;
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261002100000';

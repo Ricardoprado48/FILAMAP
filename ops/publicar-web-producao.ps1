@@ -1,4 +1,4 @@
-# Publica a Web aprovada (F7) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
+# Publica a Web aprovada (O5: Central, Suporte, Computadores, Calculadora) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
 #   1) confere que o repositorio esta exatamente na versao homologada pelo usuario
 #   2) roda os testes e o typecheck
 #   3) gera o pacote de PRODUCAO (sem variaveis de teste) e confere que so aponta para a producao
@@ -7,11 +7,14 @@
 #   6) avanca o main no GitHub para a mesma versao
 # Uso: powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\publicar-web-producao.ps1 [-Ensaio]
 param([switch]$Ensaio)
+# Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
+if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi publicado." }
+# Rode DEPOIS do o5-schema-producao.ps1 (a tela nova usa as tabelas da Central).
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "C:\FILAMAP-staging"
-$Aprovado = "86a6e8887bb1cbcf292b56f70cd5458d9fb09a22"
+$Aprovado = "97c424ad12d0634a655668b36f4ed8d32e073b96"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 
@@ -54,7 +57,8 @@ $texto = Get-Content $js[0].FullName -Raw
 $nProd = [regex]::Matches($texto, $ProdRef).Count
 $nTeste = [regex]::Matches($texto, $TestRef).Count
 $nInbox = [regex]::Matches($texto, "spool_inbox").Count
-if ($nProd -lt 1 -or $nTeste -ne 0 -or $nInbox -lt 1) { throw "Pacote errado (producao=$nProd teste=$nTeste inbox=$nInbox). Nada foi publicado." }
+$nCentral = [regex]::Matches($texto, "ingest_ops_events").Count
+if ($nProd -lt 1 -or $nTeste -ne 0 -or $nInbox -lt 1 -or $nCentral -lt 1) { throw "Pacote errado (producao=$nProd teste=$nTeste inbox=$nInbox central=$nCentral). Nada foi publicado." }
 $bundle = $js[0].Name
 Write-Host "[3] Pacote de producao: $bundle (aponta so para a producao)."
 
@@ -63,7 +67,7 @@ if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""F7 estoque por produto e caixa de entrada""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""O5 central de observabilidade""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

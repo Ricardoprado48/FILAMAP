@@ -83,3 +83,12 @@ test("fingerprint ignora números e IDs, distingue componente", () => {
   assert.notEqual(a, c);
   assert.equal(a.length, 16);
 });
+
+test("Agent e Web usam o MESMO arquivo de sanitização", () => {
+  const fs = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  const root = path.join(__dirname, "..", "..", "..");
+  const agent = fs.readFileSync(path.join(root, "desktop-agent", "src", "observability", "sanitize.ts"), "utf-8").replace(/\r\n/g, "\n");
+  const web = fs.readFileSync(path.join(root, "web-app", "src", "observability", "sanitize.ts"), "utf-8").replace(/\r\n/g, "\n");
+  assert.equal(web, agent);
+});

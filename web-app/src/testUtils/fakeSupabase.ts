@@ -36,6 +36,10 @@ export function createFakeSupabase(resolver: FakeSupabaseResolver) {
         call.filters.push({ col, val });
         return query;
       },
+      gte(col: string, val: any) {
+        call.filters.push({ col, val });
+        return query;
+      },
       order(col: string, opts: any) {
         call.order = { col, opts };
         return query;

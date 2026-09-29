@@ -64,6 +64,9 @@ import {
 } from "./services/inboxService";
 import { SlotSpoolPicker } from "./components/SlotSpoolPicker";
 import { InboxPanel } from "./components/InboxPanel";
+import { OpsCentral } from "./components/OpsCentral";
+import { SupportDialog } from "./components/SupportDialog";
+import { isOpsAdmin } from "./services/opsService";
 import { resolveSpoolTitle, identityFromProduct, profilesWithoutProduct, parseGrams, parseOptionalPrice } from "./utils/products";
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -73,6 +76,10 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "calc" | "writer">("ams");
+  // Central de Observabilidade: botão só para admin (o banco também bloqueia).
+  const [opsAdmin, setOpsAdmin] = useState(false);
+  const [showOps, setShowOps] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
   // Slot do AMS com a lista "escolher do estoque" aberta (sem tag NFC).
   const [pickingSlot, setPickingSlot] = useState<number | null>(null);
   const [savingSlotPick, setSavingSlotPick] = useState(false);
@@ -266,6 +273,16 @@ export default function App() {
       return () => clearInterval(interval);
     }
   }, [session]);
+
+  useEffect(() => {
+    let alive = true;
+    isOpsAdmin(session?.user?.id).then((admin) => {
+      if (alive) setOpsAdmin(admin);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (!feedbackMsg) return;
@@ -1212,6 +1229,14 @@ export default function App() {
                 📲 Instalar
               </button>
             )}
+            {opsAdmin && (
+              <button onClick={() => setShowOps(true)} title="Central de observabilidade (admin)" style={{ background: "#334155", color: "#e2e8f0", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                📡 Central
+              </button>
+            )}
+            <button onClick={() => setShowSupport(true)} title="Enviar diagnóstico ao suporte" style={{ background: "#334155", color: "#e2e8f0", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              🛟 Suporte
+            </button>
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
@@ -1234,6 +1259,9 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {showOps && opsAdmin && <OpsCentral onClose={() => setShowOps(false)} />}
+      {showSupport && <SupportDialog onClose={() => setShowSupport(false)} />}
 
       {pickingSlot !== null && (
         <SlotSpoolPicker

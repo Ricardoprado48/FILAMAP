@@ -9,14 +9,14 @@
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi publicado." }
-# Rode DEPOIS do o7-convites-producao.ps1.
+# Rode ANTES do o8-funcao-cadastro.ps1 (a Web nova ja manda o aceite dos termos).
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "C:\FILAMAP-staging"
-$Aprovado = "b613ef067331b488cb563d2cab5fae68aa0805b4"
+$Aprovado = "4612db433adb21a3a3047c3f936a13cc59b195e6"
 $Setup = "C:\FILAMAP-staging\desktop-agent\installer\output\FilamapAgentSetup.exe"
-$SetupSha = "98866BDB0DB0F732045C944EB1D6BF76A3F8F54377A39FE044060F3B11FD71AF"
+$SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 
@@ -69,14 +69,14 @@ New-Item -ItemType Directory -Force -Path dist\downloads | Out-Null
 Copy-Item -LiteralPath $Setup -Destination dist\downloads\FilamapAgentSetup.exe -Force
 if ((Get-FileHash dist\downloads\FilamapAgentSetup.exe -Algorithm SHA256).Hash -ne $SetupSha) { throw "Copia do instalador corrompida. Nada foi publicado." }
 if (-not (Test-Path dist\_headers)) { throw "dist\_headers ausente. Nada foi publicado." }
-Write-Host "    Instalador do Agent 4.2 incluido em /downloads (SHA256 confere)."
+Write-Host "    Instalador do Agent 4.2.1 incluido em /downloads (SHA256 confere)."
 
 if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Convites, trocar senha e download do Agent""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Jornada do tester: Primeiros passos, guia, privacidade, Agent 4.2.1""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

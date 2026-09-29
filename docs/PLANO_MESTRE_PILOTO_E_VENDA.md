@@ -25,10 +25,12 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 
 | # | Tarefa | Quem |
 |---|---|---|
-| 2.1 | Cadastro de conta + "esqueci minha senha" + confirmação de e-mail | ⏳ |
-| 2.2 | Termos de Uso + Política de Privacidade (LGPD) + aceite no cadastro + texto do piloto | ⏳ 👤 revisar e aprovar o texto |
+| 2.1a | Piloto: contas dos testers criadas pelo Ricardo no painel do Supabase (Add user, e-mail já confirmado; não envia e-mail) | 👤 na Onda A |
+| 2.1b | Venda: cadastro aberto + "esqueci minha senha" — exige SMTP próprio (o e-mail padrão do Supabase só envia para a equipe do projeto, 2/hora) → depende do domínio (4.5) | ⏳ Bloco 4 |
+| 2.2 | Aviso de privacidade do piloto (`docs/PRIVACIDADE_PILOTO.md`) | 🔨 rascunho pronto · 👤 aprovar + informar e-mail de contato |
+| 2.2b | Termos de Uso + Política de Privacidade completos (revisão de advogado) | ⏳ antes da venda |
 | 2.3 | Pareamento do Agent por código de 6 dígitos (Agent deixa de pedir a senha Filamap) | ⏳ |
-| 2.4 | Checagem automática no GitHub (testes + typecheck a cada push) | 🔨 `.github/workflows/ci.yml` (Web ubuntu + Agent windows, Node 24) — prova no 1º push |
+| 2.4 | Checagem automática no GitHub (testes + typecheck a cada push) | ✅ `.github/workflows/ci.yml` — 1º run verde (64c5ee5) |
 | 2.5 | Teste ponta a ponta do cliente novo: cadastro → instalar → parear → imprimir → desconto | ⏳ |
 
 ## BLOCO 3 — Piloto fechado
@@ -68,3 +70,4 @@ Decisões já tomadas (2026-09-29): D1 erros no próprio Supabase · D2 plano **
 | 2026-09-29 | 1.4 | Web: ErrorBoundary + onerror/unhandledrejection → WEB_ERROR, versão do build (hash do commit), botão 📡 Central (só admin: instalações, saúde, timeline, filtros, erros agrupados, purga), botão 🛟 Suporte (SUPPORT_REQUEST). Sanitização idêntica à do Agent (teste trava). Web 14/14 arquivos de teste + typecheck; Agent 270/270 |
 | 2026-09-29 | 1.5 prep | A1 aceita 1 conexão MQTT (fonte: allaboutbambu.com, ha-bambulab #174) → O4 exige parar o Agent de produção. Script O4 com ensaio (bloqueia se há impressão ativa ou finalize pendente; pasta isolada via FILAMAP_CONFIG_DIR para nunca ler a fila da produção). Staging web publicado (staging.filamap.pages.dev), usuário de teste admin, replay do agent.log de 28/09 na Central de teste (195 eventos, incidente visível) |
 | 2026-09-29 | 1.6/1.7/2.4 | keepalive() testado no banco de teste (HTTP 200); backup inclui filament_products/spool_inbox/spools_identity_backup e só apaga pastas semanal-* (backups manuais preservados); CI criado. Observação: o repositório GitHub é PÚBLICO (sem segredos commitados; decidir se deve virar privado antes da venda) |
+| 2026-09-29 | 2.1/2.2/2.4 | Evidência: SMTP padrão do Supabase só entrega para a equipe do projeto (2/h) → cadastro aberto vai para o Bloco 4; piloto usa contas criadas no painel. Aviso de privacidade do piloto rascunhado. CI verde no GitHub |

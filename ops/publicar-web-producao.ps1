@@ -9,12 +9,12 @@
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi publicado." }
-# Rode DEPOIS do o6-impressora-por-conta.ps1.
+# Rode DEPOIS do o7-convites-producao.ps1.
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "C:\FILAMAP-staging"
-$Aprovado = "49e64c6e6c7fd4d658e0f623a8a31e9593e2facc"
+$Aprovado = "b613ef067331b488cb563d2cab5fae68aa0805b4"
 $Setup = "C:\FILAMAP-staging\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "98866BDB0DB0F732045C944EB1D6BF76A3F8F54377A39FE044060F3B11FD71AF"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
@@ -76,7 +76,7 @@ if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Download do Agent e impressora por conta""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Convites, trocar senha e download do Agent""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

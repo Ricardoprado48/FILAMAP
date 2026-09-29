@@ -9,6 +9,7 @@ import {
   purgeExpiredOpsEvents,
   sortTimeline,
 } from "../services/opsService";
+import { InvitesPanel } from "./InvitesPanel";
 
 // Central de Observabilidade (só admin; o banco bloqueia os demais).
 // Visão geral por instalação + timeline de uma instalação com filtros.
@@ -111,6 +112,8 @@ export function OpsCentral({ onClose }: { onClose: () => void }) {
 
         {error && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>Erro: {error}</div>}
         {note && <div style={{ color: "#34d399", fontSize: 12, marginBottom: 8 }}>{note}</div>}
+
+        {!selected && <InvitesPanel />}
 
         {!selected && (
           <>

@@ -67,6 +67,9 @@ import { SlotSpoolPicker } from "./components/SlotSpoolPicker";
 import { InboxPanel } from "./components/InboxPanel";
 import { OpsCentral } from "./components/OpsCentral";
 import { SupportDialog } from "./components/SupportDialog";
+import { InviteSignupForm } from "./components/InviteSignupForm";
+import { ChangePasswordDialog } from "./components/ChangePasswordDialog";
+import { inviteCodeFromSearch } from "./services/inviteService";
 import { isOpsAdmin } from "./services/opsService";
 import { resolveSpoolTitle, identityFromProduct, profilesWithoutProduct, parseGrams, parseOptionalPrice } from "./utils/products";
 export default function App() {
@@ -75,6 +78,10 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Link de convite (?convite=CODIGO) abre direto a tela de criar conta.
+  const [inviteCode] = useState(() => inviteCodeFromSearch(window.location.search));
+  const [authMode, setAuthMode] = useState<"login" | "invite">(() => (inviteCode ? "invite" : "login"));
+  const [showPassword, setShowPassword] = useState(false);
 
   const [activeTab, setActiveTab] = useState<"ams" | "inventory" | "calc" | "writer">("ams");
   // Central de Observabilidade: botão só para admin (o banco também bloqueia).
@@ -1148,6 +1155,9 @@ export default function App() {
             <FilamapLogo height={38} alt="FILAMAP" style={{ margin: "0 auto" }} />
             <p style={{ margin: "8px 0 0", color: "#94a3b8", fontSize: 12, fontWeight: 500 }}>Acesso à Oficina &amp; Estoque NFC</p>
           </div>
+          {authMode === "invite" ? (
+            <InviteSignupForm initialCode={inviteCode} onBack={() => setAuthMode("login")} />
+          ) : (
           <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>E-mail</label>
@@ -1161,7 +1171,11 @@ export default function App() {
             <button type="submit" disabled={authLoading} style={{ padding: 12, background: authLoading ? "#0369a1" : "#0284c7", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer" }}>
               {authLoading ? "Entrando..." : "Entrar no Filamap"}
             </button>
+            <button type="button" onClick={() => setAuthMode("invite")} style={{ background: "transparent", border: "none", color: "#94a3b8", fontSize: 12, cursor: "pointer" }}>
+              Recebi um convite: criar conta
+            </button>
           </form>
+          )}
         </div>
       </div>
     );
@@ -1242,6 +1256,9 @@ export default function App() {
             <button onClick={() => setShowDevices((v) => !v)} title="Computadores conectados" style={{ background: showDevices ? "#0284c7" : "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               💻 Computadores
             </button>
+            <button onClick={() => setShowPassword(true)} title="Trocar senha" style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              🔑 Senha
+            </button>
             <button onClick={handleLogout} style={{ background: "#334155", color: "#cbd5e1", border: "none", padding: "5px 9px", borderRadius: 16, fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
               Sair
             </button>
@@ -1267,6 +1284,7 @@ export default function App() {
 
       {showOps && opsAdmin && <OpsCentral onClose={() => setShowOps(false)} />}
       {showSupport && <SupportDialog onClose={() => setShowSupport(false)} />}
+      {showPassword && <ChangePasswordDialog onClose={() => setShowPassword(false)} />}
 
       {pickingSlot !== null && (
         <SlotSpoolPicker

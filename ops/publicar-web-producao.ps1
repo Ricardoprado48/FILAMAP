@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "$(Split-Path $PSScriptRoot -Parent)"
-$Aprovado = "4612db433adb21a3a3047c3f936a13cc59b195e6"
+$Aprovado = "d3146cb13e92569036e3eaf891632f0ca090661f"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
@@ -76,7 +76,7 @@ if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Jornada do tester: Primeiros passos, guia, privacidade, Agent 4.2.1""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Convite: mensagem padrao com passo a passo completo""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

@@ -7,7 +7,7 @@
 #   - liga cada carretel ao seu produto e ao seu perfil do Studio (desfaz o que o Agent v2 regravou)
 #   - grava o snapshot dos registros de impressao que tem carretel; os orfaos ficam como estao (R4)
 #   - aborta sozinha se peso/tara/preco/tag/historico/slots mudarem ou se qualquer verificacao falhar
-# Uso (producao): powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\f6-reconciliar.ps1 [-SoEnsaio]
+# Uso (producao): powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\f6-reconciliar.ps1 [-SoEnsaio]
 #   Desfazer:     ... f6-reconciliar.ps1 -Rollback
 # Desenvolvedor:  -Alvo teste [-Sim]  (banco de TESTE; -Sim dispensa a confirmacao, so no teste)
 param([ValidateSet("producao","teste")][string]$Alvo = "producao", [switch]$SoEnsaio, [switch]$Rollback, [switch]$Sim)

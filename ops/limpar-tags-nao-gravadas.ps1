@@ -2,7 +2,7 @@
 # num chip (nfc_written_at vazio). Confirmado pelo usuario em 28/09: so 6 carreteis tem tag
 # fisica, e esses nao sao tocados. So muda nfc_uid; peso/produto/historico/slots ficam iguais.
 # Numa UNICA transacao, com ensaio (ROLLBACK), backup e confirmacao.
-# Uso (producao): powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\limpar-tags-nao-gravadas.ps1 [-SoEnsaio]
+# Uso (producao): powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\limpar-tags-nao-gravadas.ps1 [-SoEnsaio]
 #   Desfazer:     ... limpar-tags-nao-gravadas.ps1 -Rollback
 # Desenvolvedor:  -Alvo teste [-Sim]
 param([ValidateSet("producao","teste")][string]$Alvo = "producao", [switch]$SoEnsaio, [switch]$Rollback, [switch]$Sim)

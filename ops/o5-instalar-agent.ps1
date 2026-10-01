@@ -7,17 +7,17 @@ if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). N
 #      instalador e o mesmo que foi gerado e testado (SHA256);
 #   2. pede confirmacao (digitar INSTALAR) e abre o instalador (o Windows pede permissao);
 #   3. confere que o Agent instalado e o 4.2.1 e que voltou a rodar.
-# Volta para o 4.2.0, se precisar: rode C:\FILAMAP-staging\releases\FilamapAgentSetup-4.2.0-98866BDB.exe
+# Volta para o 4.2.0, se precisar: rode C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\releases\FilamapAgentSetup-4.2.0-98866BDB.exe
 #   -Ensaio  so confere, nao instala nada
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ProdDir = Join-Path $env:APPDATA "Filamap"
-$Setup = "C:\FILAMAP-staging\desktop-agent\installer\output\FilamapAgentSetup.exe"
+$Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
 $AgentSha = "680A0F0E17EAD302F8251D73ABB2B52E6E882065BD98D2DA140F9330B004E654"
 $AgentExe = "C:\Program Files\Filamap Agent\filamap-agent.exe"
-$Rollback = "C:\FILAMAP-staging\releases\FilamapAgentSetup-4.2.0-98866BDB.exe"
+$Rollback = "$(Split-Path $PSScriptRoot -Parent)\releases\FilamapAgentSetup-4.2.0-98866BDB.exe"
 
 $bloqueios = @()
 function Check([bool]$ok, [string]$msg) {

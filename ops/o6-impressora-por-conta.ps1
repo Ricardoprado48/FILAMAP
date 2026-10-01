@@ -7,7 +7,7 @@
 #   4) pede confirmacao (digitar APLICAR)
 #   5) aplica; desfaz sozinho se qualquer verificacao falhar ou se algum dado mudar
 # So troca uma regra da tabela printers; nenhum dado e alterado. Agent 4.2 e Web continuam iguais.
-# Uso:  powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\o6-impressora-por-conta.ps1 [-SoEnsaio]
+# Uso:  powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\o6-impressora-por-conta.ps1 [-SoEnsaio]
 # -EnsaioNoTeste: uso do desenvolvedor; mesmo ensaio no banco de TESTE (sempre ROLLBACK).
 param([switch]$SoEnsaio, [switch]$EnsaioNoTeste)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
@@ -22,7 +22,7 @@ if (-not $EnsaioNoTeste -and -not (Test-Path $TokArq)) { throw "Token da produca
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
-$Stg = "C:\FILAMAP-staging"
+$Stg = "$(Split-Path $PSScriptRoot -Parent)"
 $Mig = "$Stg\supabase\migrations"
 $Rb = "$Stg\supabase\rollbacks"
 $Ops = Split-Path -Parent $MyInvocation.MyCommand.Path

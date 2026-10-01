@@ -8,7 +8,7 @@
 #   5) aplica; desfaz sozinho se qualquer verificacao falhar ou se algum dado de estoque mudar
 #   6) publica a Edge Function agent-pair e confere que ela responde
 # Nenhuma tabela existente e alterada. Agent 4.1 e Web atual continuam funcionando.
-# Uso:  powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\o5-schema-producao.ps1 [-SoEnsaio]
+# Uso:  powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\o5-schema-producao.ps1 [-SoEnsaio]
 # -EnsaioNoTeste: uso do desenvolvedor; mesmo ensaio no banco de TESTE (sempre ROLLBACK).
 param([switch]$SoEnsaio, [switch]$EnsaioNoTeste)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
-$Stg = "C:\FILAMAP-staging"
+$Stg = "$(Split-Path $PSScriptRoot -Parent)"
 $Mig = "$Stg\supabase\migrations"
 $Rb = "$Stg\supabase\rollbacks"
 $Ops = Split-Path -Parent $MyInvocation.MyCommand.Path

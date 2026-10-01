@@ -7,7 +7,7 @@
 #   6) publica a Edge Function signup-invite e confere que ela responde
 #   7) DESLIGA o cadastro publico do Supabase (so entra quem tem convite)
 # So cria tabelas/funcoes novas; nenhuma tabela existente e alterada.
-# Uso:  powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\o7-convites-producao.ps1 [-SoEnsaio]
+# Uso:  powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\o7-convites-producao.ps1 [-SoEnsaio]
 # -EnsaioNoTeste: uso do desenvolvedor; mesmo ensaio no banco de TESTE (sempre ROLLBACK).
 param([switch]$SoEnsaio, [switch]$EnsaioNoTeste)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29: "-EnsaioNoTeste"
@@ -22,7 +22,7 @@ if (-not $EnsaioNoTeste -and -not (Test-Path $TokArq)) { throw "Token da produca
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
-$Stg = "C:\FILAMAP-staging"
+$Stg = "$(Split-Path $PSScriptRoot -Parent)"
 $Mig = "$Stg\supabase\migrations"
 $Rb = "$Stg\supabase\rollbacks"
 $Ops = Split-Path -Parent $MyInvocation.MyCommand.Path

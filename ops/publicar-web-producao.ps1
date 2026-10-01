@@ -5,7 +5,7 @@
 #   4) pede confirmacao (digitar PUBLICAR)
 #   5) publica em https://filamap.pages.dev e confere o pacote servido
 #   6) avanca o main no GitHub para a mesma versao
-# Uso: powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\publicar-web-producao.ps1 [-Ensaio]
+# Uso: powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\publicar-web-producao.ps1 [-Ensaio]
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi publicado." }
@@ -13,9 +13,9 @@ if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). N
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
-$Repo = "C:\FILAMAP-staging"
+$Repo = "$(Split-Path $PSScriptRoot -Parent)"
 $Aprovado = "4612db433adb21a3a3047c3f936a13cc59b195e6"
-$Setup = "C:\FILAMAP-staging\desktop-agent\installer\output\FilamapAgentSetup.exe"
+$Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"

@@ -40,7 +40,7 @@ if ($Restaurar) {
     }
     Move-Item $ultima.FullName $Dados
     Write-Host "Pasta original de volta em $Dados." -ForegroundColor Green
-    Write-Host "Agora rode: & `"C:\FILAMAP-staging\ops\o5-instalar-agent.ps1`" (digite INSTALAR)."
+    Write-Host "Agora rode: & `"$(Split-Path $PSScriptRoot -Parent)\ops\o5-instalar-agent.ps1`" (digite INSTALAR)."
     exit 0
 }
 

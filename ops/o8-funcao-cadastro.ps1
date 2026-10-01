@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
-$Stg = "C:\FILAMAP-staging"
+$Stg = "$(Split-Path $PSScriptRoot -Parent)"
 $TokArq = Join-Path $env:APPDATA "Filamap-dev\prod-access-token.dpapi"
 
 Write-Host "=== O8: funcao de cadastro com aceite dos termos (PRODUCAO) ==="

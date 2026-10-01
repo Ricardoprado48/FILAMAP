@@ -5,7 +5,7 @@
 #   3) backup JSON de todas as tabelas
 #   4) pede confirmacao (digitar APLICAR)
 #   5) aplica; a transacao se desfaz sozinha se qualquer verificacao falhar ou se algum dado mudar
-# Uso:  powershell -ExecutionPolicy Bypass -File C:\FILAMAP-staging\ops\f4-schema-producao.ps1 [-SoEnsaio]
+# Uso:  powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\f4-schema-producao.ps1 [-SoEnsaio]
 # -EnsaioNoTeste: uso do desenvolvedor; mesmo ensaio no banco de TESTE (sempre ROLLBACK).
 param([switch]$SoEnsaio, [switch]$EnsaioNoTeste)
 $ErrorActionPreference = "Stop"
@@ -13,8 +13,8 @@ $ErrorActionPreference = "Stop"
 
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
-$Mig = "C:\FILAMAP-staging\supabase\migrations"
-$Rb = "C:\FILAMAP-staging\supabase\rollbacks"
+$Mig = "$(Split-Path $PSScriptRoot -Parent)\supabase\migrations"
+$Rb = "$(Split-Path $PSScriptRoot -Parent)\supabase\rollbacks"
 $Ops = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Esperadas = [ordered]@{
     "20260927200000_add_spools_location"              = "97C2A0FAF401D3D6203565A73E5543D1D83238CCE744B35B3CE5D1E08ABA4A6E"

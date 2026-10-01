@@ -43,14 +43,20 @@ export function inviteCodeFromSearch(search: string): string {
 export function inviteMessage(code: string, origin: string, expiresAt: string): string {
   const validade = new Date(expiresAt).toLocaleDateString("pt-BR");
   return [
-    "Oi! Obrigado por topar testar o Filamap.",
+    "Oi! Obrigado por topar testar o Filamap 🙌",
     "",
-    `Crie sua conta por este link (vale até ${validade}):`,
+    `1. Crie sua conta (o link vale até ${validade}):`,
     inviteLink(code, origin),
+    `Se o site pedir, o código do convite é ${code}.`,
     "",
-    `Se pedir, o código do convite é ${code}.`,
+    "2. Instale o Filamap Agent. Depois de entrar, siga a lista 🚀 Primeiros passos que aparece no site. Ela mostra como baixar e instalar o Agent no PC que está na mesma rede da impressora.",
+    `Guia completo: ${origin.replace(/\/+$/, "")}/guia`,
     "",
-    `Guia de instalação: ${origin.replace(/\/+$/, "")}/guia`,
+    "3. Avisos do Windows. Na hora de baixar e instalar, o navegador e o Windows vão dizer que o arquivo é \"desconhecido\". É normal nesta fase de teste: clique em Manter e depois em Mais informações › Executar assim mesmo.",
+    "",
+    "4. Access Code. Você vai precisar do Access Code da sua Bambu Lab. O guia mostra onde encontrar esse código em cada modelo.",
+    "",
+    "Qualquer erro ou dúvida, me chama. Se der algum problema, o botão \"Enviar diagnóstico\" no site me manda os detalhes.",
   ].join("\n");
 }
 

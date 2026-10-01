@@ -41,6 +41,11 @@ describe("link e código do convite", () => {
     expect(m).toContain("https://filamap.pages.dev/?convite=ABCDE-FGHJK");
     expect(m).toContain("ABCDE-FGHJK");
     expect(m).toContain("https://filamap.pages.dev/guia");
+    expect(m).toContain("10/10/2026");
+    expect(m).toContain("Primeiros passos");
+    expect(m).toContain("Executar assim mesmo");
+    expect(m).toContain("Access Code");
+    expect(m).toContain("Enviar diagnóstico");
   });
 });
 

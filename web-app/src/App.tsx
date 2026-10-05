@@ -1808,17 +1808,17 @@ export default function App() {
                   <strong style={{ fontSize: 13, color: "#f8fafc" }}>📥 PARÂMETROS DA PEÇA</strong>
                   <div>
                     <label style={{ fontSize: 11, color: "#94a3b8" }}>Nome da Peça / Arquivo</label>
-                    <input type="text" value={calcPartName} onChange={(e) => setCalcPartName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                    <input type="text" value={calcPartName} onChange={(e) => setCalcPartName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     <div>
                       <label style={{ fontSize: 11, color: "#94a3b8" }}>Tempo (Horas)</label>
-                      <input type="number" step="0.1" value={calcPrintHours} onChange={(e) => setCalcPrintHours(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                      <input type="number" step="0.1" value={calcPrintHours} onChange={(e) => setCalcPrintHours(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                     </div>
                     <div>
                       <label style={{ fontSize: 11, color: "#94a3b8" }}>Acessórios (R$)</label>
-                      <input type="number" step="0.1" value={calcExtraCosts} onChange={(e) => setCalcExtraCosts(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff" }} />
+                      <input type="number" step="0.1" value={calcExtraCosts} onChange={(e) => setCalcExtraCosts(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                     </div>
                   </div>
 
@@ -1826,7 +1826,7 @@ export default function App() {
                     <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Filamentos (AMS Lite):</label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
                       {calcFilaments.map((f, idx) => (
-                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
+                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 6 }}>
                           <select
                             value={f.spoolId}
                             onChange={(e) => {
@@ -1834,7 +1834,7 @@ export default function App() {
                               updated[idx].spoolId = e.target.value;
                               setCalcFilaments(updated);
                             }}
-                            style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#fff", fontSize: 11 }}
+                            style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#fff", fontSize: 11, width: "100%", minWidth: 0, boxSizing: "border-box" }}
                           >
                             <option value="">F{idx + 1}: Carretel do Estoque...</option>
                             {inventory.map((s) => (
@@ -1850,7 +1850,7 @@ export default function App() {
                               updated[idx].weightG = e.target.value;
                               setCalcFilaments(updated);
                             }}
-                            style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#38bdf8", fontWeight: 700, textAlign: "center" }}
+                            style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#38bdf8", fontWeight: 700, textAlign: "center", width: "100%", minWidth: 0, boxSizing: "border-box" }}
                           />
                         </div>
                       ))}

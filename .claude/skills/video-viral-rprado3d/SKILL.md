@@ -21,6 +21,7 @@ A Skill tem três modos. Descubra pelo pedido qual deles usar. Se não der para 
 Arquivos de apoio (leia quando o modo pedir):
 - `references/formulas.md`: biblioteca de fórmulas, já com 6 iniciais (F-001 a F-006).
 - `references/produtos.md`: ficha de cada produto (o que é, regras do que pode e não pode ser mostrado).
+- `references/dores.md`: dores que o produto resolve, objeções e ganchos. **Todo roteiro do Modo B parte de uma dor desta lista.**
 - `references/regras.md`: regras de publicação (TikTok, consumidor, marcas, conteúdo de IA). **Leia sempre no modo B.**
 - `scripts/analisar_video.py`: duração, resolução, cortes de cena e grades de frames.
 - `scripts/checar_prompt.py`: conta caracteres de um prompt com código, nunca no olho.

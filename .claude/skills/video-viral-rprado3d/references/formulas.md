@@ -215,3 +215,42 @@ Mecânica comum a todas as POV:
   | 3–8 s | Timelapse da impressão |
   | 8–12 s | Copo pronto, mão "relutante" entregando |
 - **Variação neutra:** "POV: o cliente pediu o {apelido} pra ontem" (timelapse acelerado).
+
+---
+
+# Fórmulas validadas por receita (vídeos enviados pelo dono, top receita no Kalodata, out/2026)
+
+Achado principal: os 3 vídeos de maior receita são **gerados por IA** (cenas de 8–10 s, 24 fps, texto da embalagem com erro de IA como "Achecolutado"), com **uma única frase de narração** e o produto como protagonista. É exatamente o fluxo foto do produto → Veo 3 (Google Flow / Higgsfield). O que vende é a simplicidade: 8 s, uma frase, o produto girando na mão.
+
+## F-013: POV "o gol é meu, o copo é seu" (IA, estádio)
+- **Origem:** caneca inox do Flamengo com tampa e abridor, TikTok Shop BR. 10 s, 1 corte (2,5 s).
+- **Por que funciona:** cenário de futebol (gramado/estádio) faz o torcedor se ver ali; o texto POV é um trocadilho fácil de lembrar; o produto aparece em 100% do tempo e mostra 2 diferenciais (tampa, abridor no fundo).
+- **Texto na tela (o vídeo inteiro):** "POV: O gol é meu, o copo é seu"
+- **Estrutura:**
+  | Tempo | Cena |
+  |---|---|
+  | 0–2,5 s | 1ª pessoa num campo de treino ensolarado, trave ao fundo; o copo está na grama e a mão entra e o pega |
+  | 2,5–6 s | Corte: mesmas mãos dentro de um estádio, girando o copo perto da lente; o dedo mexe na tampa |
+  | 6–8 s | Vira o copo e mostra o fundo (abridor de garrafa) |
+  | 8–10 s | Volta à frente do copo, estádio desfocado ao fundo |
+- **Narração:** 1 frase, voz masculina animada (~1,4 palavras/s): "Olha só a caneca do Mengo com tampa e abridor de garrafa. É a top do momento!"
+- **Gatilho de compra:** identidade + diferencial concreto + prova social ("top do momento").
+- **Exige filmagem real?** Não no original (IA). Dá para fazer **real** em qualquer campo society, o que evita a IA deformar o produto.
+- **Série:** trocar `{time}`, `{apelido}` e os 2 diferenciais reais do produto. O texto POV serve para todos os times.
+
+## F-014: Apresentadora + kit presente + seta "AQUI!"
+- **Origem:** 2 vídeos de kit de 5 canecas (unicórnio e vaquinha), TikTok Shop BR. 8 s cada, 1 frase.
+- **Por que funciona:** presente pronto (caixa, laço, papel picado) resolve o "o que eu dou?"; uma apresentadora simpática segura o kit e aponta; um **sticker de seta vermelha "AQUI!"** fixo no canto inferior esquerdo aponta para o link do produto o vídeo inteiro.
+- **Texto na tela:** só o sticker de seta "AQUI!" (adicionado na edição).
+- **Estrutura (versão plano único, 8 s):**
+  | Tempo | Cena |
+  |---|---|
+  | 0–2 s | Apresentadora sorrindo segura a caixa aberta com os produtos e aponta |
+  | 2–6 s | Aproxima a caixa da câmera, o dedo passa por cada produto |
+  | 6–8 s | Volta a segurar a caixa ao lado do rosto, sorrindo |
+- **Versão com cortes (8 s):** apresentadora com a caixa (0–1,3 s) → mãos tirando uma peça da caixa (1,3–4 s) → produto em uso na mesa posta (4–8 s).
+- **Narração:** 1 frase, voz feminina calorosa (~2,1 palavras/s): "Olha que presente mais lindo! São 5 canecas encantadoras, perfeitas pra deixar qualquer momento ainda mais especial. Eu amei!"
+- **Gatilho de compra:** presente pronto, embalagem bonita, entusiasmo de quem "recebeu".
+- **Exige filmagem real?** Não no original (IA). A apresentadora de IA **precisa** do rótulo de conteúdo de IA.
+- **Adaptação para o time:** vender o **kit torcedor** numa caixa de presente nas cores do time (ex.: copo + porta-copo + chaveiro). Isso aumenta o valor do pedido. No Instagram, trocar a seta "AQUI!" por "Comenta EU QUERO" ou "Link na bio".
+- **Atenção:** não mostrar bebida no produto se a ficha não permitir (o original mostra achocolatado).

@@ -16,7 +16,7 @@ A Skill tem três modos. Descubra pelo pedido qual deles usar. Se não der para 
 | **C. Registrar resultado** | O usuário postou e tem os números | Fórmula usada + métricas | Linha em `historico/resultados.csv` + ranking |
 | **D. Série por time** | "Um vídeo para cada time", "faz a série" | Fórmula + lista de times | Plano de gravação único + 1 pacote por time |
 
-**Prioridade do dono:** vídeos POV (F-008 a F-012), um por time, postados no **Instagram Reels** (venda pelo Direct/link na bio) e no **TikTok**. Sugira POV primeiro.
+**Prioridade do dono:** vídeos curtos de IA no estilo das fórmulas **F-013** (POV estádio) e **F-014** (kit presente), validadas por receita, depois as POV F-008 a F-012. Um vídeo por time, postado no **Instagram Reels** (venda pelo Direct/link na bio) e no **TikTok**.
 
 Arquivos de apoio (leia quando o modo pedir):
 - `references/formulas.md`: biblioteca de fórmulas, já com 6 iniciais (F-001 a F-006).

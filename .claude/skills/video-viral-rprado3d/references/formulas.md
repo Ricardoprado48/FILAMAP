@@ -119,3 +119,25 @@ Novas fórmulas extraídas de vídeos reais (Modo A) entram no final, a partir d
 ---
 
 <!-- Novas fórmulas (Modo A) a partir daqui: F-007, F-008, ... -->
+
+## F-007: "Quem pagou caro tá chorando" (apresentador + giro 360°)
+- **Origem:** copo térmico inox personalizado de time (Flamengo), TikTok Shop BR, vídeo encontrado no Kalodata (out/2026). Analisado com `analisar_video.py` + transcrição.
+- **Por que funciona:** ancoragem de preço + medo de perder ("quem pagou caro se arrependeu") no gancho, identidade de torcedor no meio, prova física (abrir e mostrar por dentro) no fim. O produto em movimento constante segura a retenção sem nenhum corte.
+- **Duração / cortes:** 45,7 s, **zero cortes** (plano-sequência no celular).
+- **Cenário:** apresentador comum (~50 anos, "tio real", sem pose de influencer), sentado, fundo decorativo, mesa escura, luz de janela.
+- **Gancho (0–5 s):** plano médio, produto ao lado do rosto: "Quem pagou quase 70 reais nesse copo… na semana passada tá chorando hoje, porque baixou o preço."
+- **Estrutura:**
+  | Tempo | Cena | Fala |
+  |---|---|---|
+  | 0–2 s | Plano médio, produto ao lado do rosto, falando para a câmera | Gancho de preço (ancoragem) |
+  | 2–15 s | Giro 360° contínuo **colado na lente**, cada face da arte enche a tela | Oferta + "olha só que copo insano, muito bonito" |
+  | 15–18 s | Volta ao plano médio, **aponta o dedo para a câmera** | Argumento central (preço/valor) |
+  | 18–37 s | Mais giros colados na lente | Identidade: "vem carregado com todas as conquistas do seu time do coração" |
+  | 37–42 s | Tira a tampa, mostra o interior e o detalhe da tampa, fecha | Especificação: "copo inox, 473 ml, com tampa" |
+  | 42–45,7 s | Giro final, terminando no lado com o nome do time | Pagamento: "dá pra dividir no cartão" |
+- **Narração:** 117 palavras em 45,7 s (**~2,6 palavras/s**), tom de vendedor de feira simpático, informal ("galera", "né", "tá"), voz masculina madura, sem roteiro decorado.
+- **Gatilho de compra:** ancoragem de preço + "seu time do coração" + especificação concreta (material, ml) + parcelamento.
+- **CTA:** implícito (preço + parcelamento). Não fala "clica no carrinho".
+- **Exige filmagem real?** Sim, 100%: pessoa real segurando o produto real. Avatar de IA perde o efeito "tio real".
+- **Adaptação para a caneca de time:** manter o giro colado na lente (o relevo 3D brilha melhor que estampa lisa) e a prova física no fim. **Trocar o gancho de desconto** (ver "Atenção") por ancoragem verdadeira: comparar com caneca de estampa que descasca ou com o preço de loja oficial.
+- **Atenção:** o original usa "51% de desconto" e um preço anterior de referência. Pelas `regras.md`, a Skill **não usa porcentagem de desconto** e só usa preço anterior se for real e comprovável. A arte do copo original tem escudo, marca esportiva e patrocinador de apostas: **não copiar**.

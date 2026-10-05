@@ -4,9 +4,10 @@ Tudo que um vídeo afirma sobre o produto precisa estar nesta ficha. Campos com 
 
 ---
 
-## Caneca de time
+## Copo / caneca de time
 
-- **O que é:** caneca com o tema do time de futebol, produzida pela rprado3d em impressora 3D (Bambu Lab).
+- **O que é:** copo/caneca com o tema do time de futebol, um modelo por time, produzido pela rprado3d em impressora 3D (Bambu Lab). [CONFIRMAR: nome comercial, copo ou caneca?]
+- **Canais de venda:** Instagram (Reels + Direct/link na bio) e TikTok.
 - **Material e construção:** [CONFIRMAR: 100% impressa (PLA/PETG?) ou caneca de cerâmica/inox com corpo impresso por fora?]
 - **Uso com bebida:** [CONFIRMAR: pode receber bebida quente? fria? é decorativa?]
 - **Capacidade:** [CONFIRMAR]

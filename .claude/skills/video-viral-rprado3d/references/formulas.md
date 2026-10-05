@@ -140,4 +140,78 @@ Novas fórmulas extraídas de vídeos reais (Modo A) entram no final, a partir d
 - **CTA:** implícito (preço + parcelamento). Não fala "clica no carrinho".
 - **Exige filmagem real?** Sim, 100%: pessoa real segurando o produto real. Avatar de IA perde o efeito "tio real".
 - **Adaptação para a caneca de time:** manter o giro colado na lente (o relevo 3D brilha melhor que estampa lisa) e a prova física no fim. **Trocar o gancho de desconto** (ver "Atenção") por ancoragem verdadeira: comparar com caneca de estampa que descasca ou com o preço de loja oficial.
+- **Observação do dono (out/2026):** não é o estilo que ele quer priorizar. Manter como opção, não sugerir primeiro.
 - **Atenção:** o original usa "51% de desconto" e um preço anterior de referência. Pelas `regras.md`, a Skill **não usa porcentagem de desconto** e só usa preço anterior se for real e comprovável. A arte do copo original tem escudo, marca esportiva e patrocinador de apostas: **não copiar**.
+
+---
+
+# Fórmulas POV (prioridade do dono: vídeos em série, um por time)
+
+Mecânica comum a todas as POV:
+- **Texto na tela no 1º segundo:** "POV: …" em fonte nativa do Reels/TikTok, no terço superior. É ele que faz o gancho, não a fala.
+- **Sem narração.** Usar um áudio em alta da biblioteca comercial. O vídeo dura o tempo de uma "batida" do áudio (7–12 s) e termina de um jeito que faça o vídeo voltar ao início (loop).
+- **Câmera em primeira pessoa** (as mãos de quem assiste) ou cena observada. Quase nunca aparece rosto.
+- **Feitas para série:** a mesma filmagem-base serve para todos os times. Troca-se só o copo, as cores do ambiente e o texto. Variáveis: `{time}`, `{apelido}` (Mengão, Timão, Verdão…), `{rival}`, `{torcedor}` (rubro-negro, corintiano…).
+
+## F-008: POV "chegou o meu"
+- **Por que funciona:** desejo + unboxing. Quem assiste se imagina recebendo.
+- **Duração:** 8–10 s.
+- **Texto:** "POV: você é {torcedor} e chegou o copo do {apelido}"
+- **Estrutura:**
+  | Tempo | Cena (1ª pessoa) |
+  |---|---|
+  | 0–2 s | Mãos segurando a caixa fechada sobre a mesa |
+  | 2–5 s | Abrindo, papel de seda com as cores do time |
+  | 5–8 s | Tira o copo e gira devagar perto da lente, com a luz batendo no relevo |
+  | 8–10 s | Coloca o copo na mesa ou na estante com algo do time ao fundo (camisa, cachecol) |
+- **Exige filmagem real?** Sim. Uma sessão de filmagem rende todos os times (mesmo enquadramento, troca o copo).
+- **Série:** 1 vídeo por time, com o mesmo áudio por 1 semana.
+
+## F-009: POV "o rival viu"
+- **Por que funciona:** zoeira entre torcidas, as pessoas marcam o amigo rival. Comentários e compartilhamentos altos.
+- **Duração:** 7–9 s.
+- **Texto:** "POV: seu amigo {rival} entrou na sua casa e viu isso na estante"
+- **Estrutura:**
+  | Tempo | Cena |
+  |---|---|
+  | 0–3 s | Estante/mesa com o copo do {time} em destaque, câmera aproximando devagar |
+  | 3–6 s | Zoom rápido no copo, no tempo da batida do áudio |
+  | 6–9 s | Close do copo girando |
+- **Áudio:** áudio de humor ou de "drama" em alta.
+- **Série:** gerar em pares de clássico (Fla × Flu, Corinthians × Palmeiras, Grêmio × Inter…) e postar na semana do jogo.
+
+## F-010: POV "presente para o fanático"
+- **Por que funciona:** presente com emoção. As pessoas salvam o vídeo para comprar perto de datas (Dia dos Pais, aniversário, Natal).
+- **Duração:** 8–12 s.
+- **Texto:** "POV: você achou o presente perfeito pro seu pai {torcedor}"
+- **Estrutura:**
+  | Tempo | Cena |
+  |---|---|
+  | 0–3 s | Mãos embrulhando o copo / colocando na sacola de presente |
+  | 3–7 s | Copo girando perto da lente |
+  | 7–12 s | Copo pronto ao lado de um cartão "Pai, {apelido} sempre" |
+- **Variações de texto:** "namorado", "avô", "amigo secreto".
+
+## F-011: POV "dia de jogo"
+- **Por que funciona:** ritual do torcedor, identificação imediata. Publicar horas antes da partida.
+- **Duração:** 7–10 s.
+- **Texto:** "POV: hoje tem {apelido} e você já separou o seu"
+- **Estrutura:**
+  | Tempo | Cena |
+  |---|---|
+  | 0–3 s | Mão pegando o copo na estante |
+  | 3–6 s | Copo colocado na frente da TV (jogo desfocado ao fundo, sem imagem de transmissão nítida) |
+  | 6–10 s | Close do copo com a camisa do time ao lado |
+- **Atenção:** só mostrar bebida no copo se a ficha do produto permitir. Nunca usar imagem nítida de transmissão de jogo.
+
+## F-012: POV "bastidor do fabricante"
+- **Por que funciona:** humor + processo. Mostra que é feito por você, sob encomenda, e gera pedido nos comentários.
+- **Duração:** 8–12 s.
+- **Texto:** "POV: você faz copo de time e um {rival} encomenda o do {time}"
+- **Estrutura:**
+  | Tempo | Cena |
+  |---|---|
+  | 0–3 s | Impressora começando a peça (cores do {time}) |
+  | 3–8 s | Timelapse da impressão |
+  | 8–12 s | Copo pronto, mão "relutante" entregando |
+- **Variação neutra:** "POV: o cliente pediu o {apelido} pra ontem" (timelapse acelerado).

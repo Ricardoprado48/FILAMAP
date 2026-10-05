@@ -14,6 +14,9 @@ A Skill tem três modos. Descubra pelo pedido qual deles usar. Se não der para 
 | **A. Extrair fórmula** | O usuário mandou um vídeo de referência | .mp4 + transcrição da narração | Nova fórmula salva em `references/formulas.md` |
 | **B. Gerar vídeo** | O usuário quer um vídeo para um produto | Foto do produto + fórmula (ou "escolhe você") | Roteiro, cenas, prompts, legenda |
 | **C. Registrar resultado** | O usuário postou e tem os números | Fórmula usada + métricas | Linha em `historico/resultados.csv` + ranking |
+| **D. Série por time** | "Um vídeo para cada time", "faz a série" | Fórmula + lista de times | Plano de gravação único + 1 pacote por time |
+
+**Prioridade do dono:** vídeos POV (F-008 a F-012), um por time, postados no **Instagram Reels** (venda pelo Direct/link na bio) e no **TikTok**. Sugira POV primeiro.
 
 Arquivos de apoio (leia quando o modo pedir):
 - `references/formulas.md`: biblioteca de fórmulas, já com 6 iniciais (F-001 a F-006).
@@ -68,7 +71,9 @@ Antes de tudo, leia `references/regras.md` e a ficha do produto em `references/p
    4. **Prompt Google Flow** (Veo 3): descrição visual em inglês, fala em português entre aspas, **no máximo 500 caracteres**, sem citar duração nem proporção (o 9:16 é configurado na interface).
    5. **Prompt timeline Higgsfield** (Veo 3): blocos `[00:00-00:03]`, 9:16 vertical, até 15 s, fala em português entre aspas.
    6. **Roteiro de avatar** (HeyGen / CapCut / TikTok Symphony): só a fala, com marcações de pausa `[pausa]` e ênfase em MAIÚSCULAS. Só gere este item se a fórmula usar alguém falando para a câmera.
-   7. **Legenda do post + 5 a 8 hashtags** em português.
+   7. **Legenda do post + hashtags**, em português, **uma versão por plataforma**:
+      - **Instagram Reels:** CTA de conversa ("Chama no Direct com o nome do seu time", "Link na bio"), 3 a 5 hashtags, capa sugerida (frame do copo em destaque).
+      - **TikTok:** CTA de comentário/carrinho ("Comenta seu time", "Tá no carrinho"), 3 a 5 hashtags.
    8. **Checklist de publicação** (copie de `references/regras.md`).
 5. **Confira os limites com código.** Salve cada prompt em arquivo e rode `python3 scripts/checar_prompt.py <arquivo> 500` (Flow). Se passar do limite, corte descrição visual, **nunca a fala**.
 6. **Não invente** pessoas, animais ou elementos que a fórmula não tenha. Não altere o produto: cores, escudo, formato e proporção iguais aos da foto.
@@ -82,6 +87,17 @@ Antes de tudo, leia `references/regras.md` e a ficha do produto em `references/p
 2. Acrescente uma linha a `historico/resultados.csv` mantendo o cabeçalho existente. Sem permissão de escrita, entregue o CSV atualizado para download.
 3. Mostre o ranking com código (não de cabeça), agrupando por `formula_id`: nº de vídeos, média de visualizações, média de comentários e **vendas por vídeo**. Ordene por vendas por vídeo.
 4. Comente em 2 ou 3 linhas: qual fórmula repetir, qual abandonar e qual gancho testar a seguir. Com menos de 3 vídeos por fórmula, avise que ainda é cedo para concluir.
+
+---
+
+## Modo D: série por time (um vídeo para cada time)
+
+1. Confirme a **fórmula** (de preferência uma POV) e a **lista de times** com estoque ou produção possível (`references/produtos.md`). Se a lista não vier, pergunte.
+2. Para cada time, preencha as variáveis da fórmula: `{time}`, `{apelido}`, `{torcedor}`, `{rival}`, cores. Use apelidos e rivalidades **corretos**; na dúvida, pergunte em vez de inventar.
+3. Entregue **um plano de gravação único** para a série inteira: mesmo enquadramento, mesma luz e mesmo ângulo, trocando só o copo e os objetos do time. Assim uma sessão de 1 a 2 horas rende todos os vídeos.
+4. Entregue uma **tabela da série** (`Time | Texto POV | Objetos de cena | Legenda Reels | Legenda TikTok | Data sugerida`). A data sugerida vem da semana de jogo do time ou de clássico, se o usuário informar o calendário.
+5. Se houver par de clássico (F-009), gere os dois lados do clássico juntos.
+6. Ao final, ofereça registrar cada vídeo no histórico (Modo C) com `formula_id` + time no campo `produto` (ex.: `copo-flamengo`), para comparar desempenho **por time** e **por fórmula**.
 
 ---
 

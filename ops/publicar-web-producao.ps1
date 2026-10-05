@@ -1,4 +1,4 @@
-# Publica a Web aprovada (+ instalador do Agent em /downloads) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
+﻿# Publica a Web aprovada (+ instalador do Agent em /downloads) na PRODUCAO e avanca o main (fast-forward) para a mesma versao.
 #   1) confere que o repositorio esta exatamente na versao homologada pelo usuario
 #   2) roda os testes e o typecheck
 #   3) gera o pacote de PRODUCAO (sem variaveis de teste) e confere que so aponta para a producao
@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "$(Split-Path $PSScriptRoot -Parent)"
-$Aprovado = "d3146cb13e92569036e3eaf891632f0ca090661f"
+$Aprovado = "00da4c43f1881c6aad3d17b42a3497775de57106"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
@@ -76,7 +76,7 @@ if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Convite: mensagem padrao com passo a passo completo""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Calculadora: campos nao vazam do card""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

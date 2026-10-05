@@ -18,10 +18,13 @@ Tudo que um vídeo afirma sobre o produto precisa estar nesta ficha. Campos com 
 - **Diferenciais reais:** **produto exclusivo, não se encontra em qualquer lugar**; aceita bebida quente e fria; copo de inox removível (sai pra lavar); textura de camisa de time; escudo em relevo colorido; nome do clube na base; feita sob encomenda numa impressora 3D.
 - **Vendas até agora:** 6 canecas (out/2026), compradas para uso próprio e para presente.
 - **Prazo de produção / envio:** [CONFIRMAR]
-- **Licença de uso das marcas dos times:** [CONFIRMAR: ver `regras.md`, seção Marcas]
+- **Lavagem:** só o copo de inox vai na lava-louça. O casco impresso **não** vai (pano úmido).
+- **Licença de uso das marcas dos times:** **NÃO tem licença** (confirmado 05/10/2026). Ver regras abaixo e `regras.md`, seção Marcas.
 
 ### Regras específicas deste produto
 - **Bebida:** a bebida só toca o copo de inox. Pode mostrar **bebida quente** (café, chá) e **gelada** (chopp, refrigerante).
+- **Sem licença:** nunca escrever "oficial", "licenciado" ou "produto do clube". Não usar o nome do clube em anúncio pago (Meta/TikTok Ads): escudo em anúncio pago é o caminho mais rápido para reprovação e denúncia. Preferir apelidos e cores nos textos ("caneca do Mengão", "rubro-negro").
+- **Lavagem:** nunca mostrar a caneca inteira na lava-louça; só o copo de inox.
 - **Escudo:** mostre o escudo **real** da peça filmada. Não peça para a IA desenhar escudos (ela erra o desenho e cria problema de marca).
 
 ---

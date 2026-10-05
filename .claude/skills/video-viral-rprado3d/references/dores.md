@@ -31,8 +31,8 @@ Status: ✅ confirmado pelo dono · 🔶 hipótese (validar com comentários/Dir
 | "É de plástico, vai quebrar?" | Casco impresso firme + copo de **inox** por dentro | ✅ |
 | "Pode café quente?" | **Sim, quente e frio** | ✅ |
 | "Onde mais eu acho?" | Em lugar nenhum: é exclusivo, feito sob encomenda | ✅ |
-| "Pode lavar na máquina?" | O inox sai para lavar. Casco na lava-louça: [CONFIRMAR] | 🔶 |
-| "É produto oficial?" | [CONFIRMAR licença]. Até lá, não dizer "oficial" | 🔶 |
+| "Pode lavar na máquina?" | **Só o copo de inox** vai na lava-louça; o casco **não** (limpar com pano úmido) | ✅ |
+| "É produto oficial?" | **Não é licenciado.** Nunca dizer "oficial" nem "licenciado". Se perguntarem: "produto artesanal feito por torcedor, impresso em 3D" | ✅ |
 
 ## Linguagem do cliente (verbatim)
 Cole aqui frases reais do Direct e dos comentários, exatamente como escritas. São os melhores ganchos.

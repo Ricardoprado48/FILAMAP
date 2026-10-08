@@ -28,6 +28,8 @@ export const EVENT_CATALOG = {
   JOB_FINISHED: { severity: "INFO", component: "job", dedup: "none", meaning: "Impressão concluída." },
   JOB_FAILED: { severity: "WARNING", component: "job", dedup: "none", meaning: "Impressão interrompida/falha (percentual no metadata)." },
   FTPS_FAILED: { severity: "WARNING", component: "ftps", dedup: "none", meaning: "Não foi possível ler slice_info.config via FTPS." },
+  PRINTER_HMS: { severity: "WARNING", component: "printer", dedup: "none", meaning: "Alerta HMS da impressora apareceu ou sumiu (código no error_code, action no metadata)." },
+  PRINTER_ERROR: { severity: "WARNING", component: "printer", dedup: "none", meaning: "print_error da impressora mudou para não-zero (0300_400C = cancelada pela pessoa)." },
   FINALIZE_QUEUED: { severity: "INFO", component: "finalize", dedup: "none", meaning: "Job gravado na fila persistente de finalização." },
   FINALIZE_RETRY: { severity: "WARNING", component: "finalize", dedup: "none", meaning: "Finalização falhou e ficou para reenvio (tentativa 1 e a cada 10)." },
   FINALIZE_COMPLETED: { severity: "INFO", component: "finalize", dedup: "none", meaning: "finalize_print_job confirmou; itens e fonte da identificação no metadata." },

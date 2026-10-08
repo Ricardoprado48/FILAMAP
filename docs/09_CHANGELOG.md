@@ -1,5 +1,22 @@
 # 09 — Changelog Técnico
 
+## 08/10/2026 — Agent 4.3.0: modo leve + diário da impressora
+
+- **Contexto:** de 29/09 a 08/10 a A1 derrubou a conexão MQTT ~6x/dia com o Agent ligado; 5 de 8 falhas de impressão (05–08/10) coincidiram com a queda. Com o Agent desligado (02–05/10) não houve problema. O bico estava ruim e foi trocado no mesmo período, então a causa ficou ambígua -- e o Agent descartava os códigos de erro da impressora, que teriam resolvido a dúvida.
+- **Modo leve (`printerLoadPolicy.ts`):**
+  - `pushall` só uma vez por conexão e, depois, só se a impressora ficar 5 min sem relatório (antes: a cada 10s, 360/hora).
+  - Leitura do `.3mf` via FTPS saiu do início do job (preparo/calibração): agora com a impressão já rodando (camada ≥ 2 ou ≥ 2%) ou no fim do job, nunca em `REPLACED`.
+  - Reconexão com espera crescente pelas quedas da última hora (10s, 30s, 1 min, 2 min, 5 min, 10 min).
+  - Mensagens MQTT processadas uma por vez, na ordem (antes, os `await` antes da máquina de estados permitiam processar fora de ordem).
+- **Diário da impressora (`printerDiagnostics.ts`):** o Agent passa a ler `print_error`, `hms` e `stg_cur`.
+  - Eventos novos na Central: `PRINTER_HMS` (alerta apareceu/sumiu) e `PRINTER_ERROR` (`0300_400C` = cancelada pela pessoa).
+  - `JOB_FAILED`/`JOB_FINISHED` e `MQTT_DISCONNECTED` levam o contexto: código de erro, HMS ativos, etapas do job, camada, quedas na última hora.
+  - `agent.log` mostra o motivo de cada falha em português.
+  - Status da instalação ganha `pushall_sent`, `ftps_sessions` e `mqtt_drops_1h`.
+- **Banco:** `20261008100000_ops_printer_diagnostics.sql` (só amplia o CHECK de `ops_events.event_type`), aplicada por `ops/o9-diario-impressora.ps1`. Teste `eventCatalog.test.ts` trava catálogo do Agent = CHECK do banco.
+- **Instalação:** `ops/o9-instalar-agent.ps1` (só fora de impressão; volta pelo 4.2.1 em `releases/`).
+- **Testes:** Agent 305/305 (18 novos).
+
 ## 27/09/2026 — Fase I: Jornada de Entrada de Filamento + Localização Física
 
 - **Descoberta Multi-Fatiador no Desktop Agent (`filamentProfileSync.ts`):**

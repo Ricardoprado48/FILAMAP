@@ -8,7 +8,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
-import { JobStateMachine, ActiveJobState, parseAmsMapping } from "./jobStateMachine";
+import { JobStateMachine, ActiveJobState, parseAmsMapping, resolveRemote3mfPath } from "./jobStateMachine";
+import { pruneDrops, reconnectDelayMs, shouldFetchSliceInfoNow, shouldRequestFullStatus } from "./printerLoadPolicy";
+import { PrinterDiagnostics, DiagnosticChange } from "./printerDiagnostics";
 import {
   computeConsumptionPerSlot,
   buildJobConsumptionItems,
@@ -88,6 +90,10 @@ const opsState = {
   lastInboxCount: -1,
   printerId: null as string | null,
   activeJob: false,
+  // Carga que o Agent coloca na impressora (modo leve), para a Central comparar.
+  pushallSent: 0,
+  ftpsSessions: 0,
+  mqttDrops: [] as number[],
 };
 
 // Preenchidas por bootstrapRuntimeConfig() antes do resto do Agent rodar.
@@ -578,9 +584,18 @@ async function startAgent() {
       reconnectPeriod: 0,
     });
 
+    // Modo leve (printerLoadPolicy.ts): status completo só ao conectar e quando a
+    // impressora fica 5 min sem mandar relatório. Antes era a cada 10s.
+    let lastReportAt = Date.now();
+    let lastPushallAt = 0;
+    let connectedAt = 0;
+    let pushallThisConnection = 0;
     function requestStatusPush() {
       const payload = JSON.stringify({ pushing: { sequence_id: "0", command: "pushall" } });
       client.publish(`device/${PRINTER_SERIAL}/request`, payload);
+      lastPushallAt = Date.now();
+      pushallThisConnection++;
+      opsState.pushallSent++;
     }
 
     const restoredJob = loadJobState();
@@ -590,6 +605,76 @@ async function startAgent() {
     });
     let lastGcodeState = initialGcodeStateFor(restoredJob);
     let lastSyncTime = 0;
+    let lastPercent: number | undefined;
+
+    const diagnostics = new PrinterDiagnostics();
+
+    // Leitura do .3mf (FTPS) fora do preparo da impressão: com a impressão já
+    // rodando (camada >= 2) ou, no máximo, no fim do job. Uma tentativa durante a
+    // impressão e uma última no fim, se a primeira não trouxe nada.
+    const sliceFetches = new Map<string, { promise: Promise<void>; settled: boolean; retried?: boolean }>();
+    function fetchSliceInfoFor(job: ActiveJobState, when: "running" | "final"): Promise<void> {
+      const existing = sliceFetches.get(job.jobId);
+      if (existing && (!existing.settled || when === "running" || existing.retried)) return existing.promise;
+      const remotePath = resolveRemote3mfPath(job.gcodeFile ?? "", job.subtaskName);
+      const entry: { promise: Promise<void>; settled: boolean; retried?: boolean } = { promise: Promise.resolve(), settled: false, retried: Boolean(existing) };
+      entry.promise = (async () => {
+        opsState.ftpsSessions++;
+        try {
+          console.log(`📡 Lendo o arquivo do fatiador via FTPS (${when === "running" ? "impressão já em andamento" : "fim do job"}): ${remotePath}`);
+          const sliceInfo = await fetchAndParseSliceInfo(PRINTER_IP, PRINTER_ACCESS_CODE, remotePath);
+          if (sliceInfo.length > 0) {
+            job.filamentSliceInfo = sliceInfo;
+            if (jobStateMachine.getCurrentJob()?.jobId === job.jobId) saveJobState(jobStateMachine.getCurrentJob());
+            const grams = Math.round(sliceInfo.reduce((sum, f) => sum + (f.totalGrams || 0), 0) * 100) / 100;
+            console.log(`ℹ️ Informações de slice_info.config carregadas com sucesso (${grams}g no total).`);
+          } else {
+            opsEmit("FTPS_FAILED", { job_id: job.jobId, message: "slice_info.config não lido (arquivo não encontrado ou vazio)", metadata: { job: job.jobId, when } });
+          }
+        } catch (e: any) {
+          console.error("❌ Erro ao carregar slice_info.config:", e?.message || e);
+          opsEmit("FTPS_FAILED", { error: e, job_id: job.jobId, metadata: { job: job.jobId, when } });
+        } finally {
+          entry.settled = true;
+        }
+      })();
+      sliceFetches.set(job.jobId, entry);
+      if (sliceFetches.size > 20) sliceFetches.delete(sliceFetches.keys().next().value as string);
+      return entry.promise;
+    }
+
+    function diagMetadata() {
+      const s = diagnostics.snapshot();
+      return {
+        print_error: s.print_error,
+        cancelled_by_user: s.cancelled_by_user,
+        hms_active: s.hms_active,
+        stage: s.stage,
+        layer: s.layer,
+        stages: s.stages.map((m) => `${m.at.slice(11, 19)} ${m.stage}`),
+      };
+    }
+
+    function reportDiagnosticChange(c: DiagnosticChange, jobId: string | null) {
+      const ctx = { gcode_state: lastGcodeState, stage: diagnostics.snapshot().stage, percent: lastPercent };
+      if (c.kind === "hms_appeared") {
+        console.warn(`🚨 Alerta da impressora: HMS ${c.code}`);
+        opsEmit("PRINTER_HMS", { error_code: c.code, job_id: jobId, metadata: { action: "appeared", attr: c.attr, code: c.rawCode, ...ctx } });
+      } else if (c.kind === "hms_cleared") {
+        console.log(`✅ Alerta da impressora resolvido: HMS ${c.code}`);
+        opsEmit("PRINTER_HMS", { error_code: c.code, severity: "INFO", job_id: jobId, metadata: { action: "cleared", ...ctx } });
+      } else if (c.kind === "print_error") {
+        console.warn(`❗ Erro da impressora: ${c.code}${c.cancelledByUser ? " (impressão cancelada pela pessoa)" : ""}`);
+        opsEmit("PRINTER_ERROR", {
+          error_code: c.code,
+          severity: c.cancelledByUser ? "INFO" : "WARNING",
+          job_id: jobId,
+          metadata: { value: c.value, cancelled_by_user: c.cancelledByUser, layer: diagnostics.snapshot().layer, ...ctx },
+        });
+      } else {
+        console.log(`✅ Erro da impressora ${c.code} limpo.`);
+      }
+    }
 
     let rediscoveryInProgress = false;
     let statusPushInterval: NodeJS.Timeout | null = null;
@@ -651,7 +736,14 @@ async function startAgent() {
               );
             }
 
-            if (!client.reconnecting) {
+            // Espera crescente antes de reconectar (10s, 30s, 1 min... até 10 min
+            // conforme as quedas da última hora): não insiste justamente quando a
+            // impressora acabou de derrubar a conexão.
+            const delay = reconnectDelayMs(opsState.mqttDrops, Date.now());
+            console.log(`⏳ Reconectando em ${Math.round(delay / 1000)}s (${opsState.mqttDrops.length} queda(s) na última hora).`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+
+            if (!client.connected && !client.reconnecting) {
               client.reconnect();
             }
 
@@ -690,12 +782,19 @@ async function startAgent() {
       if (ops?.changed("mqtt", "connected")) opsEmit("MQTT_CONNECTED");
       opsState.mqtt = "connected";
 
+      connectedAt = Date.now();
+      lastReportAt = connectedAt;
+      pushallThisConnection = 0;
+      // Um único status completo por conexão; depois a impressora manda as mudanças sozinha.
       client.subscribe(`device/${PRINTER_SERIAL}/report`, () => requestStatusPush());
 
       if (!statusPushInterval) {
         statusPushInterval = setInterval(() => {
-          if (client.connected) requestStatusPush();
-        }, 10000);
+          if (client.connected && shouldRequestFullStatus({ now: Date.now(), lastReportAt, lastPushallAt })) {
+            console.log("📶 Impressora sem relatório há 5 min; pedindo status completo.");
+            requestStatusPush();
+          }
+        }, 30000);
       }
     });
 
@@ -740,14 +839,39 @@ async function startAgent() {
     client.on("close", () => {
       console.log("🔌 Conexão MQTT fechada.");
       updateStatus(printer.id, false);
-      if (ops?.changed("mqtt", "disconnected")) opsEmit("MQTT_DISCONNECTED");
-      if (opsState.mqtt !== "disconnected") opsState.mqttDownSince = Date.now();
+      const now = Date.now();
+      if (opsState.mqtt === "connected") opsState.mqttDrops = [...pruneDrops(opsState.mqttDrops, now), now];
+      if (ops?.changed("mqtt", "disconnected")) {
+        // Contexto da queda: dá para ver se ela coincide com impressão, falha ou carga do Agent.
+        opsEmit("MQTT_DISCONNECTED", {
+          job_id: jobStateMachine.getCurrentJob()?.jobId ?? null,
+          metadata: {
+            connected_for_s: connectedAt ? Math.round((now - connectedAt) / 1000) : null,
+            last_report_age_s: Math.round((now - lastReportAt) / 1000),
+            pushall_this_connection: pushallThisConnection,
+            drops_last_hour: opsState.mqttDrops.length,
+            gcode_state: lastGcodeState,
+            percent: lastPercent,
+            ...diagMetadata(),
+          },
+        });
+      }
+      if (opsState.mqtt !== "disconnected") opsState.mqttDownSince = now;
       opsState.mqtt = "disconnected";
 
       void rediscoverPrinter();
     });
 
-    client.on("message", async (topic, payload) => {
+    // Uma mensagem por vez, na ordem em que chegaram: o handler tem awaits
+    // (projeção AMS, telemetria, finalize) antes e depois da máquina de estados, e
+    // em paralelo duas mensagens próximas podiam ser processadas fora de ordem.
+    let messageChain: Promise<void> = Promise.resolve();
+    client.on("message", (topic, payload) => {
+      lastReportAt = Date.now();
+      messageChain = messageChain.then(() => handleMessage(topic, payload)).catch(() => {});
+    });
+
+    async function handleMessage(topic: string, payload: Buffer) {
       try {
         const raw = JSON.parse(payload.toString());
 
@@ -804,34 +928,28 @@ async function startAgent() {
           }
         }
 
+        // Diagnóstico antes da máquina de estados: o print_error costuma chegar na
+        // mesma mensagem do FAILED, e o motivo da falha precisa já estar aqui.
+        const jobBefore = jobStateMachine.getCurrentJob()?.jobId ?? null;
+        for (const change of diagnostics.observe(print)) reportDiagnosticChange(change, jobBefore);
+        if (print.mc_percent !== undefined && !isNaN(Number(print.mc_percent))) lastPercent = Number(print.mc_percent);
+
         const actions = jobStateMachine.processPrintPayload(print);
 
         for (const action of actions) {
           if (action.type === "create_job") {
             saveJobState(action.job);
+            diagnostics.startJob();
+            // Percentual da impressão anterior (ex.: 100) não pode liberar o FTPS no preparo desta.
+            lastPercent = action.job.lastProgressPercent;
             console.log(`🧵 Novo trabalho de impressão detectado: "${action.job.subtaskName}" (JobId: ${action.job.jobId})`);
             opsState.activeJob = true;
-            // JOB_DETECTED sai depois da leitura do fatiador (FTPS), para levar os gramas reais.
-            let detectedGrams = action.job.filamentGrams;
             if (action.job.filamentGrams > 0) {
               console.log(`🎯 Peso detectado automaticamente do fatiador/arquivo: ${action.job.filamentGrams}g`);
             }
-
-            // Busca metadados via FTPS exatamente 1 vez por job
-            try {
-              console.log(`📡 Solicitando arquivo de fatiador via FTPS no caminho: ${action.remoteFilePath}`);
-              const sliceInfo = await fetchAndParseSliceInfo(PRINTER_IP, PRINTER_ACCESS_CODE, action.remoteFilePath);
-              if (sliceInfo.length > 0) {
-                console.log("ℹ️ Informações de slice_info.config carregadas com sucesso!");
-                jobStateMachine.attachSliceInfo(sliceInfo);
-                saveJobState(jobStateMachine.getCurrentJob());
-                detectedGrams = Math.round(sliceInfo.reduce((sum, f) => sum + (f.totalGrams || 0), 0) * 100) / 100;
-              }
-            } catch (e: any) {
-              console.error("❌ Erro ao carregar slice_info.config:", e.message);
-              opsEmit("FTPS_FAILED", { error: e, job_id: action.job.jobId, metadata: { job: action.job.jobId } });
-            }
-            opsEmit("JOB_DETECTED", { job_id: action.job.jobId, metadata: { job: action.job.jobId, subtask: action.job.subtaskName, grams: detectedGrams } });
+            // O .3mf (FTPS) não é mais lido aqui, no meio do preparo da impressora:
+            // ver fetchSliceInfoFor (camada >= 2 ou fim do job).
+            opsEmit("JOB_DETECTED", { job_id: action.job.jobId, metadata: { job: action.job.jobId, subtask: action.job.subtaskName, grams: action.job.filamentGrams, stage: diagnostics.snapshot().stage } });
           } else if (action.type === "update_job") {
             saveJobState(action.job);
             if (action.reason === "slot_added") {
@@ -843,13 +961,29 @@ async function startAgent() {
             if (action.finishStatus === "COMPLETED") {
               console.log("🎉 Impressão CONCLUÍDA!");
             } else {
-              console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%!`);
+              console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%! Motivo: ${diagnostics.failureReason()}.`);
             }
             opsState.activeJob = false;
             opsEmit(action.finishStatus === "COMPLETED" ? "JOB_FINISHED" : "JOB_FAILED", {
               job_id: action.job.jobId,
-              metadata: { job: action.job.jobId, status: action.finishStatus, percent: action.percentExecuted, slots: action.job.usedSlots },
+              error_code: action.finishStatus === "COMPLETED" ? undefined : diagnostics.snapshot().print_error ?? undefined,
+              metadata: {
+                job: action.job.jobId,
+                status: action.finishStatus,
+                percent: action.percentExecuted,
+                slots: action.job.usedSlots,
+                mqtt_drops_last_hour: pruneDrops(opsState.mqttDrops, Date.now()).length,
+                ...diagMetadata(),
+              },
             });
+            // Sem consumo por slot do fatiador ainda: lê agora, com a impressora já
+            // parada. REPLACED = outra impressão começando; não pesa no preparo dela.
+            if (!action.job.filamentSliceInfo?.length && action.finishStatus !== "REPLACED") {
+              await Promise.race([
+                fetchSliceInfoFor(action.job, "final"),
+                new Promise((resolve) => setTimeout(resolve, 90000)),
+              ]);
+            }
             // O job só sai de agent-state.json depois de gravado na fila;
             // a fila só o solta quando o RPC confirmar.
             const queued = finalizeOutbox.enqueue({
@@ -880,6 +1014,20 @@ async function startAgent() {
         const currentState = jobStateMachine.getLastGcodeState();
         const activeSlotIndex = jobStateMachine.getActiveSlotIndex();
 
+        // Não espera: a leitura do .3mf roda em paralelo e anexa ao job quando terminar.
+        if (
+          currentJob &&
+          shouldFetchSliceInfoNow({
+            gcodeState: currentState,
+            layerNum: diagnostics.snapshot().layer ?? undefined,
+            percent: lastPercent,
+            alreadyAttempted: sliceFetches.has(currentJob.jobId),
+            hasSliceInfo: Boolean(currentJob.filamentSliceInfo?.length),
+          })
+        ) {
+          void fetchSliceInfoFor(currentJob, "running");
+        }
+
         const now = Date.now();
         if (now - lastSyncTime > 2500 || (print.gcode_state && print.gcode_state !== lastGcodeState)) {
           lastSyncTime = now;
@@ -899,7 +1047,7 @@ async function startAgent() {
         console.error("Erro no processamento:", err.message);
         opsEmit("AGENT_ERROR", { component: "mqtt_handler", error: err });
       }
-    });
+    }
   } catch (err: any) {
     console.error("❌ Erro de inicialização:", err.message || err);
     opsEmit("AGENT_ERROR", { component: "startup", error: err });
@@ -1197,6 +1345,9 @@ function startObservability(sessionSupervisor: SessionSupervisor, finalizeOutbox
           pending_finalize: pending.length,
           pending_finalize_oldest_min: pending.length ? Math.round((Date.now() - oldest) / 60000) : 0,
           active_job: opsState.activeJob,
+          pushall_sent: opsState.pushallSent,
+          ftps_sessions: opsState.ftpsSessions,
+          mqtt_drops_1h: pruneDrops(opsState.mqttDrops, Date.now()).length,
         };
       },
       send: async (installation, events, signal) => {

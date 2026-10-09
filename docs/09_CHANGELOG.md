@@ -1,5 +1,16 @@
 # 09 — Changelog Técnico
 
+## 09/10/2026 — Agent 4.4.0: carretel que acaba no meio da impressão
+
+- **Contexto:** em 08/10 o Preto Velvet acabou no meio de uma peça de 49,9 g e a AMS seguiu sozinha no carretel reserva. O Agent debitou tudo do carretel que acabou (que ficou "no AMS" com 44,7 g fantasmas) e o novo continuou com 1000 g. Corrigido à mão por `ops/o10-corrigir-carretel-esgotado.ps1`. O Agent 4.2 não viu a troca de slot nem guardava o estado bruto da AMS.
+- **Detecção (`amsRunout.ts`):** durante o job o Agent registra as trocas de slot (com percentual) e o carretel acabado por dois sinais independentes: alerta HMS `0700_2S00_0002_0001/0002` e slot que alimentava a impressão ficando vazio (`tray_exist_bits`). Tudo fica no estado do job (`amsEvents`), sobrevive a reinício e vai para a fila de finalização.
+- **Divisão do consumo:** no fim do job, o consumo planejado do slot que acabou é dividido pelo percentual em que acabou: até ali fica com ele, o resto vai para o slot reserva (primeira troca a partir dele, até 15 min do evento, para um slot que o fatiador não tinha planejado). Sem reserva identificado, ele fica com tudo. O item do carretel que acabou vai com `depleted: true`.
+- **Projeção da AMS:** slot usado pelo job que fica vazio mantém o vínculo até o fim do job (`holdSlots`), para o finalize saber qual carretel acabou; no fim a projeção roda de novo e solta o slot.
+- **Diário:** `agent.log` mostra slot que recebeu/perdeu filamento e cada troca de slot durante o job. Eventos novos na Central: `SPOOL_RUNOUT` e `SPOOL_DEPLETED`.
+- **Banco:** `20261009100000_finalize_depleted_spool.sql`: `finalize_print_job` zera, arquiva e tira do AMS o carretel com `depleted`, e guarda em `print_logs.depleted_leftover_g` o saldo que o sistema achava que existia. `print_logs.spool_depleted`. CHECK de `ops_events` com os dois eventos novos (inclui os do 4.3.0). Aditiva; Agent antigo segue igual. Aplicada por `ops/o10-esgotado-banco.ps1` (ensaio com teste real da função, sempre desfeito).
+- **Instalação:** `ops/o10-instalar-agent.ps1` (inclui o 4.3.0; só fora de impressão; volta pelo 4.2.1 em `releases/`).
+- **Testes:** Agent 322/322 (17 novos).
+
 ## 08/10/2026 — Agent 4.3.0: modo leve + diário da impressora
 
 - **Contexto:** de 29/09 a 08/10 a A1 derrubou a conexão MQTT ~6x/dia com o Agent ligado; 5 de 8 falhas de impressão (05–08/10) coincidiram com a queda. Com o Agent desligado (02–05/10) não houve problema. O bico estava ruim e foi trocado no mesmo período, então a causa ficou ambígua -- e o Agent descartava os códigos de erro da impressora, que teriam resolvido a dúvida.

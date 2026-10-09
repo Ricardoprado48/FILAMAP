@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FilamentSliceInfo } from "./ftpsParser";
+import type { JobAmsEvents } from "./amsRunout";
 
 export interface ActiveJobState {
   jobId: string;
@@ -14,6 +15,8 @@ export interface ActiveJobState {
   filamentGrams: number;
   filamentSliceInfo?: FilamentSliceInfo[];
   amsMapping?: number[];
+  // Trocas de slot e carretel acabado durante o job (amsRunout.ts).
+  amsEvents?: JobAmsEvents;
 }
 
 export type StateMachineAction =
@@ -236,6 +239,7 @@ export class JobStateMachine {
           totalCostTime,
           filamentGrams: extractedGrams || 0,
           filamentSliceInfo: [],
+          amsEvents: { switches: [], runouts: [] },
           ...(this.lastKnownAmsMapping ? { amsMapping: this.lastKnownAmsMapping } : {}),
         };
 
@@ -289,6 +293,7 @@ export class JobStateMachine {
             totalCostTime,
             filamentGrams: extractedGrams || 0,
             filamentSliceInfo: [],
+            amsEvents: { switches: [], runouts: [] },
             ...(this.lastKnownAmsMapping ? { amsMapping: this.lastKnownAmsMapping } : {}),
           };
 

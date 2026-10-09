@@ -11,6 +11,7 @@ import { fetchAndParseSliceInfo, FilamentSliceInfo } from "./ftpsParser";
 import { JobStateMachine, ActiveJobState, parseAmsMapping, resolveRemote3mfPath } from "./jobStateMachine";
 import { pruneDrops, reconnectDelayMs, shouldFetchSliceInfoNow, shouldRequestFullStatus } from "./printerLoadPolicy";
 import { PrinterDiagnostics, DiagnosticChange } from "./printerDiagnostics";
+import { applyRunoutSplit, emptyAmsEvents, observeRunout, trayOccupancy } from "./amsRunout";
 import {
   computeConsumptionPerSlot,
   buildJobConsumptionItems,
@@ -415,6 +416,8 @@ async function startAgent() {
   let activePrinterRecord: any = null;
   lastMqttPrintPayload = null;
   let lastAmsFingerprint = "";
+  // Slots com filamento no último relatório que trouxe tray_exist_bits (amsRunout.ts).
+  let lastOccupancy: boolean[] | undefined;
   let bambuCloudSyncInProgress = false;
 
   async function syncBambuCloud() {
@@ -676,6 +679,58 @@ async function startAgent() {
       }
     }
 
+    const slotLabel = (slot: number) => `slot ${slot} (posição ${slot + 1} na AMS)`;
+
+    // Diário da AMS + carretel acabado (4.4.0). Slot vazio e troca de slot vão para o
+    // agent.log sempre; durante o job, viram eventos do job (amsRunout.ts).
+    function observeAms(
+      print: any,
+      job: ActiveJobState | null,
+      gcodeState: string,
+      activeSlotBefore: number | null,
+      activeSlotNow: number | null,
+      diagChanges: DiagnosticChange[]
+    ) {
+      const occupancy = trayOccupancy(print);
+      if (occupancy && lastOccupancy) {
+        for (let slot = 0; slot < 4; slot++) {
+          if (occupancy[slot] === lastOccupancy[slot]) continue;
+          console.log(`🧺 AMS: ${slotLabel(slot)} ${occupancy[slot] ? "recebeu filamento" : "ficou sem filamento"}${job ? ` (job em ${lastPercent ?? 0}%)` : ""}.`);
+        }
+      }
+
+      if (job && (gcodeState === "RUNNING" || gcodeState === "PAUSE")) {
+        job.amsEvents ??= emptyAmsEvents();
+        const news = observeRunout({
+          events: job.amsEvents,
+          previousActiveSlot: activeSlotBefore,
+          activeSlot: activeSlotNow,
+          usedSlots: job.usedSlots,
+          percent: lastPercent ?? job.maxProgressPercent,
+          previousOccupancy: lastOccupancy,
+          occupancy,
+          hmsAppeared: diagChanges.flatMap((c) =>
+            c.kind === "hms_appeared" ? [{ attr: c.attr, code: c.rawCode, formatted: c.code }] : []
+          ),
+        });
+        for (const n of news) {
+          if (n.kind === "switch") {
+            console.log(`🔁 AMS: impressão passou do ${slotLabel(n.from!)} para o ${slotLabel(n.to)} aos ${n.percent}%.`);
+          } else {
+            const how = n.source === "hms" ? `alerta HMS ${n.hms}` : "slot ficou vazio enquanto alimentava a impressão";
+            console.warn(`🪫 Carretel do ${slotLabel(n.slot)} ACABOU aos ${n.percent}% (${how}). No fim do job ele será zerado e marcado como esgotado.`);
+            opsEmit("SPOOL_RUNOUT", {
+              job_id: job.jobId,
+              metadata: { job: job.jobId, slot: n.slot, percent: n.percent, source: n.source, hms: n.hms ?? null },
+            });
+          }
+        }
+        if (news.length) saveJobState(job);
+      }
+
+      if (occupancy) lastOccupancy = occupancy;
+    }
+
     let rediscoveryInProgress = false;
     let statusPushInterval: NodeJS.Timeout | null = null;
 
@@ -910,11 +965,13 @@ async function startAgent() {
           if (amsFingerprint !== lastAmsFingerprint) {
             lastAmsFingerprint = amsFingerprint;
             try {
+              const runningJob = jobStateMachine.getCurrentJob();
               const proj = await syncAmsProjection(
                 supabase,
                 printer.id,
                 PRINTER_SERIAL,
-                print
+                print,
+                { holdSlots: runningJob ? runningJob.usedSlots : [] }
               );
               if (proj.slotsUpdated > 0 || proj.spoolsUpdated > 0) {
                 console.log(
@@ -931,7 +988,9 @@ async function startAgent() {
         // Diagnóstico antes da máquina de estados: o print_error costuma chegar na
         // mesma mensagem do FAILED, e o motivo da falha precisa já estar aqui.
         const jobBefore = jobStateMachine.getCurrentJob()?.jobId ?? null;
-        for (const change of diagnostics.observe(print)) reportDiagnosticChange(change, jobBefore);
+        const diagChanges = diagnostics.observe(print);
+        for (const change of diagChanges) reportDiagnosticChange(change, jobBefore);
+        const activeSlotBefore = jobStateMachine.getActiveSlotIndex();
         if (print.mc_percent !== undefined && !isNaN(Number(print.mc_percent))) lastPercent = Number(print.mc_percent);
 
         const actions = jobStateMachine.processPrintPayload(print);
@@ -964,6 +1023,9 @@ async function startAgent() {
               console.log(`⚠️ Impressão INTERROMPIDA/FALHA aos ${action.percentExecuted}%! Motivo: ${diagnostics.failureReason()}.`);
             }
             opsState.activeJob = false;
+            // Fim do job: a projeção da AMS volta a rodar no próximo relatório e solta
+            // os slots que ficaram vazios (eram mantidos só enquanto o job rodava).
+            lastAmsFingerprint = "";
             opsEmit(action.finishStatus === "COMPLETED" ? "JOB_FINISHED" : "JOB_FAILED", {
               job_id: action.job.jobId,
               error_code: action.finishStatus === "COMPLETED" ? undefined : diagnostics.snapshot().print_error ?? undefined,
@@ -1013,6 +1075,8 @@ async function startAgent() {
         const currentJob = jobStateMachine.getCurrentJob();
         const currentState = jobStateMachine.getLastGcodeState();
         const activeSlotIndex = jobStateMachine.getActiveSlotIndex();
+
+        observeAms(print, currentJob, currentState, activeSlotBefore, activeSlotIndex, diagChanges);
 
         // Não espera: a leitura do .3mf roda em paralelo e anexa ao job quando terminar.
         if (
@@ -1120,6 +1184,16 @@ async function finalizeJob(
       jobToFinalize?.amsMapping,
       availableSlots
     );
+
+    // Carretel que acabou no meio do job: divide com o slot reserva e marca esgotado.
+    const runoutSplits = applyRunoutSplit(perSlot, jobToFinalize?.amsEvents, percentExecuted);
+    for (const sp of runoutSplits) {
+      console.warn(
+        sp.backupSlot === null
+          ? `🪫 Slot ${sp.slot}: carretel acabou durante o job, sem slot reserva identificado -- fica com todo o consumo e será marcado como esgotado.`
+          : `🪫 Slot ${sp.slot}: carretel acabou aos ${Math.round(sp.fraction * percentExecuted)}% -- ${Math.round(sp.fraction * 100)}% do consumo fica com ele (esgotado) e o resto vai para o slot reserva ${sp.backupSlot}.`
+      );
+    }
 
     const usedSlotIndexes = Array.from(perSlot.keys());
 
@@ -1302,6 +1376,15 @@ async function finalizeJob(
       },
     });
     for (const it of items) {
+      if (it.depleted) {
+        const sp = runoutSplits.find((r) => r.slot === it.slot_index);
+        console.log(`📦 Carretel ${it.spool_id} (slot ${it.slot_index}) zerado e marcado como esgotado.`);
+        opsEmit("SPOOL_DEPLETED", {
+          job_id: jobId,
+          printer_id: printerId,
+          metadata: { job: jobId, slot: it.slot_index, spool_id: it.spool_id, grams: it.grams, backup_slot: sp?.backupSlot ?? null, fraction: sp?.fraction ?? null },
+        });
+      }
       if (it.orphan_slot) {
         opsEmit("SPOOL_AMBIGUOUS", { job_id: jobId, printer_id: printerId, metadata: { job: jobId, slot: it.slot_index, grams: it.grams } });
       }

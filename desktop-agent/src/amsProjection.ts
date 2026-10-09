@@ -44,6 +44,9 @@ export interface AmsReconciliationInput {
   currentAmsSlots: ReconcileAmsInputAmsSlot[];
   // Perfil do slot (tray_info_idx = source_key do preset) -> produto de filamento.
   presetProducts?: Record<string, string>;
+  // Slots usados pelo job em andamento: se ficarem vazios (carretel acabou), o vínculo
+  // fica até o fim do job -- o finalize precisa saber qual carretel acabou (4.4.0).
+  holdSlots?: number[];
 }
 
 export interface SpoolLocationUpdate {
@@ -230,7 +233,9 @@ export function reconcileAmsState(input: AmsReconciliationInput): AmsReconciliat
     const tray = mqttTrays.find((t) => t.slotIndex === slotIdx);
 
     if (!tray || !tray.occupied) {
-      slotAssignments.set(slotIdx, null);
+      const held = input.holdSlots?.includes(slotIdx) ? currentAmsMap.get(slotIdx) ?? null : null;
+      slotAssignments.set(slotIdx, held);
+      if (held) assignedSpoolIds.add(held);
       continue;
     }
 
@@ -435,7 +440,8 @@ export async function syncAmsProjection(
   supabase: SupabaseClient,
   printerId: string,
   printerSerial: string,
-  mqttPrintPayload: any
+  mqttPrintPayload: any,
+  opts: { holdSlots?: number[] } = {}
 ): Promise<AmsProjectionSyncCounts> {
   const mqttTrays = parseMqttAmsStatus(mqttPrintPayload);
   if (!mqttTrays || mqttTrays.length === 0) {
@@ -505,6 +511,7 @@ export async function syncAmsProjection(
     spools: (spoolsData || []) as ReconcileAmsInputSpool[],
     currentAmsSlots: (currentSlotsData || []) as ReconcileAmsInputAmsSlot[],
     presetProducts,
+    holdSlots: opts.holdSlots,
   });
 
   // 5. Aplica atualizações idempotentes em ams_slots

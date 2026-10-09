@@ -13,6 +13,8 @@ export interface JobConsumptionItem {
   grams: number;
   consumption_quality: ConsumptionQuality;
   orphan_slot: boolean;
+  // Carretel acabou durante o job (amsRunout.ts): o finalize_print_job zera e arquiva.
+  depleted?: boolean;
 }
 
 export interface SlotConsumption {
@@ -20,6 +22,7 @@ export interface SlotConsumption {
   quality: ConsumptionQuality;
   weightDiscount: number;
   ambiguous?: boolean;
+  depleted?: boolean;
 }
 
 export interface AmsSlotPhysicalCandidate {
@@ -516,7 +519,7 @@ export function buildJobConsumptionItems(
 ): JobConsumptionItem[] {
   const items: JobConsumptionItem[] = [];
 
-  for (const [slotIdx, { grams, quality, weightDiscount, ambiguous }] of perSlot) {
+  for (const [slotIdx, { grams, quality, weightDiscount, ambiguous, depleted }] of perSlot) {
     // Ambiguidade: NÃO debitar estoque de nenhum carretel e NÃO marcar needs_weighing apenas por ambiguidade
     const spoolId = ambiguous ? null : (spoolBySlot.get(slotIdx) ?? null);
 
@@ -533,6 +536,7 @@ export function buildJobConsumptionItems(
       grams: finalGrams,
       consumption_quality: quality,
       orphan_slot: !spoolId,
+      ...(depleted && spoolId ? { depleted: true } : {}),
     });
   }
 

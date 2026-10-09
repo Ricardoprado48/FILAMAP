@@ -733,3 +733,27 @@ test("v4.1: perfil genérico/desconhecido no slot não muda nada (sem mapa, segu
   });
   assert.equal(result.slotAssignments.get(0), "unico-pla");
 });
+
+// 4.4.0: carretel acabou no meio do job -> o slot fica vazio, mas o vínculo precisa
+// ficar até o fim do job para o finalize saber qual carretel zerar e arquivar.
+test("reconcileAmsState: slot usado pelo job que ficou vazio mantém o carretel (holdSlots)", () => {
+  const spool = (id: string): ReconcileAmsInputSpool => ({
+    id, brand: "Voolt3D", material: "PLA", color_name: "Preto Velvet", color_hex: "#000000", nfc_uid: null,
+    bambu_spool_id: null, bambu_dev_id: "SERIAL", bambu_slot_id: "0", bambu_in_printer: true,
+  });
+  const empty = { slotIndex: 0, occupied: false, trayType: null, trayColorHex: null, tagUid: null, trayInfoIdx: null, traySubBrands: null };
+  const base = {
+    printerSerial: "SERIAL",
+    mqttTrays: [empty],
+    spools: [spool("antigo")],
+    currentAmsSlots: [{ slot_index: 0, spool_id: "antigo", assigned_by: "agent" }] as ReconcileAmsInputAmsSlot[],
+  };
+
+  const held = reconcileAmsState({ ...base, holdSlots: [0] });
+  assert.equal(held.slotAssignments.get(0), "antigo");
+  assert.equal(held.spoolLocationUpdates.length, 0);
+
+  const released = reconcileAmsState(base);
+  assert.equal(released.slotAssignments.get(0), null);
+  assert.deepEqual(released.spoolLocationUpdates.map((u) => [u.id, u.reason]), [["antigo", "not_in_any_slot"]]);
+});

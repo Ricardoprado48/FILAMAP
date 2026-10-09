@@ -35,6 +35,8 @@ export const EVENT_CATALOG = {
   FINALIZE_COMPLETED: { severity: "INFO", component: "finalize", dedup: "none", meaning: "finalize_print_job confirmou; itens e fonte da identificação no metadata." },
   FINALIZE_FAILED: { severity: "ERROR", component: "finalize", dedup: "none", meaning: "Job não pôde entrar na fila (ficou só em agent-state.json)." },
   SPOOL_AMBIGUOUS: { severity: "WARNING", component: "identity", dedup: "none", meaning: "Slot usado no job sem carretel identificado (log órfão, sem desconto)." },
+  SPOOL_RUNOUT: { severity: "WARNING", component: "ams", dedup: "none", meaning: "Carretel acabou durante o job (slot, percentual e sinal -- hms ou tray_empty -- no metadata)." },
+  SPOOL_DEPLETED: { severity: "INFO", component: "ams", dedup: "none", meaning: "finalize_print_job zerou e arquivou o carretel que acabou; slot reserva e divisão no metadata." },
   UNHANDLED_REJECTION: { severity: "ERROR", component: "agent", dedup: "window", meaning: "Promise rejeitada sem tratamento (Agent segue)." },
   AGENT_ERROR: { severity: "ERROR", component: "agent", dedup: "window", meaning: "Erro capturado em ponto relevante (component indica onde)." },
   WEB_ERROR: { severity: "ERROR", component: "web", dedup: "window", meaning: "Erro no app Web (render, onerror, unhandledrejection)." },

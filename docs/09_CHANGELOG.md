@@ -10,6 +10,7 @@
 - **Banco:** `20261009100000_finalize_depleted_spool.sql`: `finalize_print_job` zera, arquiva e tira do AMS o carretel com `depleted`, e guarda em `print_logs.depleted_leftover_g` o saldo que o sistema achava que existia. `print_logs.spool_depleted`. CHECK de `ops_events` com os dois eventos novos (inclui os do 4.3.0). Aditiva; Agent antigo segue igual. Aplicada por `ops/o10-esgotado-banco.ps1` (ensaio com teste real da função, sempre desfeito).
 - **Instalação:** `ops/o10-instalar-agent.ps1` (inclui o 4.3.0; só fora de impressão; volta pelo 4.2.1 em `releases/`).
 - **Testes:** Agent 322/322 (17 novos).
+- **Download do Agent (incidente):** `/downloads/FilamapAgentSetup.exe` servia a página do site. O `publicar-web-producao.ps1` publicava com o instalador e depois fazia push no `main`; a montagem automática do Cloudflare (ligada ao GitHub, sem o `.exe`) vinha por cima. Agora: push primeiro, espera a montagem automática terminar, publica com o instalador e confere o download de novo 2 minutos depois. Instalador servido passa a ser o 4.4.0.
 
 ## 08/10/2026 — Agent 4.3.0: modo leve + diário da impressora
 

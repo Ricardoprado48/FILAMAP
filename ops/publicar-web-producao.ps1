@@ -3,8 +3,11 @@
 #   2) roda os testes e o typecheck
 #   3) gera o pacote de PRODUCAO (sem variaveis de teste) e confere que so aponta para a producao
 #   4) pede confirmacao (digitar PUBLICAR)
-#   5) publica em https://filamap.pages.dev e confere o pacote servido
-#   6) avanca o main no GitHub para a mesma versao
+#   5) avanca o main no GitHub e ESPERA a montagem automatica do Cloudflare (ligado ao GitHub)
+#      terminar -- ela nao tem o instalador do Agent e, se viesse depois, apagava o download
+#      (incidente 09/10: /downloads servia a pagina do site em vez do instalador)
+#   6) publica em https://filamap.pages.dev com o instalador e confere pacote e download,
+#      de novo 2 minutos depois
 # Uso: powershell -ExecutionPolicy Bypass -File C:\PROJETOS\ATIVOS\FILAMAP_WORKTREES\staging\ops\publicar-web-producao.ps1 [-Ensaio]
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
@@ -16,7 +19,8 @@ $ErrorActionPreference = "Stop"
 $Repo = "$(Split-Path $PSScriptRoot -Parent)"
 $Aprovado = "00da4c43f1881c6aad3d17b42a3497775de57106"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
-$SetupSha = "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14"
+$SetupSha = "525D1D8E7DD57E50D8FDE9CE95E65E0E606F20B00E05B752AFC139D247C4BF86"
+$AgentVersao = "4.4.0"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 
@@ -37,7 +41,8 @@ Write-Host "=== Publicar Web na PRODUCAO ==="
 $null = Assert-Cmd "git fetch origin" "Falha ao consultar o GitHub."
 $head = (Assert-Cmd "git rev-parse HEAD" "Falha no git.").Trim()
 $anc = Invoke-Cmd "git merge-base --is-ancestor $Aprovado HEAD"
-$dif = Invoke-Cmd "git diff --quiet $Aprovado HEAD -- web-app desktop-agent supabase"
+# So a Web precisa ser a aprovada: Agent e banco tem os proprios scripts (o10-*), com SHA256 e ensaio.
+$dif = Invoke-Cmd "git diff --quiet $Aprovado HEAD -- web-app"
 if ($anc.Code -ne 0 -or $dif.Code -ne 0) { throw "O codigo mudou desde a versao aprovada ($($Aprovado.Substring(0,7))). Nada foi publicado." }
 $sujo = (Assert-Cmd "git status --porcelain" "Falha no git.") -split "`n" | Where-Object { $_.Trim() -and $_ -notmatch "web-app/dist-staging/" }
 if ($sujo) { throw "Ha alteracoes locais nao salvas: $($sujo -join ', '). Nada foi publicado." }
@@ -69,14 +74,49 @@ New-Item -ItemType Directory -Force -Path dist\downloads | Out-Null
 Copy-Item -LiteralPath $Setup -Destination dist\downloads\FilamapAgentSetup.exe -Force
 if ((Get-FileHash dist\downloads\FilamapAgentSetup.exe -Algorithm SHA256).Hash -ne $SetupSha) { throw "Copia do instalador corrompida. Nada foi publicado." }
 if (-not (Test-Path dist\_headers)) { throw "dist\_headers ausente. Nada foi publicado." }
-Write-Host "    Instalador do Agent 4.2.1 incluido em /downloads (SHA256 confere)."
+Write-Host "    Instalador do Agent $AgentVersao incluido em /downloads (SHA256 confere)."
 
 if ($Ensaio) { Write-Host "ENSAIO_OK (nada foi publicado)"; exit 0 }
 
 $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outra coisa cancela)"
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Calculadora: campos nao vazam do card""" "Publicacao falhou."
+function Get-ProdDeploys {
+    $r = Invoke-Cmd "npx wrangler pages deployment list --project-name filamap --environment production --json"
+    if ($r.Code -ne 0) { Write-Host $r.Out; throw "Nao consegui listar as publicacoes do Cloudflare. Me chame." }
+    $i = $r.Out.IndexOf("[")
+    return @(ConvertFrom-Json $r.Out.Substring($i))
+}
+function Test-Download([string]$Base) {
+    $tmp = Join-Path $env:TEMP "filamap-download-check.exe"
+    try { Invoke-WebRequest -UseBasicParsing "$Base/downloads/FilamapAgentSetup.exe" -OutFile $tmp } catch { return "erro" }
+    $sha = (Get-FileHash $tmp -Algorithm SHA256).Hash
+    Remove-Item $tmp -Force
+    return $sha
+}
+
+# 5) GitHub primeiro; a montagem automatica do Cloudflare precisa terminar ANTES da publicacao com o instalador.
+$antes = @(Get-ProdDeploys | ForEach-Object { $_.Id })
+Set-Location $Repo
+$null = Assert-Cmd "git push origin HEAD:main" "Falha ao atualizar o main no GitHub."
+$remoto = ((Assert-Cmd "git ls-remote origin refs/heads/main" "Falha ao conferir o main.").Trim() -split "\s+")[0]
+if ($remoto -ne $head) { throw "main no GitHub = $remoto (esperado $head). Me chame." }
+Write-Host "[4] main no GitHub = $($head.Substring(0,7)). Esperando a montagem automatica do Cloudflare (ate 10 min)..."
+$auto = $null
+for ($i = 1; $i -le 60 -and -not $auto; $i++) {
+    Start-Sleep -Seconds 10
+    $novo = @(Get-ProdDeploys | Where-Object { $antes -notcontains $_.Id })
+    foreach ($d in $novo) {
+        try { $pg = (Invoke-WebRequest -UseBasicParsing "$($d.Deployment)/?v=$i").Content } catch { $pg = "" }
+        if ($pg -match "index-[A-Za-z0-9_-]+\.js") { $auto = $d }
+    }
+}
+if ($auto) { Write-Host "    Montagem automatica terminou ($($auto.Id.Substring(0,8))); agora a publicacao com o instalador vem por cima." }
+else { Write-Host "    Nenhuma montagem automatica apareceu em 10 min (pode estar desligada no Cloudflare). Seguindo." }
+
+# 6) publicacao definitiva, com o instalador
+Set-Location (Join-Path $Repo "web-app")
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Agent $AgentVersao em /downloads""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5
@@ -84,18 +124,12 @@ for ($i = 1; $i -le 12; $i++) {
     if ($servido -eq $bundle) { break }
 }
 if ($servido -ne $bundle) { throw "Publicado, mas o site ainda serve '$servido' (esperado $bundle). Me chame antes de repetir." }
-Write-Host "[4] No ar: https://filamap.pages.dev serve $bundle."
-$tmp = Join-Path $env:TEMP "filamap-download-check.exe"
-Invoke-WebRequest -UseBasicParsing "https://filamap.pages.dev/downloads/FilamapAgentSetup.exe" -OutFile $tmp
-$shaServido = (Get-FileHash $tmp -Algorithm SHA256).Hash
-Remove-Item $tmp -Force
-if ($shaServido -ne $SetupSha) { throw "Site no ar, mas o download do Agent nao confere ($($shaServido.Substring(0,12))). Me chame." }
-Write-Host "    Download do Agent confere (SHA256)."
-
-Set-Location $Repo
-$null = Assert-Cmd "git push origin HEAD:main" "Tela publicada, mas o main nao foi atualizado no GitHub. Me chame."
-$remoto = ((Assert-Cmd "git ls-remote origin refs/heads/main" "Falha ao conferir o main.").Trim() -split "\s+")[0]
-if ($remoto -ne $head) { throw "main no GitHub = $remoto (esperado $head). Me chame." }
-Write-Host "[5] main no GitHub = $($head.Substring(0,7))."
+Write-Host "[5] No ar: https://filamap.pages.dev serve $bundle."
+foreach ($espera in 0, 120) {
+    if ($espera) { Write-Host "    Conferindo o download de novo em 2 minutos..."; Start-Sleep -Seconds $espera }
+    $sha = Test-Download "https://filamap.pages.dev"
+    if ($sha -ne $SetupSha) { throw "Site no ar, mas o download do Agent nao confere ($sha). Me chame." }
+}
+Write-Host "    Download do Agent $AgentVersao confere (SHA256), agora e 2 minutos depois."
 Write-Host ""
 Write-Host "WEB_PRODUCAO_PUBLICADA"

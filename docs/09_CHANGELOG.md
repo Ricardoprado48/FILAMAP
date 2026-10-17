@@ -1,5 +1,13 @@
 # 09 — Changelog Técnico
 
+## 17/10/2026 — Agent 4.4.1: alarme falso de carretel acabado
+
+- **Incidente (16/10, PLACA_DIRETRIZES):** num erro de alimentação da AMS (`1200_8007`/`1200_8006`, HMS `1200_2200_0002_0002`) o filamento do slot 3 recuou e o slot ficou vazio por 8 s. O 4.4.0 tratou "slot que alimentava ficou vazio" como carretel acabado e o finalize zerou e arquivou o + PLA BRANCO ULTRA SILK (~115 g no sistema). Com ele arquivado, a projeção pôs o Branco MasterPrint no slot 3, que levou 18,9 g da impressão seguinte.
+- **Correção (`amsRunout.ts`):** se o slot volta a ter filamento durante o job, o runout vindo só de `tray_empty` é cancelado (log "↩️ ... NÃO acabou"). Alerta HMS de filamento acabado continua valendo sozinho. Observação: a AMS da A1 manda HMS do módulo `12` (`1200_...`), não `07`; o detector por HMS só reconhece `07` até haver um caso real de fim de carretel na A1.
+- **Dados:** `ops/o11-restaurar-ultra-silk.ps1 -PesoBalanca <g>` desfaz o arquivamento com o peso da balança e devolve os 18,9 g ao MasterPrint.
+- **Instalação:** `ops/o11-instalar-agent.ps1`; `publicar-web-producao.ps1` passa a servir o 4.4.1.
+- **Testes:** Agent 324/324 (2 novos).
+
 ## 09/10/2026 — Agent 4.4.0: carretel que acaba no meio da impressão
 
 - **Contexto:** em 08/10 o Preto Velvet acabou no meio de uma peça de 49,9 g e a AMS seguiu sozinha no carretel reserva. O Agent debitou tudo do carretel que acabou (que ficou "no AMS" com 44,7 g fantasmas) e o novo continuou com 1000 g. Corrigido à mão por `ops/o10-corrigir-carretel-esgotado.ps1`. O Agent 4.2 não viu a troca de slot nem guardava o estado bruto da AMS.

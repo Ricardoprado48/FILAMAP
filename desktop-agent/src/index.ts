@@ -716,6 +716,8 @@ async function startAgent() {
         for (const n of news) {
           if (n.kind === "switch") {
             console.log(`🔁 AMS: impressão passou do ${slotLabel(n.from!)} para o ${slotLabel(n.to)} aos ${n.percent}%.`);
+          } else if (n.kind === "runout_cancelled") {
+            console.log(`↩️ Carretel do ${slotLabel(n.slot)} NÃO acabou: o slot voltou a ter filamento aos ${n.percent}% (recuo/erro de alimentação). Alarme cancelado.`);
           } else {
             const how = n.source === "hms" ? `alerta HMS ${n.hms}` : "slot ficou vazio enquanto alimentava a impressão";
             console.warn(`🪫 Carretel do ${slotLabel(n.slot)} ACABOU aos ${n.percent}% (${how}). No fim do job ele será zerado e marcado como esgotado.`);

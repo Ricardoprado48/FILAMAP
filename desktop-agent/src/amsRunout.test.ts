@@ -180,3 +180,27 @@ test("job sem eventos de AMS: nada muda (regressão)", () => {
   assert.deepEqual(applyRunoutSplit(perSlot, emptyAmsEvents(), 100), []);
   assert.deepEqual(perSlot.get(0), { grams: 12, quality: "exact", weightDiscount: 0 });
 });
+
+// Caso real de 16/10 (PLACA_DIRETRIZES): erro de alimentação da AMS (1200_8007/8006),
+// slot 2 fica vazio por 8 s e volta a ter filamento -- o carretel tinha ~115 g.
+test("caso 16/10: slot que fica vazio e volta a ter filamento no mesmo job NÃO é carretel acabado", () => {
+  const events = emptyAmsEvents();
+  const base = { events, usedSlots: [2, 0, 1], hmsAppeared: [] };
+  observeRunout({ ...base, previousActiveSlot: 2, activeSlot: 2, percent: 50, previousOccupancy: [true, true, true, true], occupancy: [true, true, false, true], now: min(100) });
+  assert.equal(events.runouts.length, 1);
+  const news = observeRunout({ ...base, previousActiveSlot: 2, activeSlot: 2, percent: 50, previousOccupancy: [true, true, false, true], occupancy: [true, true, true, true], now: min(100) + 8000 });
+  assert.equal(events.runouts.length, 0);
+  assert.deepEqual(news, [{ kind: "runout_cancelled", slot: 2, percent: 50 }]);
+
+  const perSlot = new Map<number, SlotConsumption>([[2, { grams: 30, quality: "exact", weightDiscount: 0 }]]);
+  assert.deepEqual(applyRunoutSplit(perSlot, events, 100), []);
+  assert.equal(perSlot.get(2)!.depleted, undefined);
+});
+
+test("alerta HMS de filamento acabado não é cancelado pelo slot voltar a ter filamento (reabastecido no mesmo slot)", () => {
+  const events = emptyAmsEvents();
+  observeRunout({ events, previousActiveSlot: 0, activeSlot: 0, usedSlots: [0], percent: 70, previousOccupancy: [true, true, true, true], occupancy: [false, true, true, true], hmsAppeared: [{ attr: 0x07002000, code: 0x00020001, formatted: "0700_2000_0002_0001" }], now: min(80) });
+  observeRunout({ events, previousActiveSlot: 0, activeSlot: 0, usedSlots: [0], percent: 70, previousOccupancy: [false, true, true, true], occupancy: [true, true, true, true], hmsAppeared: [], now: min(85) });
+  assert.equal(events.runouts.length, 1);
+  assert.deepEqual(events.runouts[0].sources, ["hms", "tray_empty"]);
+});

@@ -80,7 +80,8 @@ export interface RunoutObservation {
 
 export type RunoutNews =
   | { kind: "switch"; from: number | null; to: number; percent: number }
-  | { kind: "runout"; slot: number; percent: number; source: RunoutSource; hms?: string };
+  | { kind: "runout"; slot: number; percent: number; source: RunoutSource; hms?: string }
+  | { kind: "runout_cancelled"; slot: number; percent: number };
 
 function addRunout(events: JobAmsEvents, slot: number, percent: number, at: string, source: RunoutSource, hms?: string): boolean {
   const existing = events.runouts.find((r) => r.slot === slot);
@@ -118,7 +119,18 @@ export function observeRunout(o: RunoutObservation): RunoutNews[] {
   // Slot que alimentava a impressão ficou vazio. Tirar à mão um carretel que está
   // sendo puxado derruba a impressão, então aqui é filamento acabado. Slot vazio que
   // não estava alimentando (ex.: cor que já terminou) não conta.
+  // Caso real de 16/10: num erro de alimentação da AMS (1200_8006/8007) o filamento
+  // recua e o slot fica vazio por segundos. Se o slot volta a ter filamento durante o
+  // job, o carretel não acabou: o runout que veio só do slot vazio é cancelado.
   if (o.previousOccupancy && o.occupancy) {
+    for (let slot = 0; slot < 4; slot++) {
+      if (o.previousOccupancy[slot] || !o.occupancy[slot]) continue;
+      const idx = o.events.runouts.findIndex((r) => r.slot === slot && r.sources.every((s) => s === "tray_empty"));
+      if (idx >= 0) {
+        o.events.runouts.splice(idx, 1);
+        news.push({ kind: "runout_cancelled", slot, percent: o.percent });
+      }
+    }
     for (let slot = 0; slot < 4; slot++) {
       if (!o.previousOccupancy[slot] || o.occupancy[slot]) continue;
       const wasFeeding = slot === o.previousActiveSlot || slot === o.activeSlot;

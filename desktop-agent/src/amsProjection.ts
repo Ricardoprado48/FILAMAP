@@ -107,6 +107,44 @@ export function isColorCompatible(
   return c1.toUpperCase() === c2.toUpperCase();
 }
 
+// Relatório parcial da A1 (4.3.0 em diante, sem pushall a cada 10 s): a impressora manda só
+// o que mudou -- ex.: {"id":"3","remain":40} sem tray_type/tray_color. Lido sozinho, isso
+// parecia slot vazio e a projeção soltava o carretel várias vezes por minuto; o job que
+// terminava nesse instante ficava "sem carretel" (17/10 e 21/10). Junta campo a campo por
+// id sobre o último estado conhecido (como o ha-bambulab). Slot vazio de verdade continua
+// vindo de tray_exist_bits (bit zerado), que parseMqttAmsStatus já respeita.
+export function mergeAmsReport(previous: any, incoming: any): any {
+  if (!incoming || typeof incoming !== "object") return previous ?? null;
+  const prev = previous && typeof previous === "object" ? previous : {};
+  const merged: any = { ...prev, ...incoming };
+
+  const byId = (list: any[] | undefined) => {
+    const m = new Map<string, any>();
+    (Array.isArray(list) ? list : []).forEach((x, i) => m.set(String(x?.id ?? i), x));
+    return m;
+  };
+
+  if (Array.isArray(incoming.ams)) {
+    const prevUnits = byId(prev.ams);
+    merged.ams = incoming.ams.map((unit: any, i: number) => {
+      const old = prevUnits.get(String(unit?.id ?? i)) ?? {};
+      const out = { ...old, ...unit };
+      if (Array.isArray(unit?.tray)) {
+        const oldTrays = byId(old.tray);
+        out.tray = unit.tray.map((t: any, j: number) => ({ ...(oldTrays.get(String(t?.id ?? j)) ?? {}), ...t }));
+        for (const [id, t] of oldTrays) {
+          if (!out.tray.some((x: any, j: number) => String(x?.id ?? j) === id)) out.tray.push(t);
+        }
+        out.tray.sort((a: any, b: any) => Number(a?.id) - Number(b?.id));
+      } else if (old.tray) {
+        out.tray = old.tray;
+      }
+      return out;
+    });
+  }
+  return merged;
+}
+
 /**
  * Converte payload MQTT da Bambu Lab para representação estruturada das bandejas da AMS.
  * Lida com deltas, ausência de campos, formatos de 4 slots e tray_exist_bits.

@@ -35,7 +35,7 @@ import { showDesktopNotice } from "./config/desktopNotice";
 import { isAccessCodeRejected } from "./mqttAuth";
 import { syncBambuStudioFilamentProfiles } from "./filamentProfileSync";
 import { syncBambuCloudSpools } from "./bambuCloudSpoolSync";
-import { syncAmsProjection, isMissingArchivedColumn } from "./amsProjection";
+import { syncAmsProjection, isMissingArchivedColumn, mergeAmsReport } from "./amsProjection";
 import { resolveSecretStore, SecretStore } from "./config/secretStore";
 import { SessionSupervisor } from "./sessionSupervisor";
 import { FinalizeOutbox } from "./finalizeOutbox";
@@ -111,6 +111,8 @@ let PRINTER_ACCESS_CODE = "";
 let supabase: SupabaseClient;
 let activeSecretStore: SecretStore;
 let lastMqttPrintPayload: any = null;
+// Slots do job em andamento (a projeção da AMS segura o vínculo deles até o fim do job).
+let runningJobSlots: number[] = [];
 
 async function bootstrapRuntimeConfig() {
   activeSecretStore = resolveSecretStore();
@@ -446,7 +448,8 @@ async function startAgent() {
             supabase,
             activePrinterRecord.id,
             PRINTER_SERIAL,
-            lastMqttPrintPayload
+            lastMqttPrintPayload,
+            { holdSlots: runningJobSlots }
           );
           if (proj.slotsUpdated > 0 || proj.spoolsUpdated > 0) {
             console.log(
@@ -955,10 +958,12 @@ async function startAgent() {
         if (!print) return;
 
         if (print.ams) {
-          lastMqttPrintPayload = print;
+          // Relatório parcial: junta com o último estado conhecido de cada slot (mergeAmsReport).
+          const amsState = mergeAmsReport(lastMqttPrintPayload?.ams, print.ams);
+          lastMqttPrintPayload = { ...print, ams: amsState };
           const amsFingerprint = JSON.stringify({
-            exist: print.ams.tray_exist_bits,
-            tray: print.ams.ams?.[0]?.tray?.map((t: any) => ({
+            exist: amsState.tray_exist_bits,
+            tray: amsState.ams?.[0]?.tray?.map((t: any) => ({
               id: t.id,
               type: t.tray_type,
               col: t.tray_color,
@@ -972,7 +977,7 @@ async function startAgent() {
                 supabase,
                 printer.id,
                 PRINTER_SERIAL,
-                print,
+                lastMqttPrintPayload,
                 { holdSlots: runningJob ? runningJob.usedSlots : [] }
               );
               if (proj.slotsUpdated > 0 || proj.spoolsUpdated > 0) {
@@ -1075,6 +1080,7 @@ async function startAgent() {
         }
 
         const currentJob = jobStateMachine.getCurrentJob();
+        runningJobSlots = currentJob ? currentJob.usedSlots.slice() : [];
         const currentState = jobStateMachine.getLastGcodeState();
         const activeSlotIndex = jobStateMachine.getActiveSlotIndex();
 

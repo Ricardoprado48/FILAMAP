@@ -1,5 +1,13 @@
 # 09 — Changelog Técnico
 
+## 21/10/2026 — Agent 4.4.2: impressões "sem carretel"
+
+- **Incidente (16/10, 17/10, 21/10):** jobs do slot 3 (Branco) e do slot 4 (Rose Gold Silk) gravados como "sem carretel" (90,2 g, 37,1 g, 26,8 g não descontados). Causa: desde o modo leve (4.3.0, sem `pushall` a cada 10 s) a A1 manda relatórios parciais da AMS -- ex.: `{"id":"3","remain":40}` sem `tray_type`/`tray_color`. A projeção lia cada mensagem sozinha, via slot "vazio" e soltava/religava os carretéis várias vezes por minuto (log "Projeção AMS atualizada: 3/4/1 slot(s)"); o job que terminava num desses instantes ficava órfão. A projeção pós-Cloud Sync usava a mesma mensagem parcial, e sem `holdSlots`.
+- **Correção:** `mergeAmsReport` (amsProjection.ts) junta cada relatório, campo a campo por id, sobre o último estado conhecido (como o ha-bambulab). Slot vazio de verdade continua vindo de `tray_exist_bits`. A projeção pós-Cloud Sync usa o estado juntado e segura os slots do job em andamento.
+- **Conferido:** os 121,3 g de 21/10 07:24 estão certos (outra peça de 146,2 g, parada aos 83%); não houve desconto em dobro.
+- **Achado para depois:** na A1 o alerta de slot vazio é `1200_2S00_0002_0002` ("AMS Lite A Slot S+1 is empty"), módulo `12`; o detector por HMS só reconhece `07`.
+- **Testes:** Agent 329/329 (5 novos). Inclui o 4.4.1 (não instalado).
+
 ## 17/10/2026 — Agent 4.4.1: alarme falso de carretel acabado
 
 - **Incidente (16/10, PLACA_DIRETRIZES):** num erro de alimentação da AMS (`1200_8007`/`1200_8006`, HMS `1200_2200_0002_0002`) o filamento do slot 3 recuou e o slot ficou vazio por 8 s. O 4.4.0 tratou "slot que alimentava ficou vazio" como carretel acabado e o finalize zerou e arquivou o + PLA BRANCO ULTRA SILK (~115 g no sistema). Com ele arquivado, a projeção pôs o Branco MasterPrint no slot 3, que levou 18,9 g da impressão seguinte.

@@ -1,13 +1,13 @@
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
-# Instala o Agent 4.4.1 (4.4.0 + alarme falso de carretel acabado corrigido) na PRODUCAO,
+# Instala o Agent 4.4.2 (4.4.0 + alarme falso de carretel acabado corrigido) na PRODUCAO,
 # somente fora de impressao. Inclui tudo do 4.3.0 (nao precisa instalar o 4.3.0 antes).
 #   O banco ja esta pronto (o10-esgotado-banco.ps1 aplicado em 09/10).
 #   1. confere: sem impressao ativa, sem finalizacao pendente,
 #      instalador e o mesmo que foi gerado e testado (SHA256);
 #   2. pede confirmacao (digitar INSTALAR) e abre o instalador (o Windows pede permissao);
-#   3. confere que o Agent instalado e o 4.4.1 e que voltou a rodar.
+#   3. confere que o Agent instalado e o 4.4.2 e que voltou a rodar.
 # Volta atras, se precisar: rode <repo>\releases\FilamapAgentSetup-4.2.1-5E8505B8.exe
 eleasesFilamapAgentSetup-4.2.1-5E8505B8.exe
 #   -Ensaio  so confere, nao instala nada
@@ -16,8 +16,8 @@ $ErrorActionPreference = "Stop"
 
 $ProdDir = Join-Path $env:APPDATA "Filamap"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
-$SetupSha = "843FBACAE0FFFFE269F4782090FF8065C047F4253CFCA99904C6FABE32BE3189"
-$AgentSha = "36894132A705605A7BA76A938186CC0DE34FBC32E4F4DD6785B7B5425D1E9C78"
+$SetupSha = "A6EF9FF5B953CD56EA772A6AAF89961424E3DE2FB8BDEDB09EB3702BA0261AE4"
+$AgentSha = "B23F871D1082D5FC91B45FDA952FE85564D44F75DE47861D5903EDE417D931F7"
 $AgentExe = "C:\Program Files\Filamap Agent\filamap-agent.exe"
 $Rollback = "$(Split-Path $PSScriptRoot -Parent)\releases\FilamapAgentSetup-4.2.1-5E8505B8.exe"
 
@@ -26,10 +26,10 @@ function Check([bool]$ok, [string]$msg) {
     if ($ok) { Write-Host "OK        $msg" } else { Write-Host "BLOQUEADO $msg" -ForegroundColor Red; $script:bloqueios += $msg }
 }
 
-Write-Host "=== Instalar Agent 4.4.1 na PRODUCAO ==="
+Write-Host "=== Instalar Agent 4.4.2 na PRODUCAO ==="
 Check (-not (Test-Path (Join-Path $ProdDir "agent-state.json"))) "sem impressao ativa (agent-state.json ausente)"
 Check (-not (Test-Path (Join-Path $ProdDir "agent-pending-finalize.json"))) "sem finalizacao pendente"
-Check ((Test-Path $Setup) -and ((Get-FileHash $Setup -Algorithm SHA256).Hash -eq $SetupSha)) "instalador e o 4.4.1 testado (SHA256 confere)"
+Check ((Test-Path $Setup) -and ((Get-FileHash $Setup -Algorithm SHA256).Hash -eq $SetupSha)) "instalador e o 4.4.2 testado (SHA256 confere)"
 Check ((Test-Path $Rollback) -and ((Get-FileHash $Rollback -Algorithm SHA256).Hash -eq "5E8505B8D02145F889966CC05E9D148162F23E3D2779EE967F7F6AEBB1840D14")) "instalador 4.2.1 guardado para voltar atras"
 
 if ($bloqueios.Count -gt 0) {
@@ -55,8 +55,8 @@ $p = Start-Process -FilePath $Setup -Wait -PassThru
 if ($p.ExitCode -ne 0) { Write-Host "O instalador terminou com codigo $($p.ExitCode) (cancelado ou erro). Me chame." -ForegroundColor Red; exit 1 }
 
 $instalado = (Get-FileHash $AgentExe -Algorithm SHA256).Hash
-if ($instalado -ne $AgentSha) { Write-Host "O Agent instalado nao e o 4.4.1 (SHA256 $($instalado.Substring(0,12))). Me chame." -ForegroundColor Red; exit 1 }
-Write-Host "OK        Agent instalado e o 4.4.1"
+if ($instalado -ne $AgentSha) { Write-Host "O Agent instalado nao e o 4.4.2 (SHA256 $($instalado.Substring(0,12))). Me chame." -ForegroundColor Red; exit 1 }
+Write-Host "OK        Agent instalado e o 4.4.2"
 
 $rodando = $null
 for ($i = 1; $i -le 12 -and -not $rodando; $i++) {
@@ -68,7 +68,7 @@ if (-not $rodando) {
     Start-Sleep -Seconds 10
     $rodando = Get-Process filamap-agent -ErrorAction SilentlyContinue
 }
-if (-not $rodando) { Write-Host "O Agent 4.4.1 foi instalado mas nao esta rodando. Me chame." -ForegroundColor Red; exit 1 }
-Write-Host "OK        Agent 4.4.1 rodando (pid $($rodando[0].Id))"
+if (-not $rodando) { Write-Host "O Agent 4.4.2 foi instalado mas nao esta rodando. Me chame." -ForegroundColor Red; exit 1 }
+Write-Host "OK        Agent 4.4.2 rodando (pid $($rodando[0].Id))"
 Write-Host ""
-Write-Host "AGENT_441_INSTALADO"
+Write-Host "AGENT_442_INSTALADO"

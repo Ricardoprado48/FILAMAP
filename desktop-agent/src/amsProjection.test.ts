@@ -757,3 +757,66 @@ test("reconcileAmsState: slot usado pelo job que ficou vazio mantém o carretel 
   assert.equal(released.slotAssignments.get(0), null);
   assert.deepEqual(released.spoolLocationUpdates.map((u) => [u.id, u.reason]), [["antigo", "not_in_any_slot"]]);
 });
+
+// 4.4.2: relatório parcial da A1 ({"id":"3","remain":40}) não pode virar slot vazio.
+import { mergeAmsReport } from "./amsProjection";
+
+const fullAms = {
+  tray_exist_bits: "f",
+  tray_now: "3",
+  ams: [{ id: "0", tray: [
+    { id: "0", tray_type: "PLA", tray_color: "000000FF", tray_info_idx: "Pa" },
+    { id: "1", tray_type: "PLA", tray_color: "D4AF37FF", tray_info_idx: "Pb" },
+    { id: "2", tray_type: "PLA", tray_color: "FFFFFFFF", tray_info_idx: "Pc" },
+    { id: "3", tray_type: "PLA", tray_color: "CC6666FF", tray_info_idx: "Pd", remain: 50 },
+  ] }],
+};
+
+test("mergeAmsReport: relatório só com 'remain' mantém material e cor do slot (caso 21/10)", () => {
+  const partial = { ams: [{ id: "0", tray: [{ id: "3", remain: 40 }] }] };
+  const parsedAlone = parseMqttAmsStatus({ ams: { ...partial, tray_exist_bits: "f" } });
+  assert.equal(parsedAlone[3].occupied, false); // o bug: sozinho parecia vazio
+
+  const merged = mergeAmsReport(fullAms, partial);
+  const trays = parseMqttAmsStatus({ ams: merged });
+  assert.deepEqual(trays.map((t) => t.occupied), [true, true, true, true]);
+  assert.equal(trays[3].trayColorHex, "#CC6666");
+  assert.equal(merged.ams[0].tray[3].remain, 40);
+  assert.equal(merged.ams[0].tray.length, 4);
+});
+
+test("mergeAmsReport: slot que esvazia de verdade (bit zerado) continua vazio", () => {
+  const merged = mergeAmsReport(fullAms, { tray_exist_bits: "7", ams: [{ id: "0", tray: [{ id: "3" }] }] });
+  const trays = parseMqttAmsStatus({ ams: merged });
+  assert.deepEqual(trays.map((t) => t.occupied), [true, true, true, false]);
+});
+
+test("mergeAmsReport: carretel trocado no slot traz os campos novos", () => {
+  const merged = mergeAmsReport(fullAms, { ams: [{ id: "0", tray: [{ id: "2", tray_type: "PETG", tray_color: "0000FFFF", tray_info_idx: "Px" }] }] });
+  const trays = parseMqttAmsStatus({ ams: merged });
+  assert.equal(trays[2].trayType, "PETG");
+  assert.equal(trays[2].trayColorHex, "#0000FF");
+  assert.equal(trays[0].trayType, "PLA");
+});
+
+test("mergeAmsReport: relatório sem 'ams' por unidade só atualiza campos do topo", () => {
+  const merged = mergeAmsReport(fullAms, { tray_now: "255" });
+  assert.equal(merged.tray_now, "255");
+  assert.equal(merged.ams[0].tray.length, 4);
+  assert.equal(mergeAmsReport(null, fullAms).ams[0].tray[3].tray_type, "PLA");
+});
+
+test("projeção com relatório parcial juntado não solta carretel do slot", () => {
+  const spool = (id: string, hex: string): ReconcileAmsInputSpool => ({
+    id, brand: "Voolt3D", material: "PLA", color_name: id, color_hex: hex, nfc_uid: null,
+    bambu_spool_id: null, bambu_dev_id: null, bambu_slot_id: null, bambu_in_printer: null,
+  });
+  const merged = mergeAmsReport({ ...fullAms, tray_exist_bits: "8" }, { ams: [{ id: "0", tray: [{ id: "3", remain: 40 }] }] });
+  const result = reconcileAmsState({
+    printerSerial: "SERIAL",
+    mqttTrays: parseMqttAmsStatus({ ams: merged }),
+    spools: [spool("rose", "#CC6666")],
+    currentAmsSlots: [{ slot_index: 3, spool_id: "rose", assigned_by: "agent" }],
+  });
+  assert.equal(result.slotAssignments.get(3), "rose");
+});

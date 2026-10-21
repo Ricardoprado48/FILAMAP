@@ -1,7 +1,7 @@
 param([switch]$Ensaio)
 # Parametro desconhecido NUNCA cai no modo padrao (incidente 2026-09-29).
 if ($args.Count -gt 0) { throw "Parametro nao reconhecido: $($args -join ' '). Nada foi feito." }
-# Instala o Agent 4.4.2 (4.4.0 + alarme falso de carretel acabado corrigido) na PRODUCAO,
+# Instala o Agent 4.4.2 (corrige alarme falso de carretel acabado e "sem carretel") na PRODUCAO,
 # somente fora de impressao. Inclui tudo do 4.3.0 (nao precisa instalar o 4.3.0 antes).
 #   O banco ja esta pronto (o10-esgotado-banco.ps1 aplicado em 09/10).
 #   1. confere: sem impressao ativa, sem finalizacao pendente,

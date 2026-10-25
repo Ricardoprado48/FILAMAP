@@ -44,6 +44,8 @@ import {
   createCatalogItem,
   deleteCatalogItem,
 } from "./services/catalogService";
+import { QuotePlatesPanel } from "./components/QuotePlatesPanel";
+import { hoursFromSeconds, matchSpoolForFilament, storablePlates, summarizeQuote, type QuotePlate } from "./utils/quotePlates";
 import {
   updateSpoolWeight,
   linkSpoolNfc,
@@ -205,6 +207,26 @@ export default function App() {
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
   ]);
+  // Orçamento por placas fatiadas (QuotePlatesPanel) e observações do produto.
+  const [quotePlates, setQuotePlates] = useState<QuotePlate[]>([]);
+  const [quoteNotes, setQuoteNotes] = useState("");
+
+  // Placas mudaram: tempo e gramas por cor (por unidade) vão para a calculadora, cada cor
+  // com o carretel do estoque que bate (para usar o preço dele). Só aqui -- não a cada
+  // atualização do estoque, para não desfazer o que a pessoa ajustou à mão.
+  function applyQuotePlates(next: QuotePlate[]) {
+    setQuotePlates(next);
+    if (!next.length) return;
+    const summary = summarizeQuote(next);
+    setCalcPrintHours(hoursFromSeconds(summary.secondsPerUnit));
+    const rows = summary.filaments.map((l) => ({
+      spoolId: matchSpoolForFilament(l, inventory, filamentProfiles),
+      weightG: l.gramsPerUnit.toString(),
+      manualPricePerKg: "85.00",
+    }));
+    while (rows.length < 4) rows.push({ spoolId: "", weightG: "", manualPricePerKg: "85.00" });
+    setCalcFilaments(rows);
+  }
 
   useEffect(() => {
     localStorage.setItem("filamap_energy_tariff", energyTariff);
@@ -345,9 +367,12 @@ export default function App() {
       return;
     }
 
-    const { error } = await createCatalogItem({
+    const plateMaterials = Array.from(new Set(quotePlates.flatMap((p) => p.filaments.map((f) => f.type)).filter(Boolean)));
+    const { error, savedQuote } = await createCatalogItem({
       name: calcPartName.trim().toUpperCase(),
-      material: "PETG/PLA",
+      material: plateMaterials.length ? plateMaterials.join("/") : "PETG/PLA",
+      notes: quoteNotes.trim() || null,
+      plates: quotePlates.length ? storablePlates(quotePlates) : null,
       weight_g: totalFilamentWeight,
       print_hours: hours,
       accessories_cost: extrasCost,
@@ -358,7 +383,11 @@ export default function App() {
     if (error) {
       alert("Erro ao salvar: " + error.message);
     } else {
-      alert(`✅ Peça "${calcPartName.toUpperCase()}" adicionada ao Catálogo!`);
+      alert(
+        savedQuote
+          ? `✅ Peça "${calcPartName.toUpperCase()}" adicionada ao Catálogo!`
+          : `✅ Peça "${calcPartName.toUpperCase()}" adicionada ao Catálogo, mas as placas e observações não foram guardadas: o banco ainda não tem essa atualização.`
+      );
       await loadData();
       setCalcSubTab("catalog");
     }
@@ -366,11 +395,17 @@ export default function App() {
 
   function handleLoadCatalogItem(item: CatalogItem) {
     setCalcPartName(item.name);
-    setCalcPrintHours(item.print_hours.toString());
     setCalcExtraCosts(item.accessories_cost.toString());
-    const updated = [...calcFilaments];
-    updated[0].weightG = item.weight_g.toString();
-    setCalcFilaments(updated);
+    setQuoteNotes(item.notes ?? "");
+    if (item.plates?.length) {
+      applyQuotePlates(item.plates);
+    } else {
+      setQuotePlates([]);
+      setCalcPrintHours(item.print_hours.toString());
+      const updated = [...calcFilaments];
+      updated[0].weightG = item.weight_g.toString();
+      setCalcFilaments(updated);
+    }
     setCalcSubTab("calculator");
   }
 
@@ -1714,7 +1749,11 @@ export default function App() {
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#f8fafc" }}>{item.name}</div>
                         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
                           {item.material} • {item.weight_g}g • {item.print_hours}h
+                          {item.plates?.length ? ` • 📐 ${item.plates.length} placa${item.plates.length > 1 ? "s" : ""}` : ""}
                         </div>
+                        {item.notes && (
+                          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2, whiteSpace: "pre-wrap" }}>📝 {item.notes}</div>
+                        )}
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -1770,6 +1809,8 @@ export default function App() {
 
           {calcSubTab === "calculator" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <QuotePlatesPanel plates={quotePlates} onPlatesChange={applyQuotePlates} notes={quoteNotes} onNotesChange={setQuoteNotes} />
+
               <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>

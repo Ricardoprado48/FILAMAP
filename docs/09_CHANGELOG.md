@@ -1,5 +1,13 @@
 # 09 — Changelog Técnico
 
+## 25/10/2026 — Web: orçamento por placas fatiadas
+
+- **Contexto:** para orçar um produto de várias peças em várias placas, a pessoa fatiava placa por placa no Bambu Studio, anotava tempo e gramas totais e somava à mão. A arrumação das placas varia (placa original com todas as peças, clones com várias cópias), então ler o projeto inteiro não serve. O projeto salvo (.3mf) nem guarda tempo/gramas (conferido em CANECA_SAO_PAULO, 4 placas, e KIT_CANTINHO_DA_FE, 10 placas).
+- **Calculadora, seção "Placas do orçamento":** importa a placa fatiada exportada pelo Bambu Studio (Arquivo › Exportar › Exportar placa fatiada, `.gcode.3mf`), uma ou várias de uma vez. Cada placa mostra miniatura, tempo, gramas por cor, "atende quantas unidades" e observação. Por unidade do produto: soma de (placa ÷ unidades). Tempo e gramas por cor vão para a calculadora, cada cor ligada ao carretel do estoque (perfil do Bambu Studio → produto, ou material + cor) para usar o preço dele. Observações do produto. Salvar no catálogo guarda placas e observações; abrir o item do catálogo traz tudo de volta.
+- **Leitura no navegador** (`zipReader.ts`, `slicedPlate.ts`): só o índice do ZIP, `Metadata/slice_info.config` e `Metadata/plate_N.png`; o G-code não é aberto nem enviado. Sem dependência nova (DecompressionStream). Conferido com um `.gcode.3mf` real gerado pelo Bambu Studio 02.08.03.66 (LOGO_SIMONE: 2256 s, 3,61 g + 0,49 g).
+- **Banco:** `20261025100000_catalog_quote_plates.sql` (colunas `notes` e `plates` em `catalog_items`), aplicada por `ops/o12-orcamento-banco.ps1`. Web nova contra banco sem ela salva o resto e avisa.
+- **Testes:** Web 190/190 (15 novos).
+
 ## 21/10/2026 — Agent 4.4.2: impressões "sem carretel"
 
 - **Incidente (16/10, 17/10, 21/10):** jobs do slot 3 (Branco) e do slot 4 (Rose Gold Silk) gravados como "sem carretel" (90,2 g, 37,1 g, 26,8 g não descontados). Causa: desde o modo leve (4.3.0, sem `pushall` a cada 10 s) a A1 manda relatórios parciais da AMS -- ex.: `{"id":"3","remain":40}` sem `tray_type`/`tray_color`. A projeção lia cada mensagem sozinha, via slot "vazio" e soltava/religava os carretéis várias vezes por minuto (log "Projeção AMS atualizada: 3/4/1 slot(s)"); o job que terminava num desses instantes ficava órfão. A projeção pós-Cloud Sync usava a mesma mensagem parcial, e sem `holdSlots`.

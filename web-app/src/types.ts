@@ -117,6 +117,18 @@ export interface CatalogItem {
   production_cost: number;
   sale_price: number;
   created_at: string;
+  // Orçamento por placas (migration 20261025100000). Ausentes em banco antigo.
+  notes?: string | null;
+  plates?: StoredQuotePlate[] | null;
+}
+
+export interface StoredQuotePlate {
+  id: string;
+  name: string;
+  seconds: number;
+  filaments: Array<{ id: number; type: string; color: string; grams: number; trayInfoIdx?: string }>;
+  units: number;
+  notes: string;
 }
 
 export interface PrintLog {

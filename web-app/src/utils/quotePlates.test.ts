@@ -3,26 +3,30 @@ import { checkStock, stockNeedsFromRows, formatDuration, hoursFromSeconds, loadS
 
 describe("stockNeedsFromRows", () => {
   const spools = [
-    { id: "dourado", material: "PLA Silk", color_hex: "#D4AF37", current_weight: 400 },
-    { id: "preto", material: "PLA", color_hex: "#000000", current_weight: 900 },
+    { id: "dourado", material: "PLA Silk", color_hex: "#D4AF37", current_weight: 400, filament_product_id: "prod-dourado" },
+    { id: "preto", material: "PLA", color_hex: "#000000", current_weight: 900, brand: "Voolt" },
   ];
 
-  it("carretel trocado na linha (amarelo da placa -> dourado) confere o dourado", () => {
+  it("carretel trocado na linha (amarelo da placa -> dourado) confere o produto dourado", () => {
     const needs = stockNeedsFromRows([{ spoolId: "dourado", weightG: "20.2", color: "#FFFF00", type: "PLA" }], spools);
-    expect(needs).toEqual([{ key: "D4AF37|PLA SILK", type: "PLA Silk", color: "#D4AF37", grams: 20.2 }]);
+    expect(needs).toEqual([{ key: "produto:prod-dourado", type: "PLA Silk", color: "#D4AF37", grams: 20.2, productId: "prod-dourado" }]);
   });
 
-  it("sem carretel usa a cor da placa; linhas iguais somam; sem gramas ou sem cor ficam de fora", () => {
+  it("sem carretel usa a cor da placa; mesma linha soma; sem gramas ou sem cor ficam de fora", () => {
     const needs = stockNeedsFromRows(
       [
         { spoolId: "", weightG: "100", color: "#000000", type: "PLA" },
+        { spoolId: "", weightG: "40", color: "#000000", type: "PLA" },
         { spoolId: "preto", weightG: "50" },
         { spoolId: "", weightG: "", color: "#FFFFFF", type: "PLA" },
         { spoolId: "", weightG: "25" },
       ],
       spools
     );
-    expect(needs).toEqual([{ key: "000000|PLA", type: "PLA", color: "#000000", grams: 150 }]);
+    expect(needs).toEqual([
+      { key: "000000|PLA", type: "PLA", color: "#000000", grams: 140 },
+      { key: "000000|PLA|VOOLT", type: "PLA", color: "#000000", grams: 50, brand: "Voolt" },
+    ]);
   });
 });
 
@@ -49,6 +53,26 @@ describe("checkStock", () => {
     expect(vermelho).toMatchObject({ status: "tight", diffG: 26.2 });
     expect(branco).toMatchObject({ status: "buy", diffG: 10 });
     expect(azul).toMatchObject({ status: "buy", haveG: 0, diffG: 10, spoolIds: [] });
+  });
+
+  it("carretel escolhido: só soma o mesmo produto (Branco Ultra Silk não junta com Branco comum)", () => {
+    const spools = [
+      { id: "us1", material: "PLA Silk", color_hex: "#FFFFFF", current_weight: 350, filament_product_id: "ultra-silk" },
+      { id: "us2", material: "PLA Silk", color_hex: "#FFFFFF", current_weight: 1000, filament_product_id: "ultra-silk" },
+      { id: "master", material: "PLA", color_hex: "#FFFFFF", current_weight: 900, filament_product_id: "masterprint" },
+      { id: "comum", material: "PLA", color_hex: "#FFFFFF", current_weight: 745 },
+    ];
+    const [l] = checkStock([{ key: "k", type: "PLA Silk", color: "#FFFFFF", grams: 87, productId: "ultra-silk" }], spools);
+    expect(l).toMatchObject({ spoolIds: ["us1", "us2"], spoolGrams: [350, 1000], haveG: 1350, status: "ok" });
+  });
+
+  it("carretel sem produto cadastrado: mesma marca + material + cor", () => {
+    const spools = [
+      { id: "a", material: "PLA", color_hex: "#FFFFFF", current_weight: 300, brand: "Voolt" },
+      { id: "b", material: "PLA", color_hex: "#FFFFFF", current_weight: 900, brand: "MasterPrint" },
+    ];
+    const [l] = checkStock([{ key: "k", type: "PLA", color: "#FFFFFF", grams: 50, brand: "voolt" }], spools);
+    expect(l).toMatchObject({ spoolIds: ["a"], haveG: 300 });
   });
 });
 

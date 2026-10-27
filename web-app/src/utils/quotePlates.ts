@@ -23,6 +23,10 @@ export interface QuoteFilamentLine {
   color: string;
   trayInfoIdx?: string;
   grams: number;
+  // Carretel escolhido na calculadora: a conferência de estoque fica só nesse produto
+  // (Branco Ultra Silk não soma com Branco comum).
+  productId?: string;
+  brand?: string;
 }
 
 export interface QuoteSummary {
@@ -82,6 +86,7 @@ export interface MatchableSpool {
   price_paid?: number | null;
   current_weight?: number | null;
   filament_product_id?: string | null;
+  brand?: string | null;
   archived_at?: string | null;
 }
 
@@ -130,24 +135,35 @@ export const STOCK_TIGHT_G = 35;
 export interface StockLine extends QuoteFilamentLine {
   haveG: number;
   spoolIds: string[];
+  // Saldo de cada carretel somado, na mesma ordem de spoolIds.
+  spoolGrams: number[];
   status: "ok" | "tight" | "buy";
   // Quanto falta (status "buy") ou quanto sobra (os outros).
   diffG: number;
 }
 
-// Tem material para o orçamento? Soma o saldo de todos os carretéis do estoque (não
-// arquivados) com a mesma cor e o mesmo material da placa.
+const same = (a: string | null | undefined, b: string | null | undefined) => (a || "").trim().toUpperCase() === (b || "").trim().toUpperCase();
+
+// Tem material para o orçamento? Soma o saldo dos carretéis do estoque (não arquivados)
+// iguais ao da linha. Carretel escolhido: mesmo produto (ou, sem produto cadastrado,
+// mesma marca + material + cor). Só a cor da placa: mesma cor e material.
 export function checkStock(lines: QuoteFilamentLine[], spools: MatchableSpool[]): StockLine[] {
   const active = spools.filter((s) => !s.archived_at);
   return lines.map((line) => {
     const material = (line.type || "").toUpperCase();
-    const matches = active.filter(
-      (s) => hex(s.color_hex) === hex(line.color) && (!material || (s.material || "").toUpperCase().includes(material))
+    const sameSpec = (s: MatchableSpool) => hex(s.color_hex) === hex(line.color) && same(s.material, line.type) && same(s.brand, line.brand);
+    const matches = active.filter((s) =>
+      line.productId
+        ? s.filament_product_id === line.productId || (!s.filament_product_id && sameSpec(s))
+        : line.brand !== undefined
+          ? sameSpec(s)
+          : hex(s.color_hex) === hex(line.color) && (!material || (s.material || "").toUpperCase().includes(material))
     );
-    const haveG = round2(matches.reduce((sum, s) => sum + Math.max(0, s.current_weight ?? 0), 0));
+    const spoolGrams = matches.map((s) => round2(Math.max(0, s.current_weight ?? 0)));
+    const haveG = round2(spoolGrams.reduce((sum, g) => sum + g, 0));
     const left = round2(haveG - line.grams);
     const status = left < 0 ? "buy" : left < STOCK_TIGHT_G ? "tight" : "ok";
-    return { ...line, haveG, spoolIds: matches.map((s) => s.id), status, diffG: Math.abs(left) };
+    return { ...line, haveG, spoolIds: matches.map((s) => s.id), spoolGrams, status, diffG: Math.abs(left) };
   });
 }
 
@@ -161,8 +177,8 @@ export interface CalcFilamentRow {
 }
 
 // O que conferir no estoque: cada linha com gramas. Se a pessoa escolheu um carretel na
-// linha (ex.: trocou o amarelo da placa por um dourado), vale a cor e o material dele;
-// senão, os da placa. Linhas iguais somam.
+// linha (ex.: trocou o amarelo da placa por um dourado), vale o produto dele; senão, a
+// cor e o material da placa. Linhas iguais somam.
 export function stockNeedsFromRows(rows: CalcFilamentRow[], spools: MatchableSpool[]): QuoteFilamentLine[] {
   const byKey = new Map<string, QuoteFilamentLine>();
   for (const row of rows) {
@@ -172,8 +188,15 @@ export function stockNeedsFromRows(rows: CalcFilamentRow[], spools: MatchableSpo
     const type = spool ? spool.material || "" : row.type || "";
     const color = spool ? spool.color_hex || "" : row.color || "";
     if (!color) continue;
-    const key = `${hex(color)}|${type.toUpperCase()}`;
-    const line = byKey.get(key) ?? { key, type, color, grams: 0 };
+    const identity = spool
+      ? spool.filament_product_id
+        ? { productId: spool.filament_product_id }
+        : { brand: spool.brand || "" }
+      : {};
+    const key = spool?.filament_product_id
+      ? `produto:${spool.filament_product_id}`
+      : `${hex(color)}|${type.toUpperCase()}${spool ? `|${(spool.brand || "").toUpperCase()}` : ""}`;
+    const line = byKey.get(key) ?? { key, type, color, grams: 0, ...identity };
     line.grams = round2(line.grams + grams);
     byKey.set(key, line);
   }

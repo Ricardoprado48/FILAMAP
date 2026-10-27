@@ -43,9 +43,11 @@ export function QuoteStockCheck({ needs, spools, spoolName }: Props) {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                 <span style={{ width: 10, height: 10, borderRadius: "50%", background: l.color || "#888", border: "1px solid #64748b", flexShrink: 0 }} />
-                <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ color: "#e2e8f0", overflowWrap: "anywhere" }}>
                   {colorName(l)}
-                  {l.spoolIds.length > 1 ? ` (+${l.spoolIds.length - 1} carretel${l.spoolIds.length > 2 ? "s" : ""})` : ""}
+                  {l.spoolIds.length > 1 ? (
+                    <span style={{ color: "#94a3b8" }}> · {l.spoolIds.length} carretéis: {l.spoolGrams.map((g) => `${g.toFixed(0)} g`).join(" + ")}</span>
+                  ) : null}
                 </span>
               </div>
               <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -60,7 +62,7 @@ export function QuoteStockCheck({ needs, spools, spoolName }: Props) {
         })}
       </div>
       <div style={{ fontSize: 10, color: "#64748b" }}>
-        Confere o carretel escolhido em Parâmetros da peça (ou a cor da placa, se nenhum foi escolhido), somando todos os carretéis iguais do estoque. Sobra menor que {STOCK_TIGHT_G} g pede repesagem, porque a balança pode ter errado.
+        Confere o carretel escolhido em Parâmetros da peça, somando os carretéis do mesmo produto (mesma marca, linha e cor). Sem carretel escolhido, soma pela cor e material da placa. Sobra menor que {STOCK_TIGHT_G} g pede repesagem, porque a balança pode ter errado.
       </div>
     </div>
   );

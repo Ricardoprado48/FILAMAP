@@ -11,20 +11,24 @@ export interface CreateCatalogItemInput {
   sale_price: number;
   notes?: string | null;
   plates?: StoredQuotePlate[] | null;
+  order_qty?: number;
 }
 
-// Banco sem a migration 20261025100000 (colunas notes/plates).
+// Banco sem as migrations 20261025100000 (notes/plates) ou 20261027100000 (order_qty).
 export function isMissingQuoteColumns(error: any): boolean {
   const text = `${error?.code ?? ""} ${error?.message ?? ""}`;
-  return /42703|PGRST204/.test(text) && /notes|plates/.test(text);
+  return /42703|PGRST204/.test(text) && /notes|plates|order_qty/.test(text);
 }
 
-// Grava o item; banco ainda sem notes/plates salva o resto e avisa (savedQuote=false).
-export async function createCatalogItem(input: CreateCatalogItemInput) {
-  const first = await supabase.from("catalog_items").insert(input);
+// Grava o item: com id atualiza o mesmo orçamento, sem id cria outro. Banco ainda sem
+// as colunas do orçamento salva o resto e avisa (savedQuote=false).
+export async function saveCatalogItem(input: CreateCatalogItemInput, id?: string | null) {
+  const write = (row: Partial<CreateCatalogItemInput>) =>
+    id ? supabase.from("catalog_items").update(row).eq("id", id) : supabase.from("catalog_items").insert(row);
+  const first = await write(input);
   if (first.error && isMissingQuoteColumns(first.error)) {
-    const { notes: _n, plates: _p, ...legacy } = input;
-    const retry = await supabase.from("catalog_items").insert(legacy);
+    const { notes: _n, plates: _p, order_qty: _q, ...legacy } = input;
+    const retry = await write(legacy);
     return { ...retry, savedQuote: false };
   }
   return { ...first, savedQuote: true };

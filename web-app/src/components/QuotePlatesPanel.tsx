@@ -1,12 +1,14 @@
 import { useRef, useState } from "react";
 import { readSlicedPlateFile } from "../utils/slicedPlate";
-import { formatDuration, summarizeQuote, type QuotePlate } from "../utils/quotePlates";
+import { formatDuration, summarizeOrder, summarizeQuote, type QuotePlate } from "../utils/quotePlates";
 
 interface Props {
   plates: QuotePlate[];
   onPlatesChange: (plates: QuotePlate[]) => void;
   notes: string;
   onNotesChange: (notes: string) => void;
+  // Peças da encomenda (campo Quantidade da calculadora).
+  orderQty: number;
 }
 
 const box = { background: "#0f172a", border: "1px solid #334155", borderRadius: 8 } as const;
@@ -17,11 +19,13 @@ function plateName(file: string, index: number, total: number): string {
   return total > 1 ? `${base} – placa ${index}` : base;
 }
 
-export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange }: Props) {
+export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange, orderQty }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const summary = summarizeQuote(plates);
+  const order = summarizeOrder(plates, orderQty);
+  const printsById = new Map(order.plates.map((o) => [o.id, o]));
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -83,6 +87,7 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange 
 
       {plates.map((p) => {
         const grams = p.filaments.reduce((s, f) => s + f.grams, 0);
+        const run = printsById.get(p.id);
         return (
           <div key={p.id} style={{ ...box, padding: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
             {p.thumbnail ? (
@@ -124,6 +129,12 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange 
                   <input value={p.notes} onChange={(e) => update(p.id, { notes: e.target.value })} placeholder="ex.: clone da original, por objeto" style={{ ...input, width: "100%" }} />
                 </label>
               </div>
+              {run && (
+                <div style={{ fontSize: 11, color: "#fcd34d" }}>
+                  🖨 Imprimir <b>{run.prints}×</b> = {run.pieces} peça{run.pieces === 1 ? "" : "s"}
+                  {run.pieces > order.qty ? ` (sobra ${Math.round((run.pieces - order.qty) * 100) / 100})` : ""}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -131,7 +142,7 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange 
 
       {plates.length > 0 && (
         <div style={{ ...box, padding: 10, fontSize: 12, color: "#e2e8f0", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-          <strong style={{ color: "#38bdf8" }}>Por unidade:</strong>
+          <strong style={{ color: "#38bdf8" }}>Por peça:</strong>
           <span>⏱ {formatDuration(summary.secondsPerUnit)}</span>
           <span>⚖️ {summary.gramsPerUnit.toFixed(1)} g</span>
           {summary.filaments.map((l) => (
@@ -140,6 +151,22 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange 
               {l.gramsPerUnit.toFixed(1)} g
             </span>
           ))}
+        </div>
+      )}
+
+      {plates.length > 0 && (
+        <div style={{ ...box, padding: 10, fontSize: 12, color: "#e2e8f0", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", borderColor: "#f59e0b" }}>
+          <strong style={{ color: "#fcd34d" }}>Encomenda de {order.qty} peça{order.qty === 1 ? "" : "s"}:</strong>
+          <span>🖨 {order.plates.reduce((s, o) => s + o.prints, 0)} impressões</span>
+          <span>⏱ {formatDuration(order.seconds)}</span>
+          <span>⚖️ {order.grams.toFixed(1)} g</span>
+          {order.filaments.map((l) => (
+            <span key={l.key} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: l.color || "#888", border: "1px solid #64748b" }} />
+              {l.grams.toFixed(1)} g
+            </span>
+          ))}
+          <span style={{ color: "#94a3b8", fontSize: 11 }}>Mude a quantidade em Parâmetros da peça.</span>
         </div>
       )}
 

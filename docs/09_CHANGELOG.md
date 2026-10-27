@@ -1,9 +1,19 @@
 # 09 — Changelog Técnico
 
+## 27/10/2026 — Web: orçamento por encomenda, editar orçamento, novo cálculo zerado
+
+- **Pedido:** (1) "Novo Cálculo" mantinha as placas do orçamento anterior; (2) abrir um orçamento do catálogo e salvar criava outro item; (3) "atende quantas unidades" não chegava em Parâmetros da peça -- com 2 peças por placa e encomenda de 12, a placa sai 6 vezes e a calculadora precisa mostrar o material e o valor disso.
+- **Quantidade (peças)** em Parâmetros da peça: com placas, cada placa entra `ceil(quantidade ÷ unidades)` vezes (`summarizeOrder`); tempo total e gramas de cada cor da encomenda vão para a calculadora. O painel de placas mostra "Imprimir N× = P peças (sobra X)" e o resumo da encomenda. Acessórios passam a ser por peça. Preço mostra a encomenda e o valor por peça.
+- **Catálogo guarda por peça** (total ÷ quantidade) e a quantidade (`order_qty`); reabrir mostra a encomenda de novo. Itens antigos = 1 peça (iguais a antes).
+- **Editar:** abrir item do catálogo marca "Editando"; salvar atualiza o mesmo item (`saveCatalogItem` com id); "Salvar como novo" cria outro.
+- **Novo Cálculo** zera placas, observações, quantidade, tempo e filamentos; se houver cálculo na tela, pergunta antes (Cancelar volta para ele).
+- **Banco:** `20261027100000_catalog_order_qty.sql`, aplicada por `ops/o13-encomenda-banco.ps1`.
+- **Testes:** Web 193/193 (3 novos).
+
 ## 25/10/2026 — Web: orçamento por placas fatiadas
 
 - **Contexto:** para orçar um produto de várias peças em várias placas, a pessoa fatiava placa por placa no Bambu Studio, anotava tempo e gramas totais e somava à mão. A arrumação das placas varia (placa original com todas as peças, clones com várias cópias), então ler o projeto inteiro não serve. O projeto salvo (.3mf) nem guarda tempo/gramas (conferido em CANECA_SAO_PAULO, 4 placas, e KIT_CANTINHO_DA_FE, 10 placas).
-- **Calculadora, seção "Placas do orçamento":** importa a placa fatiada exportada pelo Bambu Studio (Arquivo › Exportar › Exportar placa fatiada, `.gcode.3mf`), uma ou várias de uma vez. Cada placa mostra miniatura, tempo, gramas por cor, "atende quantas unidades" e observação. Por unidade do produto: soma de (placa ÷ unidades). Tempo e gramas por cor vão para a calculadora, cada cor ligada ao carretel do estoque (perfil do Bambu Studio → produto, ou material + cor) para usar o preço dele. Observações do produto. Salvar no catálogo guarda placas e observações; abrir o item do catálogo traz tudo de volta.
+- **Calculadora, seção "Placas do orçamento":** importa a placa fatiada exportada pelo Bambu Studio (botão ⌄ à esquerda de "Placa de impressão" › exportar arquivo fatiado, `.gcode.3mf`), uma ou várias de uma vez. Cada placa mostra miniatura, tempo, gramas por cor, "atende quantas unidades" e observação. Por unidade do produto: soma de (placa ÷ unidades). Tempo e gramas por cor vão para a calculadora, cada cor ligada ao carretel do estoque (perfil do Bambu Studio → produto, ou material + cor) para usar o preço dele. Observações do produto. Salvar no catálogo guarda placas e observações; abrir o item do catálogo traz tudo de volta.
 - **Leitura no navegador** (`zipReader.ts`, `slicedPlate.ts`): só o índice do ZIP, `Metadata/slice_info.config` e `Metadata/plate_N.png`; o G-code não é aberto nem enviado. Sem dependência nova (DecompressionStream). Conferido com um `.gcode.3mf` real gerado pelo Bambu Studio 02.08.03.66 (LOGO_SIMONE: 2256 s, 3,61 g + 0,49 g).
 - **Banco:** `20261025100000_catalog_quote_plates.sql` (colunas `notes` e `plates` em `catalog_items`), aplicada por `ops/o12-orcamento-banco.ps1`. Web nova contra banco sem ela salva o resto e avisa.
 - **Testes:** Web 190/190 (15 novos).

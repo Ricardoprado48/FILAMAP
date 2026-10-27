@@ -41,11 +41,11 @@ import {
   fetchUserFilamentProfiles,
 } from "./services/dataService";
 import {
-  createCatalogItem,
+  saveCatalogItem,
   deleteCatalogItem,
 } from "./services/catalogService";
 import { QuotePlatesPanel } from "./components/QuotePlatesPanel";
-import { hoursFromSeconds, matchSpoolForFilament, storablePlates, summarizeQuote, type QuotePlate } from "./utils/quotePlates";
+import { hoursFromSeconds, matchSpoolForFilament, storablePlates, summarizeOrder, type QuotePlate } from "./utils/quotePlates";
 import {
   updateSpoolWeight,
   linkSpoolNfc,
@@ -210,22 +210,56 @@ export default function App() {
   // Orçamento por placas fatiadas (QuotePlatesPanel) e observações do produto.
   const [quotePlates, setQuotePlates] = useState<QuotePlate[]>([]);
   const [quoteNotes, setQuoteNotes] = useState("");
+  // Peças da encomenda. Tempo e gramas da calculadora são da encomenda inteira; o
+  // catálogo guarda por peça (total ÷ quantidade).
+  const [orderQty, setOrderQty] = useState("1");
+  // Item do catálogo aberto para edição: salvar atualiza ele em vez de criar outro.
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
 
-  // Placas mudaram: tempo e gramas por cor (por unidade) vão para a calculadora, cada cor
-  // com o carretel do estoque que bate (para usar o preço dele). Só aqui -- não a cada
-  // atualização do estoque, para não desfazer o que a pessoa ajustou à mão.
-  function applyQuotePlates(next: QuotePlate[]) {
+  // Placas ou quantidade mudaram: tempo total e gramas de cada cor da encomenda vão para
+  // a calculadora, cada cor com o carretel do estoque que bate (para usar o preço dele).
+  // Só aqui -- não a cada atualização do estoque, para não desfazer o que a pessoa
+  // ajustou à mão.
+  function applyQuotePlates(next: QuotePlate[], qtyText: string = orderQty) {
     setQuotePlates(next);
     if (!next.length) return;
-    const summary = summarizeQuote(next);
-    setCalcPrintHours(hoursFromSeconds(summary.secondsPerUnit));
-    const rows = summary.filaments.map((l) => ({
+    const order = summarizeOrder(next, parseFloat(qtyText) || 1);
+    setCalcPrintHours(hoursFromSeconds(order.seconds));
+    const rows = order.filaments.map((l) => ({
       spoolId: matchSpoolForFilament(l, inventory, filamentProfiles),
-      weightG: l.gramsPerUnit.toString(),
+      weightG: l.grams.toString(),
       manualPricePerKg: "85.00",
     }));
     while (rows.length < 4) rows.push({ spoolId: "", weightG: "", manualPricePerKg: "85.00" });
     setCalcFilaments(rows);
+  }
+
+  function handleOrderQtyChange(value: string) {
+    setOrderQty(value);
+    if (quotePlates.length) applyQuotePlates(quotePlates, value);
+  }
+
+  function emptyFilamentRows() {
+    return [0, 1, 2, 3].map(() => ({ spoolId: "", weightG: "", manualPricePerKg: "85.00" }));
+  }
+
+  // "Novo Cálculo": começa zerado. Se já tem cálculo na tela, pergunta antes; Cancelar só
+  // volta para o cálculo que estava aberto.
+  function handleNewCalculation() {
+    const hasWork = editingCatalogId || quotePlates.length || quoteNotes.trim() || calcFilaments.some((f) => parseFloat(f.weightG) > 0);
+    if (hasWork && !window.confirm("Começar um cálculo zerado?\n\nOK = zera tudo (o que não foi salvo some).\nCancelar = volta para o cálculo aberto.")) {
+      setCalcSubTab("calculator");
+      return;
+    }
+    setEditingCatalogId(null);
+    setCalcPartName("Nova Peça 3D");
+    setCalcPrintHours("");
+    setCalcExtraCosts("0");
+    setOrderQty("1");
+    setQuotePlates([]);
+    setQuoteNotes("");
+    setCalcFilaments(emptyFilamentRows());
+    setCalcSubTab("calculator");
   }
 
   useEffect(() => {
@@ -335,7 +369,9 @@ export default function App() {
   const machineCostVal = parseFloat(printerCost) || 4500;
   const lifespanHours = parseFloat(printerLifespanH) || 10000;
   const markup = parseFloat(markupMultiplier) || 3.0;
-  const extrasCost = parseFloat(calcExtraCosts) || 0;
+  const qty = parseFloat(orderQty) > 0 ? parseFloat(orderQty) : 1;
+  // Acessórios são por peça; o resto da calculadora já é da encomenda inteira.
+  const extrasCost = (parseFloat(calcExtraCosts) || 0) * qty;
 
   const energyPerHour = powerKw * tariffKwh;
   const depreciationPerHour = lifespanHours > 0 ? (machineCostVal / lifespanHours) : 0;
@@ -360,51 +396,65 @@ export default function App() {
   const totalProductionCost = totalFilamentCost + machineCostTotal + extrasCost;
   const suggestedSalePrice = totalProductionCost * markup;
   const netEarnings = suggestedSalePrice - totalProductionCost;
+  const perPiece = (n: number) => parseFloat((n / qty).toFixed(2));
 
-  async function handleSaveToCatalog() {
+  async function handleSaveToCatalog(asNew = false) {
     if (!calcPartName.trim()) {
       alert("Por favor, digite o nome da peça!");
       return;
     }
 
     const plateMaterials = Array.from(new Set(quotePlates.flatMap((p) => p.filaments.map((f) => f.type)).filter(Boolean)));
-    const { error, savedQuote } = await createCatalogItem({
-      name: calcPartName.trim().toUpperCase(),
-      material: plateMaterials.length ? plateMaterials.join("/") : "PETG/PLA",
-      notes: quoteNotes.trim() || null,
-      plates: quotePlates.length ? storablePlates(quotePlates) : null,
-      weight_g: totalFilamentWeight,
-      print_hours: hours,
-      accessories_cost: extrasCost,
-      production_cost: parseFloat(totalProductionCost.toFixed(2)),
-      sale_price: parseFloat(suggestedSalePrice.toFixed(2)),
-    });
+    const id = asNew ? null : editingCatalogId;
+    // O catálogo guarda por peça; order_qty lembra a encomenda para reabrir igual.
+    const { error, savedQuote } = await saveCatalogItem(
+      {
+        name: calcPartName.trim().toUpperCase(),
+        material: plateMaterials.length ? plateMaterials.join("/") : "PETG/PLA",
+        notes: quoteNotes.trim() || null,
+        plates: quotePlates.length ? storablePlates(quotePlates) : null,
+        order_qty: qty,
+        weight_g: perPiece(totalFilamentWeight),
+        print_hours: perPiece(hours),
+        accessories_cost: parseFloat(calcExtraCosts) || 0,
+        production_cost: perPiece(totalProductionCost),
+        sale_price: perPiece(suggestedSalePrice),
+      },
+      id
+    );
 
     if (error) {
       alert("Erro ao salvar: " + error.message);
     } else {
+      const what = id ? "atualizada no" : "adicionada ao";
       alert(
         savedQuote
-          ? `✅ Peça "${calcPartName.toUpperCase()}" adicionada ao Catálogo!`
-          : `✅ Peça "${calcPartName.toUpperCase()}" adicionada ao Catálogo, mas as placas e observações não foram guardadas: o banco ainda não tem essa atualização.`
+          ? `✅ Peça "${calcPartName.toUpperCase()}" ${what} Catálogo!`
+          : `✅ Peça "${calcPartName.toUpperCase()}" ${what} Catálogo, mas as placas, observações e a quantidade não foram guardadas: o banco ainda não tem essa atualização.`
       );
+      setEditingCatalogId(null);
       await loadData();
       setCalcSubTab("catalog");
     }
   }
 
+  // Abre o item para editar: valores do catálogo são por peça, a calculadora mostra a
+  // encomenda (× quantidade). Salvar atualiza este mesmo item.
   function handleLoadCatalogItem(item: CatalogItem) {
+    const itemQty = item.order_qty && item.order_qty > 0 ? item.order_qty : 1;
+    setEditingCatalogId(item.id);
     setCalcPartName(item.name);
     setCalcExtraCosts(item.accessories_cost.toString());
     setQuoteNotes(item.notes ?? "");
+    setOrderQty(String(itemQty));
     if (item.plates?.length) {
-      applyQuotePlates(item.plates);
+      applyQuotePlates(item.plates, String(itemQty));
     } else {
       setQuotePlates([]);
-      setCalcPrintHours(item.print_hours.toString());
-      const updated = [...calcFilaments];
-      updated[0].weightG = item.weight_g.toString();
-      setCalcFilaments(updated);
+      setCalcPrintHours(String(parseFloat((item.print_hours * itemQty).toFixed(2))));
+      const rows = emptyFilamentRows();
+      rows[0].weightG = String(parseFloat((item.weight_g * itemQty).toFixed(2)));
+      setCalcFilaments(rows);
     }
     setCalcSubTab("calculator");
   }
@@ -1684,7 +1734,7 @@ export default function App() {
               📚 Biblioteca de Peças ({catalog.length})
             </button>
             <button
-              onClick={() => setCalcSubTab("calculator")}
+              onClick={handleNewCalculation}
               style={{
                 flex: 1, padding: "8px", borderRadius: 6, border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer",
                 background: calcSubTab === "calculator" ? "#0284c7" : "transparent",
@@ -1748,7 +1798,8 @@ export default function App() {
                       <div style={{ flex: "1 1 200px" }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#f8fafc" }}>{item.name}</div>
                         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>
-                          {item.material} • {item.weight_g}g • {item.print_hours}h
+                          {item.material} • {item.weight_g}g • {item.print_hours}h por peça
+                          {item.order_qty && item.order_qty > 1 ? ` • encomenda de ${item.order_qty}` : ""}
                           {item.plates?.length ? ` • 📐 ${item.plates.length} placa${item.plates.length > 1 ? "s" : ""}` : ""}
                         </div>
                         {item.notes && (
@@ -1809,7 +1860,12 @@ export default function App() {
 
           {calcSubTab === "calculator" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <QuotePlatesPanel plates={quotePlates} onPlatesChange={applyQuotePlates} notes={quoteNotes} onNotesChange={setQuoteNotes} />
+              {editingCatalogId && (
+                <div style={{ background: "rgba(245, 158, 11, 0.12)", border: "1px solid #f59e0b", color: "#fcd34d", padding: "8px 12px", borderRadius: 8, fontSize: 12 }}>
+                  ✏️ Editando <b>{calcPartName}</b> do catálogo: salvar <b>atualiza este orçamento</b>. Para guardar como outro, use "Salvar como novo".
+                </div>
+              )}
+              <QuotePlatesPanel plates={quotePlates} onPlatesChange={(next) => applyQuotePlates(next)} notes={quoteNotes} onNotesChange={setQuoteNotes} orderQty={qty} />
 
               <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1852,19 +1908,23 @@ export default function App() {
                     <input type="text" value={calcPartName} onChange={(e) => setCalcPartName(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                   </div>
 
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
                     <div>
-                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Tempo (Horas)</label>
+                      <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Quantidade (peças)</label>
+                      <input type="number" min="1" step="1" value={orderQty} onChange={(e) => handleOrderQtyChange(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #38bdf8", borderRadius: 6, color: "#38bdf8", fontWeight: 700, boxSizing: "border-box" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Tempo total (h)</label>
                       <input type="number" step="0.1" value={calcPrintHours} onChange={(e) => setCalcPrintHours(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Acessórios (R$)</label>
+                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Acessórios/peça (R$)</label>
                       <input type="number" step="0.1" value={calcExtraCosts} onChange={(e) => setCalcExtraCosts(e.target.value)} style={{ width: "100%", padding: 8, background: "#0f172a", border: "1px solid #334155", borderRadius: 6, color: "#fff", boxSizing: "border-box" }} />
                     </div>
                   </div>
 
                   <div>
-                    <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Filamentos (AMS Lite):</label>
+                    <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Filamentos (AMS Lite){qty > 1 ? ` — gramas da encomenda (${qty} peças)` : ""}:</label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
                       {calcFilaments.map((f, idx) => (
                         <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 6 }}>
@@ -1932,19 +1992,37 @@ export default function App() {
                     </div>
 
                     <div style={{ background: "rgba(2, 132, 199, 0.2)", padding: 12, borderRadius: 8, textAlign: "center", border: "1px solid rgba(56, 189, 248, 0.4)", marginBottom: 12 }}>
-                      <span style={{ fontSize: 10, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>Preço de Venda Sugerido</span>
+                      <span style={{ fontSize: 10, color: "#93c5fd", textTransform: "uppercase", fontWeight: 700 }}>
+                        {qty > 1 ? `Preço da encomenda (${qty} peças)` : "Preço de Venda Sugerido"}
+                      </span>
                       <div style={{ fontSize: 28, fontWeight: 900, color: "#38bdf8" }}>R$ {suggestedSalePrice.toFixed(2)}</div>
                       <div style={{ fontSize: 11, color: "#34d399", fontWeight: 700, marginTop: 2 }}>Ganho: + R$ {netEarnings.toFixed(2)}</div>
+                      {qty > 1 && (
+                        <div style={{ fontSize: 12, color: "#e2e8f0", marginTop: 6 }}>
+                          Por peça: <b style={{ color: "#38bdf8" }}>R$ {perPiece(suggestedSalePrice).toFixed(2)}</b> · custo R$ {perPiece(totalProductionCost).toFixed(2)}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleSaveToCatalog}
-                    style={{ width: "100%", padding: 12, background: "#059669", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
-                  >
-                    💾 Salvar Peça no Catálogo
-                  </button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveToCatalog()}
+                      style={{ flex: 2, padding: 12, background: "#059669", color: "#fff", border: "none", borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                    >
+                      💾 {editingCatalogId ? "Salvar alterações" : "Salvar Peça no Catálogo"}
+                    </button>
+                    {editingCatalogId && (
+                      <button
+                        type="button"
+                        onClick={() => handleSaveToCatalog(true)}
+                        style={{ flex: 1, padding: 12, background: "transparent", color: "#34d399", border: "1px solid #059669", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                      >
+                        ➕ Salvar como novo
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

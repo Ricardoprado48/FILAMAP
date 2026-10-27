@@ -120,6 +120,8 @@ export interface CatalogItem {
   // Orçamento por placas (migration 20261025100000). Ausentes em banco antigo.
   notes?: string | null;
   plates?: StoredQuotePlate[] | null;
+  // Peças da encomenda; os valores do item são por peça (migration 20261027100000).
+  order_qty?: number | null;
 }
 
 export interface StoredQuotePlate {

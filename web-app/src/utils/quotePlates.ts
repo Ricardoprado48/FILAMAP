@@ -124,6 +124,33 @@ export function matchSpoolForFilament(
   return rank(byColor);
 }
 
+// Sobra abaixo disso: o saldo pode estar errado pela balança -- pedir para repesar.
+export const STOCK_TIGHT_G = 35;
+
+export interface StockLine extends QuoteFilamentLine {
+  haveG: number;
+  spoolIds: string[];
+  status: "ok" | "tight" | "buy";
+  // Quanto falta (status "buy") ou quanto sobra (os outros).
+  diffG: number;
+}
+
+// Tem material para o orçamento? Soma o saldo de todos os carretéis do estoque (não
+// arquivados) com a mesma cor e o mesmo material da placa.
+export function checkStock(lines: QuoteFilamentLine[], spools: MatchableSpool[]): StockLine[] {
+  const active = spools.filter((s) => !s.archived_at);
+  return lines.map((line) => {
+    const material = (line.type || "").toUpperCase();
+    const matches = active.filter(
+      (s) => hex(s.color_hex) === hex(line.color) && (!material || (s.material || "").toUpperCase().includes(material))
+    );
+    const haveG = round2(matches.reduce((sum, s) => sum + Math.max(0, s.current_weight ?? 0), 0));
+    const left = round2(haveG - line.grams);
+    const status = left < 0 ? "buy" : left < STOCK_TIGHT_G ? "tight" : "ok";
+    return { ...line, haveG, spoolIds: matches.map((s) => s.id), status, diffG: Math.abs(left) };
+  });
+}
+
 export function hoursFromSeconds(seconds: number): string {
   return (Math.round((seconds / 3600) * 100) / 100).toString();
 }

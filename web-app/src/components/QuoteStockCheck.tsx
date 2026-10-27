@@ -1,0 +1,67 @@
+import { checkStock, STOCK_TIGHT_G, summarizeQuote, type MatchableSpool, type QuotePlate } from "../utils/quotePlates";
+
+interface Props {
+  plates: QuotePlate[];
+  spools: MatchableSpool[];
+  spoolName: (id: string) => string;
+}
+
+const STATUS = {
+  ok: { icon: "✅", label: "Tem", color: "#34d399" },
+  tight: { icon: "⚖️", label: "Repese para conferir", color: "#fcd34d" },
+  buy: { icon: "⚠️", label: "Comprar carretel", color: "#f87171" },
+} as const;
+
+// Tem material para imprimir as placas? Uma linha por cor: precisa x tem no estoque.
+export function QuoteStockCheck({ plates, spools, spoolName }: Props) {
+  if (!plates.length) return null;
+  const lines = checkStock(summarizeQuote(plates).filaments, spools);
+  if (!lines.length) return null;
+
+  const colorName = (l: (typeof lines)[number]) => (l.spoolIds.length ? spoolName(l.spoolIds[0]) : `${l.type} ${l.color}`);
+  const buy = lines.filter((l) => l.status === "buy");
+  const tight = lines.filter((l) => l.status === "tight");
+  const headline = buy.length
+    ? { ...STATUS.buy, text: `Comprar carretel: ${buy.map(colorName).join(", ")}` }
+    : tight.length
+      ? { ...STATUS.tight, text: `Repese antes de começar: ${tight.map(colorName).join(", ")}` }
+      : { ...STATUS.ok, text: "Pode imprimir: tem material de todas as cores" };
+
+  return (
+    <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: `1px solid ${headline.color}`, display: "flex", flexDirection: "column", gap: 8 }}>
+      <strong style={{ fontSize: 13, color: "#f8fafc" }}>🧵 MATERIAL NO ESTOQUE</strong>
+      <div style={{ fontSize: 13, fontWeight: 700, color: headline.color }}>
+        {headline.icon} {headline.text}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {lines.map((l) => {
+          const st = STATUS[l.status];
+          return (
+            <div
+              key={l.key}
+              style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, alignItems: "center", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: "6px 10px", fontSize: 12 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: l.color || "#888", border: "1px solid #64748b", flexShrink: 0 }} />
+                <span style={{ color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {colorName(l)}
+                  {l.spoolIds.length > 1 ? ` (+${l.spoolIds.length - 1} carretel${l.spoolIds.length > 2 ? "s" : ""})` : ""}
+                </span>
+              </div>
+              <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                <span style={{ color: "#94a3b8" }}>precisa {l.grams.toFixed(0)} g · tem {l.haveG.toFixed(0)} g</span>
+                <div style={{ color: st.color, fontWeight: 700 }}>
+                  {st.icon} {st.label}
+                  {l.status === "buy" ? ` (faltam ${l.diffG.toFixed(0)} g)` : ` (sobram ${l.diffG.toFixed(0)} g)`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: "#64748b" }}>
+        Soma todos os carretéis do estoque da mesma cor e material. Sobra menor que {STOCK_TIGHT_G} g pede repesagem, porque a balança pode ter errado.
+      </div>
+    </div>
+  );
+}

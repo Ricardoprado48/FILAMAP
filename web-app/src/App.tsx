@@ -45,6 +45,7 @@ import {
   deleteCatalogItem,
 } from "./services/catalogService";
 import { QuotePlatesPanel } from "./components/QuotePlatesPanel";
+import { QuoteStockCheck } from "./components/QuoteStockCheck";
 import { hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, storablePlates, summarizeQuote, type QuotePlate } from "./utils/quotePlates";
 import {
   updateSpoolWeight,
@@ -235,14 +236,8 @@ export default function App() {
     return [0, 1, 2, 3].map(() => ({ spoolId: "", weightG: "", manualPricePerKg: "85.00" }));
   }
 
-  // "Novo Cálculo": começa zerado. Se já tem cálculo na tela, pergunta antes; Cancelar só
-  // volta para o cálculo que estava aberto.
+  // "Novo Cálculo" sempre começa zerado (abrir pela biblioteca é que traz um orçamento).
   function handleNewCalculation() {
-    const hasWork = editingCatalogId || quotePlates.length || quoteNotes.trim() || calcFilaments.some((f) => parseFloat(f.weightG) > 0);
-    if (hasWork && !window.confirm("Começar um cálculo zerado?\n\nOK = zera tudo (o que não foi salvo some).\nCancelar = volta para o cálculo aberto.")) {
-      setCalcSubTab("calculator");
-      return;
-    }
     setEditingCatalogId(null);
     setCalcPartName("Nova Peça 3D");
     setCalcPrintHours("");
@@ -1848,39 +1843,10 @@ export default function App() {
                 </div>
               )}
               <QuotePlatesPanel plates={quotePlates} onPlatesChange={(next) => applyQuotePlates(next)} notes={quoteNotes} onNotesChange={setQuoteNotes} />
-
-              <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <h2 style={{ fontSize: 16, color: "#f8fafc", margin: 0 }}>Calculadora de Custo e Preço</h2>
-                    <p style={{ color: "#94a3b8", fontSize: 11, margin: "2px 0 0" }}>Bambu Lab {activePrinter?.model || ""} (Energia + Depreciação + Filamento)</p>
-                  </div>
-                  <button onClick={() => setShowConfigPanel(!showConfigPanel)} style={{ background: showConfigPanel ? "#0284c7" : "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                    ⚙️ {showConfigPanel ? "Fechar Custos" : "Custos da Oficina"}
-                  </button>
-                </div>
-
-                {showConfigPanel && (
-                  <div style={{ marginTop: 12, padding: 10, background: "#0f172a", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Luz (R$/kWh)</label>
-                      <input type="number" step="0.01" value={energyTariff} onChange={(e) => setEnergyTariff(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Potência A1 (W)</label>
-                      <input type="number" value={printerPowerW} onChange={(e) => setPrinterPowerW(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Valor A1 (R$)</label>
-                      <input type="number" value={printerCost} onChange={(e) => setPrinterCost(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Vida Útil (h)</label>
-                      <input type="number" value={printerLifespanH} onChange={(e) => setPrinterLifespanH(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
-                    </div>
-                  </div>
-                )}
-              </div>
+              <QuoteStockCheck plates={quotePlates} spools={inventory} spoolName={(id) => {
+                const s = inventory.find((x) => x.id === id);
+                return s ? spoolTitle(s) : "";
+              }} />
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
                 <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1995,6 +1961,39 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+
+              <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <h2 style={{ fontSize: 16, color: "#f8fafc", margin: 0 }}>⚙️ Custos da Oficina</h2>
+                    <p style={{ color: "#94a3b8", fontSize: 11, margin: "2px 0 0" }}>Bambu Lab {activePrinter?.model || ""} (luz, valor e vida útil da impressora: preencha uma vez)</p>
+                  </div>
+                  <button onClick={() => setShowConfigPanel(!showConfigPanel)} style={{ background: showConfigPanel ? "#0284c7" : "#0f172a", color: "#38bdf8", border: "1px solid #38bdf8", padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    {showConfigPanel ? "Fechar" : "Editar"}
+                  </button>
+                </div>
+
+                {showConfigPanel && (
+                  <div style={{ marginTop: 12, padding: 10, background: "#0f172a", borderRadius: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Luz (R$/kWh)</label>
+                      <input type="number" step="0.01" value={energyTariff} onChange={(e) => setEnergyTariff(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Potência A1 (W)</label>
+                      <input type="number" value={printerPowerW} onChange={(e) => setPrinterPowerW(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Valor A1 (R$)</label>
+                      <input type="number" value={printerCost} onChange={(e) => setPrinterCost(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: "#94a3b8" }}>Vida Útil (h)</label>
+                      <input type="number" value={printerLifespanH} onChange={(e) => setPrinterLifespanH(e.target.value)} style={{ width: "100%", padding: 4, background: "#1e293b", border: "1px solid #475569", borderRadius: 4, color: "#fff" }} />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, printsOf, storablePlates, summarizeQuote, type QuotePlate } from "./quotePlates";
+import { checkStock, formatDuration, hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, printsOf, storablePlates, summarizeQuote, type QuotePlate } from "./quotePlates";
+
+describe("checkStock", () => {
+  const need = (color: string, grams: number) => ({ key: color, type: "PLA", color, grams });
+
+  it("soma todos os carretéis da mesma cor e material; folga de 35 g ou mais = tem", () => {
+    const spools = [
+      { id: "p1", material: "PLA", color_hex: "#000000", current_weight: 300 },
+      { id: "p2", material: "PLA Velvet", color_hex: "#000000ff", current_weight: 810 },
+      { id: "p-petg", material: "PETG", color_hex: "#000000", current_weight: 900 },
+      { id: "p-arq", material: "PLA", color_hex: "#000000", current_weight: 900, archived_at: "2026-10-01" },
+    ];
+    const [l] = checkStock([need("#000000", 946.5)], spools);
+    expect(l).toMatchObject({ haveG: 1110, spoolIds: ["p1", "p2"], status: "ok", diffG: 163.5 });
+  });
+
+  it("sobra menos de 35 g = repesar; falta = comprar com quanto falta", () => {
+    const spools = [
+      { id: "v", material: "PLA", color_hex: "#F72323", current_weight: 250 },
+      { id: "b", material: "PLA", color_hex: "#FFFFFF", current_weight: 5 },
+    ];
+    const [vermelho, branco, azul] = checkStock([need("#F72323", 223.8), need("#FFFFFF", 15), need("#0000FF", 10)], spools);
+    expect(vermelho).toMatchObject({ status: "tight", diffG: 26.2 });
+    expect(branco).toMatchObject({ status: "buy", diffG: 10 });
+    expect(azul).toMatchObject({ status: "buy", haveG: 0, diffG: 10, spoolIds: [] });
+  });
+});
 
 const plate = (over: Partial<QuotePlate>): QuotePlate => ({
   id: "p",

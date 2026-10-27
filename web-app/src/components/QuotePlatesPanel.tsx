@@ -74,7 +74,7 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange 
 
       {plates.length === 0 && (
         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
-          No Bambu Studio, fatie a placa e use <b>Arquivo › Exportar › Exportar placa fatiada</b> (.gcode.3mf). Importe uma por uma (ou várias de uma vez) e diga quantas unidades do produto cada placa atende: 4 copos numa placa = 4; as tampas de 6 produtos = 6.
+          No Bambu Studio, clique em <b>Fatiar placa</b>; depois, na seta ▾ ao lado de <b>Imprimir placa</b> (canto superior direito), escolha <b>Exportar arquivo fatiado da placa</b> ou <b>Exportar todos os arquivos fatiados</b> (.gcode.3mf). Também fica em <b>Arquivo › Exportar</b>, só depois de fatiar. Importe uma por uma (ou várias de uma vez) e diga quantas unidades do produto cada placa atende: 4 copos numa placa = 4; as tampas de 6 produtos = 6.
           Tempo e gramas por cor vão direto para o cálculo abaixo.
         </div>
       )}

@@ -1,4 +1,4 @@
-// Placa fatiada exportada pelo Bambu Studio (seta ao lado de Imprimir placa > Exportar arquivo fatiado da placa,
+// Placa fatiada exportada pelo Bambu Studio (botão ao lado de Placa de impressão > exportar arquivo fatiado,
 // .gcode.3mf). Metadata/slice_info.config traz, por placa: tempo previsto (prediction, em
 // segundos), peso total e gramas por filamento (cor, material, perfil). O projeto salvo
 // (.3mf comum) NÃO tem esses dados -- só o arquivo fatiado.
@@ -80,7 +80,7 @@ function toDataUrl(bytes: Uint8Array, mime: string): string {
 export async function readSlicedPlateFile(buf: ArrayBuffer): Promise<SlicedPlate[]> {
   const entries = listZipEntries(buf);
   const info = entries.find((e) => e.name === "Metadata/slice_info.config");
-  if (!info) throw new Error("Este arquivo não tem os dados do fatiamento. No Bambu Studio, fatie e use a seta ▾ ao lado de Imprimir placa › Exportar arquivo fatiado da placa (.gcode.3mf).");
+  if (!info) throw new Error("Este arquivo não tem os dados do fatiamento. No Bambu Studio, fatie e use o botão ⌄ à esquerda de Placa de impressão › exportar arquivo fatiado (.gcode.3mf).");
   const plates = parseSliceInfo(new TextDecoder().decode(await readZipEntry(buf, info)));
   if (!plates.length || plates.every((p) => p.seconds === 0 && p.weightG === 0)) {
     throw new Error("O arquivo não tem placa fatiada. No Bambu Studio, fatie a placa antes de exportar (o projeto salvo .3mf não guarda tempo nem gramas).");

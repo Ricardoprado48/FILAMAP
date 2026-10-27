@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "$(Split-Path $PSScriptRoot -Parent)"
-$Aprovado = "1705d38d8df3dacca0b53201023b5a1a4aa80956"
+$Aprovado = "d33bd40328432162b69df9a7433127b2a2d08038"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
 $SetupSha = "A6EF9FF5B953CD56EA772A6AAF89961424E3DE2FB8BDEDB09EB3702BA0261AE4"
 $AgentVersao = "4.4.2"

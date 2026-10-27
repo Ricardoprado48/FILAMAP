@@ -1846,10 +1846,6 @@ export default function App() {
                 </div>
               )}
               <QuotePlatesPanel plates={quotePlates} onPlatesChange={(next) => applyQuotePlates(next)} notes={quoteNotes} onNotesChange={setQuoteNotes} />
-              <QuoteStockCheck needs={stockNeedsFromRows(calcFilaments, inventory)} spools={inventory} spoolName={(id) => {
-                const s = inventory.find((x) => x.id === id);
-                return s ? spoolTitle(s) : "";
-              }} />
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
                 <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1981,6 +1977,11 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              <QuoteStockCheck needs={stockNeedsFromRows(calcFilaments, inventory)} spools={inventory} spoolName={(id) => {
+                const s = inventory.find((x) => x.id === id);
+                return s ? spoolTitle(s) : "";
+              }} />
 
               <div style={{ background: "#1e293b", padding: 14, borderRadius: 12, border: "1px solid #334155" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

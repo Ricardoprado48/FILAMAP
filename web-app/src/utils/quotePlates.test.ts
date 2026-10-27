@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, hoursFromSeconds, matchSpoolForFilament, printsFor, storablePlates, summarizeOrder, summarizeQuote, type QuotePlate } from "./quotePlates";
+import { formatDuration, hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, printsOf, storablePlates, summarizeQuote, type QuotePlate } from "./quotePlates";
 
 const plate = (over: Partial<QuotePlate>): QuotePlate => ({
   id: "p",
   name: "placa",
   seconds: 3600,
   filaments: [],
-  units: 1,
+  prints: 1,
   notes: "",
   ...over,
 });
@@ -15,60 +15,34 @@ const PRETO = { id: 1, type: "PLA", color: "#000000", grams: 0, trayInfoIdx: "Pe
 const VERMELHO = { id: 2, type: "PLA", color: "#F72323", grams: 0, trayInfoIdx: "P790d873" };
 
 describe("summarizeQuote", () => {
-  it("divide cada placa pelas unidades que ela atende e soma por cor", () => {
+  it("soma cada placa × vezes: tempo total e gramas de cada cor (troféu: base 3×, corpo 6×, plaquinha 3×)", () => {
     const s = summarizeQuote([
-      // 4 corpos de caneca numa placa
-      plate({ seconds: 4 * 3600, units: 4, filaments: [{ ...PRETO, grams: 160 }, { ...VERMELHO, grams: 40 }] }),
-      // tampas de 6 produtos numa placa
-      plate({ seconds: 1800, units: 6, filaments: [{ ...PRETO, grams: 30 }] }),
+      plate({ id: "base", seconds: 5 * 3600 + 42 * 60, prints: 3, filaments: [{ ...PRETO, grams: 155.5 }] }),
+      plate({ id: "corpo", seconds: 4 * 3600 + 13 * 60, prints: 6, filaments: [{ ...PRETO, grams: 80 }, { ...VERMELHO, grams: 21.9 }] }),
+      plate({ id: "plaquinha", seconds: 79 * 60, prints: 3, filaments: [{ ...VERMELHO, grams: 30.8 }] }),
     ]);
-    expect(s.secondsPerUnit).toBe(3600 + 300);
+    expect(s.prints).toBe(12);
+    expect(s.seconds).toBe(46 * 3600 + 21 * 60);
     expect(s.filaments).toEqual([
-      { key: "Pef7a165|PLA|#000000", type: "PLA", color: "#000000", trayInfoIdx: "Pef7a165", gramsPerUnit: 45 },
-      { key: "P790d873|PLA|#F72323", type: "PLA", color: "#F72323", trayInfoIdx: "P790d873", gramsPerUnit: 10 },
+      { key: "Pef7a165|PLA|#000000", type: "PLA", color: "#000000", trayInfoIdx: "Pef7a165", grams: 946.5 },
+      { key: "P790d873|PLA|#F72323", type: "PLA", color: "#F72323", trayInfoIdx: "P790d873", grams: 223.8 },
     ]);
-    expect(s.gramsPerUnit).toBe(55);
+    expect(s.grams).toBe(1170.3);
   });
 
-  it("placa original com todas as peças (atende 1) = custo de uma unidade", () => {
-    const s = summarizeQuote([plate({ seconds: 2256, units: 1, filaments: [{ ...PRETO, grams: 3.61 }] })]);
-    expect(s).toEqual({ secondsPerUnit: 2256, gramsPerUnit: 3.61, filaments: [expect.objectContaining({ gramsPerUnit: 3.61 })] });
-  });
-
-  it("unidades zeradas ou vazias contam como 1 (não divide por zero)", () => {
-    expect(summarizeQuote([plate({ units: 0, filaments: [{ ...PRETO, grams: 10 }] })]).gramsPerUnit).toBe(10);
+  it("vezes vazias ou zeradas contam como 1", () => {
+    expect(summarizeQuote([plate({ prints: 0, filaments: [{ ...PRETO, grams: 10 }] })]).grams).toBe(10);
+    expect(printsOf({})).toBe(1);
   });
 
   it("sem placas, tudo zero", () => {
-    expect(summarizeQuote([])).toEqual({ secondsPerUnit: 0, gramsPerUnit: 0, filaments: [] });
-  });
-});
-
-describe("summarizeOrder", () => {
-  it("encomenda de 12, 2 por placa: imprime 6 vezes e soma tempo e gramas de cada cor", () => {
-    const o = summarizeOrder([plate({ id: "a", seconds: 3600, units: 2, filaments: [{ ...PRETO, grams: 50 }, { ...VERMELHO, grams: 10 }] })], 12);
-    expect(o.plates).toEqual([{ id: "a", prints: 6, pieces: 12 }]);
-    expect(o.seconds).toBe(6 * 3600);
-    expect(o.filaments.map((l) => l.grams)).toEqual([300, 60]);
-    expect(o.grams).toBe(360);
+    expect(summarizeQuote([])).toEqual({ prints: 0, seconds: 0, grams: 0, filaments: [] });
   });
 
-  it("arredonda para cima e mostra a sobra; cada placa com o seu rendimento", () => {
-    const o = summarizeOrder(
-      [plate({ id: "corpo", units: 2, filaments: [{ ...PRETO, grams: 40 }] }), plate({ id: "tampa", units: 6, filaments: [{ ...PRETO, grams: 30 }] })],
-      5
-    );
-    expect(o.plates).toEqual([
-      { id: "corpo", prints: 3, pieces: 6 },
-      { id: "tampa", prints: 1, pieces: 6 },
-    ]);
-    expect(o.grams).toBe(3 * 40 + 30);
-  });
-
-  it("quantidade 1 (padrão) = cada placa uma vez", () => {
-    expect(printsFor(4, 1)).toBe(1);
-    expect(printsFor(0, 0)).toBe(1);
-    expect(printsFor(2, 12)).toBe(6);
+  it("placas salvas antes (campo units) voltam com o mesmo número em vezes", () => {
+    const [old] = loadStoredPlates([{ id: "a", name: "x", seconds: 60, filaments: [], notes: "", units: 6 }]);
+    expect(old.prints).toBe(6);
+    expect(old).not.toHaveProperty("units");
   });
 });
 

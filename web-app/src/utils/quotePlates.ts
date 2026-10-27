@@ -1,7 +1,7 @@
 // Orçamento por placas: cada placa fatiada entra com tempo e gramas por cor, e com
-// quantas unidades do produto ela atende (4 copos numa placa = 4; placa só com as
-// tampas de 6 produtos = 6). Por unidade do produto: soma de (placa ÷ unidades).
-// A arrumação das placas no Bambu Studio é livre -- só importa o que cada uma rende.
+// quantas vezes ela vai ser impressa (4 bases por placa, 12 pedidas = 3 vezes).
+// Total = soma de (placa × vezes): é o tempo de máquina e o material de cada cor que a
+// calculadora usa. A arrumação das placas no Bambu Studio é livre.
 
 import type { SlicedFilament } from "./slicedPlate";
 
@@ -10,7 +10,8 @@ export interface QuotePlate {
   name: string;
   seconds: number;
   filaments: SlicedFilament[];
-  units: number;
+  // Quantas vezes imprimir esta placa.
+  prints: number;
   notes: string;
   // Só na tela (não vai para o banco).
   thumbnail?: string;
@@ -21,12 +22,13 @@ export interface QuoteFilamentLine {
   type: string;
   color: string;
   trayInfoIdx?: string;
-  gramsPerUnit: number;
+  grams: number;
 }
 
 export interface QuoteSummary {
-  secondsPerUnit: number;
-  gramsPerUnit: number;
+  prints: number;
+  seconds: number;
+  grams: number;
   filaments: QuoteFilamentLine[];
 }
 
@@ -36,81 +38,41 @@ export function filamentKey(f: { type: string; color: string; trayInfoIdx?: stri
   return `${f.trayInfoIdx || ""}|${(f.type || "").toUpperCase()}|${(f.color || "").toUpperCase()}`;
 }
 
+// Vezes vazias ou zeradas contam como 1 (a placa está na lista para ser impressa).
+export function printsOf(p: { prints?: number }): number {
+  return p.prints && p.prints > 0 ? p.prints : 1;
+}
+
+// Soma de todas as placas, cada uma × vezes: tempo total e gramas de cada cor.
 export function summarizeQuote(plates: QuotePlate[]): QuoteSummary {
   let seconds = 0;
+  let prints = 0;
   const byKey = new Map<string, QuoteFilamentLine>();
   for (const p of plates) {
-    const units = p.units > 0 ? p.units : 1;
-    seconds += p.seconds / units;
+    const times = printsOf(p);
+    prints += times;
+    seconds += p.seconds * times;
     for (const f of p.filaments) {
       const key = filamentKey(f);
-      const line = byKey.get(key) ?? { key, type: f.type, color: f.color, ...(f.trayInfoIdx ? { trayInfoIdx: f.trayInfoIdx } : {}), gramsPerUnit: 0 };
-      line.gramsPerUnit += f.grams / units;
+      const line = byKey.get(key) ?? { key, type: f.type, color: f.color, ...(f.trayInfoIdx ? { trayInfoIdx: f.trayInfoIdx } : {}), grams: 0 };
+      line.grams += f.grams * times;
       byKey.set(key, line);
     }
   }
   const filaments = Array.from(byKey.values())
-    .map((l) => ({ ...l, gramsPerUnit: round2(l.gramsPerUnit) }))
-    .sort((a, b) => b.gramsPerUnit - a.gramsPerUnit);
-  return {
-    secondsPerUnit: Math.round(seconds),
-    gramsPerUnit: round2(filaments.reduce((s, l) => s + l.gramsPerUnit, 0)),
-    filaments,
-  };
-}
-
-// Quantas vezes imprimir a placa para chegar na encomenda: 12 peças, 2 por placa = 6.
-// Sempre arredonda para cima (5 peças, 2 por placa = 3 impressões, sobra 1).
-export function printsFor(units: number, qty: number): number {
-  const u = units > 0 ? units : 1;
-  const q = qty > 0 ? qty : 1;
-  return Math.ceil(q / u - 1e-9);
-}
-
-export interface OrderFilamentLine {
-  key: string;
-  type: string;
-  color: string;
-  trayInfoIdx?: string;
-  grams: number;
-}
-
-export interface OrderSummary {
-  qty: number;
-  seconds: number;
-  grams: number;
-  filaments: OrderFilamentLine[];
-  plates: { id: string; prints: number; pieces: number }[];
-}
-
-// Encomenda inteira: cada placa impressa printsFor(unidades, qty) vezes. É o que vai
-// para a impressora -- tempo total e gramas de cada cor.
-export function summarizeOrder(plates: QuotePlate[], qty: number): OrderSummary {
-  const q = qty > 0 ? qty : 1;
-  let seconds = 0;
-  const byKey = new Map<string, OrderFilamentLine>();
-  const perPlate = plates.map((p) => {
-    const units = p.units > 0 ? p.units : 1;
-    const prints = printsFor(units, q);
-    seconds += p.seconds * prints;
-    for (const f of p.filaments) {
-      const key = filamentKey(f);
-      const line = byKey.get(key) ?? { key, type: f.type, color: f.color, ...(f.trayInfoIdx ? { trayInfoIdx: f.trayInfoIdx } : {}), grams: 0 };
-      line.grams += f.grams * prints;
-      byKey.set(key, line);
-    }
-    return { id: p.id, prints, pieces: Math.round(prints * units * 100) / 100 };
-  });
-  const filaments = Array.from(byKey.values())
     .map((l) => ({ ...l, grams: round2(l.grams) }))
     .sort((a, b) => b.grams - a.grams);
   return {
-    qty: q,
+    prints,
     seconds: Math.round(seconds),
     grams: round2(filaments.reduce((s, l) => s + l.grams, 0)),
     filaments,
-    plates: perPlate,
   };
+}
+
+// Placas do catálogo; as salvas antes de "vezes" (campo units) voltam com o mesmo número.
+export function loadStoredPlates(stored: Array<Omit<QuotePlate, "prints" | "thumbnail"> & { prints?: number; units?: number }>): QuotePlate[] {
+  return stored.map(({ units, prints, ...rest }) => ({ ...rest, prints: prints ?? units ?? 1 }));
 }
 
 export interface MatchableSpool {

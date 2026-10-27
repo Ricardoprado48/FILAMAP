@@ -1,14 +1,12 @@
 import { useRef, useState } from "react";
 import { readSlicedPlateFile } from "../utils/slicedPlate";
-import { formatDuration, summarizeOrder, summarizeQuote, type QuotePlate } from "../utils/quotePlates";
+import { formatDuration, printsOf, summarizeQuote, type QuotePlate } from "../utils/quotePlates";
 
 interface Props {
   plates: QuotePlate[];
   onPlatesChange: (plates: QuotePlate[]) => void;
   notes: string;
   onNotesChange: (notes: string) => void;
-  // Peças da encomenda (campo Quantidade da calculadora).
-  orderQty: number;
 }
 
 const box = { background: "#0f172a", border: "1px solid #334155", borderRadius: 8 } as const;
@@ -19,13 +17,11 @@ function plateName(file: string, index: number, total: number): string {
   return total > 1 ? `${base} – placa ${index}` : base;
 }
 
-export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange, orderQty }: Props) {
+export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const summary = summarizeQuote(plates);
-  const order = summarizeOrder(plates, orderQty);
-  const printsById = new Map(order.plates.map((o) => [o.id, o]));
 
   async function handleFiles(files: FileList | null) {
     if (!files?.length) return;
@@ -41,7 +37,7 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
             name: plateName(file.name, p.index, sliced.length),
             seconds: p.seconds,
             filaments: p.filaments,
-            units: 1,
+            prints: 1,
             notes: p.objects.length ? `Peças: ${p.objects.join(", ")}` : "",
             ...(p.thumbnail ? { thumbnail: p.thumbnail } : {}),
           });
@@ -78,8 +74,8 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
 
       {plates.length === 0 && (
         <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
-          No Bambu Studio, fatie (<b>Fatiar mesa</b>); depois clique no botão redondo <b>⌄</b> à esquerda de <b>Placa de impressão</b> (canto superior direito) e escolha exportar o arquivo fatiado da placa, ou de todas as placas (.gcode.3mf). Também fica em <b>Arquivo › Exportar</b>, só depois de fatiar. Importe uma por uma (ou várias de uma vez) e diga quantas unidades do produto cada placa atende: 4 copos numa placa = 4; as tampas de 6 produtos = 6.
-          Tempo e gramas por cor vão direto para o cálculo abaixo.
+          No Bambu Studio, fatie (<b>Fatiar mesa</b>); depois clique no botão redondo <b>⌄</b> à esquerda de <b>Placa de impressão</b> (canto superior direito) e escolha exportar o arquivo fatiado da placa, ou de todas as placas (.gcode.3mf). Também fica em <b>Arquivo › Exportar</b>, só depois de fatiar. Importe uma por uma (ou várias de uma vez) e diga quantas vezes vai imprimir cada placa (4 bases por placa e 12 pedidas = 3 vezes).
+          O total de tempo e de gramas de cada cor (placa × vezes) vai para o cálculo abaixo.
         </div>
       )}
 
@@ -87,7 +83,7 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
 
       {plates.map((p) => {
         const grams = p.filaments.reduce((s, f) => s + f.grams, 0);
-        const run = printsById.get(p.id);
+        const times = printsOf(p);
         return (
           <div key={p.id} style={{ ...box, padding: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
             {p.thumbnail ? (
@@ -114,13 +110,13 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 120px) minmax(0, 1fr)", gap: 6, alignItems: "center" }}>
                 <label style={{ fontSize: 11, color: "#94a3b8", display: "flex", flexDirection: "column", gap: 2 }}>
-                  Atende quantas unidades
+                  Imprimir quantas vezes
                   <input
                     type="number"
-                    min="0.1"
-                    step="any"
-                    value={p.units}
-                    onChange={(e) => update(p.id, { units: parseFloat(e.target.value) || 0 })}
+                    min="1"
+                    step="1"
+                    value={p.prints || ""}
+                    onChange={(e) => update(p.id, { prints: parseInt(e.target.value, 10) || 0 })}
                     style={{ ...input, width: "100%", color: "#38bdf8", fontWeight: 700, textAlign: "center" }}
                   />
                 </label>
@@ -129,10 +125,9 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
                   <input value={p.notes} onChange={(e) => update(p.id, { notes: e.target.value })} placeholder="ex.: clone da original, por objeto" style={{ ...input, width: "100%" }} />
                 </label>
               </div>
-              {run && (
+              {times > 1 && (
                 <div style={{ fontSize: 11, color: "#fcd34d" }}>
-                  🖨 Imprimir <b>{run.prints}×</b> = {run.pieces} peça{run.pieces === 1 ? "" : "s"}
-                  {run.pieces > order.qty ? ` (sobra ${Math.round((run.pieces - order.qty) * 100) / 100})` : ""}
+                  🖨 {times}× = ⏱ {formatDuration(p.seconds * times)} · ⚖️ {(grams * times).toFixed(1)} g
                 </div>
               )}
             </div>
@@ -141,32 +136,17 @@ export function QuotePlatesPanel({ plates, onPlatesChange, notes, onNotesChange,
       })}
 
       {plates.length > 0 && (
-        <div style={{ ...box, padding: 10, fontSize: 12, color: "#e2e8f0", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-          <strong style={{ color: "#38bdf8" }}>Por peça:</strong>
-          <span>⏱ {formatDuration(summary.secondsPerUnit)}</span>
-          <span>⚖️ {summary.gramsPerUnit.toFixed(1)} g</span>
-          {summary.filaments.map((l) => (
-            <span key={l.key} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-              <span style={{ width: 9, height: 9, borderRadius: "50%", background: l.color || "#888", border: "1px solid #64748b" }} />
-              {l.gramsPerUnit.toFixed(1)} g
-            </span>
-          ))}
-        </div>
-      )}
-
-      {plates.length > 0 && (
         <div style={{ ...box, padding: 10, fontSize: 12, color: "#e2e8f0", display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", borderColor: "#f59e0b" }}>
-          <strong style={{ color: "#fcd34d" }}>Encomenda de {order.qty} peça{order.qty === 1 ? "" : "s"}:</strong>
-          <span>🖨 {order.plates.reduce((s, o) => s + o.prints, 0)} impressões</span>
-          <span>⏱ {formatDuration(order.seconds)}</span>
-          <span>⚖️ {order.grams.toFixed(1)} g</span>
-          {order.filaments.map((l) => (
+          <strong style={{ color: "#fcd34d" }}>Total ({summary.prints} impressões):</strong>
+          <span>⏱ {formatDuration(summary.seconds)}</span>
+          <span>⚖️ {summary.grams.toFixed(1)} g</span>
+          {summary.filaments.map((l) => (
             <span key={l.key} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: l.color || "#888", border: "1px solid #64748b" }} />
               {l.grams.toFixed(1)} g
             </span>
           ))}
-          <span style={{ color: "#94a3b8", fontSize: 11 }}>Mude a quantidade em Parâmetros da peça.</span>
+          <span style={{ color: "#94a3b8", fontSize: 11 }}>Vai para Parâmetros da peça.</span>
         </div>
       )}
 

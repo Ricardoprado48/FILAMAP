@@ -1,14 +1,13 @@
 # 09 — Changelog Técnico
 
-## 27/10/2026 — Web: orçamento por encomenda, editar orçamento, novo cálculo zerado
+## 27/10/2026 — Web: placas × vezes, editar orçamento, novo cálculo zerado
 
-- **Pedido:** (1) "Novo Cálculo" mantinha as placas do orçamento anterior; (2) abrir um orçamento do catálogo e salvar criava outro item; (3) "atende quantas unidades" não chegava em Parâmetros da peça -- com 2 peças por placa e encomenda de 12, a placa sai 6 vezes e a calculadora precisa mostrar o material e o valor disso.
-- **Quantidade (peças)** em Parâmetros da peça: com placas, cada placa entra `ceil(quantidade ÷ unidades)` vezes (`summarizeOrder`); tempo total e gramas de cada cor da encomenda vão para a calculadora. O painel de placas mostra "Imprimir N× = P peças (sobra X)" e o resumo da encomenda. Acessórios passam a ser por peça. Preço mostra a encomenda e o valor por peça.
-- **Catálogo guarda por peça** (total ÷ quantidade) e a quantidade (`order_qty`); reabrir mostra a encomenda de novo. Itens antigos = 1 peça (iguais a antes).
+- **Pedido:** (1) "Novo Cálculo" mantinha as placas do orçamento anterior; (2) abrir um orçamento do catálogo e salvar criava outro item; (3) o número de cada placa não chegava em Parâmetros da peça. Exemplo real: troféu de 12 unidades = base 4 por placa (3×), corpo 2 por placa (6×), plaquinha 4 por placa (3×); o preço tem que ser o total das 12 impressões.
+- **Cada placa: "Imprimir quantas vezes"** (antes "atende quantas unidades", que dividia). Total = soma de placa × vezes (`summarizeQuote`): tempo total e gramas de cada cor vão para Parâmetros da peça e para o preço. O painel mostra o total de cada placa e o total geral por cor. Itens salvos com o campo antigo `units` voltam com o mesmo número em vezes (`loadStoredPlates`).
 - **Editar:** abrir item do catálogo marca "Editando"; salvar atualiza o mesmo item (`saveCatalogItem` com id); "Salvar como novo" cria outro.
-- **Novo Cálculo** zera placas, observações, quantidade, tempo e filamentos; se houver cálculo na tela, pergunta antes (Cancelar volta para ele).
-- **Banco:** `20261027100000_catalog_order_qty.sql`, aplicada por `ops/o13-encomenda-banco.ps1`.
-- **Testes:** Web 193/193 (3 novos).
+- **Novo Cálculo** zera placas, observações, tempo e filamentos; se houver cálculo na tela, pergunta antes (Cancelar volta para ele).
+- **Banco:** nada novo.
+- **Testes:** Web 190/190.
 
 ## 25/10/2026 — Web: orçamento por placas fatiadas
 

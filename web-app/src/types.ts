@@ -120,8 +120,6 @@ export interface CatalogItem {
   // Orçamento por placas (migration 20261025100000). Ausentes em banco antigo.
   notes?: string | null;
   plates?: StoredQuotePlate[] | null;
-  // Peças da encomenda; os valores do item são por peça (migration 20261027100000).
-  order_qty?: number | null;
 }
 
 export interface StoredQuotePlate {
@@ -129,7 +127,9 @@ export interface StoredQuotePlate {
   name: string;
   seconds: number;
   filaments: Array<{ id: number; type: string; color: string; grams: number; trayInfoIdx?: string }>;
-  units: number;
+  // Vezes que a placa é impressa. Itens salvos antes disso têm "units" no lugar.
+  prints?: number;
+  units?: number;
   notes: string;
 }
 

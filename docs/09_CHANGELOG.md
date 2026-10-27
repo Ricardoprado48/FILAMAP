@@ -5,11 +5,12 @@
 - **Pedido:** (1) "Novo Cálculo" mantinha as placas do orçamento anterior; (2) abrir um orçamento do catálogo e salvar criava outro item; (3) o número de cada placa não chegava em Parâmetros da peça. Exemplo real: troféu de 12 unidades = base 4 por placa (3×), corpo 2 por placa (6×), plaquinha 4 por placa (3×); o preço tem que ser o total das 12 impressões.
 - **Cada placa: "Imprimir quantas vezes"** (antes "atende quantas unidades", que dividia). Total = soma de placa × vezes (`summarizeQuote`): tempo total e gramas de cada cor vão para Parâmetros da peça e para o preço. O painel mostra o total de cada placa e o total geral por cor. Itens salvos com o campo antigo `units` voltam com o mesmo número em vezes (`loadStoredPlates`).
 - **Editar:** abrir item do catálogo marca "Editando"; salvar atualiza o mesmo item (`saveCatalogItem` com id); "Salvar como novo" cria outro.
-- **Material no estoque** (`checkStock`, `QuoteStockCheck`): por cor das placas, soma o saldo de todos os carretéis não arquivados com a mesma cor e material. Sobra de 35 g ou mais = "Tem"; menos de 35 g = "Repese para conferir" (erro de balança pode fazer faltar); falta = "Comprar carretel" com os gramas que faltam. Resumo no topo: pode imprimir / repese / comprar.
+- **Material no estoque** (`checkStock`, `QuoteStockCheck`): por cor das placas, soma o saldo de todos os carretéis não arquivados com a mesma cor e material. Sobra de 35 g ou mais = "Tem"; menos de 35 g = "Repese para conferir" (erro de balança pode fazer faltar); falta = "Comprar carretel" com os gramas que faltam. Resumo no topo: pode imprimir / repese / comprar. Confere o carretel escolhido em cada linha de Parâmetros da peça (`stockNeedsFromRows`): trocar o amarelo da placa por um dourado passa a conferir o dourado; sem carretel escolhido, vale a cor da placa.
+- **Filamentos em Parâmetros:** com placas, uma linha por cor (já passava de 4); "➕ Adicionar filamento" e ✕ por linha para o cálculo manual.
 - **Novo Cálculo** sempre zera placas, observações, tempo e filamentos, sem perguntar.
 - **Custos da Oficina** (luz, potência, valor e vida útil da impressora) foi para o fim da calculadora: preenche uma vez e quase não usa.
 - **Banco:** nada novo.
-- **Testes:** Web 192/192.
+- **Testes:** Web 194/194.
 
 ## 25/10/2026 — Web: orçamento por placas fatiadas
 

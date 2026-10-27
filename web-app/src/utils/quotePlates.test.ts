@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { checkStock, formatDuration, hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, printsOf, storablePlates, summarizeQuote, type QuotePlate } from "./quotePlates";
+import { checkStock, stockNeedsFromRows, formatDuration, hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, printsOf, storablePlates, summarizeQuote, type QuotePlate } from "./quotePlates";
+
+describe("stockNeedsFromRows", () => {
+  const spools = [
+    { id: "dourado", material: "PLA Silk", color_hex: "#D4AF37", current_weight: 400 },
+    { id: "preto", material: "PLA", color_hex: "#000000", current_weight: 900 },
+  ];
+
+  it("carretel trocado na linha (amarelo da placa -> dourado) confere o dourado", () => {
+    const needs = stockNeedsFromRows([{ spoolId: "dourado", weightG: "20.2", color: "#FFFF00", type: "PLA" }], spools);
+    expect(needs).toEqual([{ key: "D4AF37|PLA SILK", type: "PLA Silk", color: "#D4AF37", grams: 20.2 }]);
+  });
+
+  it("sem carretel usa a cor da placa; linhas iguais somam; sem gramas ou sem cor ficam de fora", () => {
+    const needs = stockNeedsFromRows(
+      [
+        { spoolId: "", weightG: "100", color: "#000000", type: "PLA" },
+        { spoolId: "preto", weightG: "50" },
+        { spoolId: "", weightG: "", color: "#FFFFFF", type: "PLA" },
+        { spoolId: "", weightG: "25" },
+      ],
+      spools
+    );
+    expect(needs).toEqual([{ key: "000000|PLA", type: "PLA", color: "#000000", grams: 150 }]);
+  });
+});
 
 describe("checkStock", () => {
   const need = (color: string, grams: number) => ({ key: color, type: "PLA", color, grams });

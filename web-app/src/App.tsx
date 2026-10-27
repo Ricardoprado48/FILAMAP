@@ -46,7 +46,7 @@ import {
 } from "./services/catalogService";
 import { QuotePlatesPanel } from "./components/QuotePlatesPanel";
 import { QuoteStockCheck } from "./components/QuoteStockCheck";
-import { hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, storablePlates, summarizeQuote, type QuotePlate } from "./utils/quotePlates";
+import { hoursFromSeconds, loadStoredPlates, matchSpoolForFilament, stockNeedsFromRows, storablePlates, summarizeQuote, type QuotePlate } from "./utils/quotePlates";
 import {
   updateSpoolWeight,
   linkSpoolNfc,
@@ -202,7 +202,8 @@ export default function App() {
   const [calcExtraCosts, setCalcExtraCosts] = useState("0.50");
   const [showConfigPanel, setShowConfigPanel] = useState(false);
 
-  const [calcFilaments, setCalcFilaments] = useState<Array<{ spoolId: string; weightG: string; manualPricePerKg: string }>>([
+  // color/type: cor e material da placa, quando a linha veio das placas importadas.
+  const [calcFilaments, setCalcFilaments] = useState<Array<{ spoolId: string; weightG: string; manualPricePerKg: string; color?: string; type?: string }>>([
     { spoolId: "", weightG: "25", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
     { spoolId: "", weightG: "", manualPricePerKg: "85.00" },
@@ -223,16 +224,18 @@ export default function App() {
     if (!next.length) return;
     const total = summarizeQuote(next);
     setCalcPrintHours(hoursFromSeconds(total.seconds));
-    const rows = total.filaments.map((l) => ({
+    const rows: typeof calcFilaments = total.filaments.map((l) => ({
       spoolId: matchSpoolForFilament(l, inventory, filamentProfiles),
       weightG: l.grams.toString(),
       manualPricePerKg: "85.00",
+      color: l.color,
+      type: l.type,
     }));
     while (rows.length < 4) rows.push({ spoolId: "", weightG: "", manualPricePerKg: "85.00" });
     setCalcFilaments(rows);
   }
 
-  function emptyFilamentRows() {
+  function emptyFilamentRows(): typeof calcFilaments {
     return [0, 1, 2, 3].map(() => ({ spoolId: "", weightG: "", manualPricePerKg: "85.00" }));
   }
 
@@ -1843,7 +1846,7 @@ export default function App() {
                 </div>
               )}
               <QuotePlatesPanel plates={quotePlates} onPlatesChange={(next) => applyQuotePlates(next)} notes={quoteNotes} onNotesChange={setQuoteNotes} />
-              <QuoteStockCheck plates={quotePlates} spools={inventory} spoolName={(id) => {
+              <QuoteStockCheck needs={stockNeedsFromRows(calcFilaments, inventory)} spools={inventory} spoolName={(id) => {
                 const s = inventory.find((x) => x.id === id);
                 return s ? spoolTitle(s) : "";
               }} />
@@ -1871,7 +1874,7 @@ export default function App() {
                     <label style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700 }}>Filamentos (AMS Lite){quotePlates.length ? " — total de todas as placas" : ""}:</label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
                       {calcFilaments.map((f, idx) => (
-                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 6 }}>
+                        <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr) auto", gap: 6 }}>
                           <select
                             value={f.spoolId}
                             onChange={(e) => {
@@ -1897,8 +1900,24 @@ export default function App() {
                             }}
                             style={{ padding: 6, background: "#0f172a", border: "1px solid #475569", borderRadius: 4, color: "#38bdf8", fontWeight: 700, textAlign: "center", width: "100%", minWidth: 0, boxSizing: "border-box" }}
                           />
+                          <button
+                            type="button"
+                            title="Tirar este filamento"
+                            disabled={calcFilaments.length <= 1}
+                            onClick={() => setCalcFilaments(calcFilaments.filter((_, i) => i !== idx))}
+                            style={{ background: "transparent", border: "1px solid #475569", color: "#94a3b8", borderRadius: 4, cursor: calcFilaments.length <= 1 ? "default" : "pointer", padding: "0 8px", opacity: calcFilaments.length <= 1 ? 0.4 : 1 }}
+                          >
+                            ✕
+                          </button>
                         </div>
                       ))}
+                      <button
+                        type="button"
+                        onClick={() => setCalcFilaments([...calcFilaments, { spoolId: "", weightG: "", manualPricePerKg: "85.00" }])}
+                        style={{ alignSelf: "flex-start", background: "transparent", border: "1px dashed #38bdf8", color: "#38bdf8", borderRadius: 4, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        ➕ Adicionar filamento
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -151,6 +151,35 @@ export function checkStock(lines: QuoteFilamentLine[], spools: MatchableSpool[])
   });
 }
 
+// Linha de filamento da calculadora: carretel escolhido, gramas e, se veio das placas,
+// a cor e o material do fatiamento.
+export interface CalcFilamentRow {
+  spoolId: string;
+  weightG: string;
+  color?: string;
+  type?: string;
+}
+
+// O que conferir no estoque: cada linha com gramas. Se a pessoa escolheu um carretel na
+// linha (ex.: trocou o amarelo da placa por um dourado), vale a cor e o material dele;
+// senão, os da placa. Linhas iguais somam.
+export function stockNeedsFromRows(rows: CalcFilamentRow[], spools: MatchableSpool[]): QuoteFilamentLine[] {
+  const byKey = new Map<string, QuoteFilamentLine>();
+  for (const row of rows) {
+    const grams = parseFloat(row.weightG) || 0;
+    if (grams <= 0) continue;
+    const spool = row.spoolId ? spools.find((s) => s.id === row.spoolId) : undefined;
+    const type = spool ? spool.material || "" : row.type || "";
+    const color = spool ? spool.color_hex || "" : row.color || "";
+    if (!color) continue;
+    const key = `${hex(color)}|${type.toUpperCase()}`;
+    const line = byKey.get(key) ?? { key, type, color, grams: 0 };
+    line.grams = round2(line.grams + grams);
+    byKey.set(key, line);
+  }
+  return Array.from(byKey.values()).sort((a, b) => b.grams - a.grams);
+}
+
 export function hoursFromSeconds(seconds: number): string {
   return (Math.round((seconds / 3600) * 100) / 100).toString();
 }

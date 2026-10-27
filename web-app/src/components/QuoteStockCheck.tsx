@@ -1,7 +1,8 @@
-import { checkStock, STOCK_TIGHT_G, summarizeQuote, type MatchableSpool, type QuotePlate } from "../utils/quotePlates";
+import { checkStock, STOCK_TIGHT_G, type MatchableSpool, type QuoteFilamentLine } from "../utils/quotePlates";
 
 interface Props {
-  plates: QuotePlate[];
+  // O que a calculadora vai gastar, por cor e material (stockNeedsFromRows).
+  needs: QuoteFilamentLine[];
   spools: MatchableSpool[];
   spoolName: (id: string) => string;
 }
@@ -12,11 +13,10 @@ const STATUS = {
   buy: { icon: "⚠️", label: "Comprar carretel", color: "#f87171" },
 } as const;
 
-// Tem material para imprimir as placas? Uma linha por cor: precisa x tem no estoque.
-export function QuoteStockCheck({ plates, spools, spoolName }: Props) {
-  if (!plates.length) return null;
-  const lines = checkStock(summarizeQuote(plates).filaments, spools);
-  if (!lines.length) return null;
+// Tem material para imprimir? Uma linha por cor: precisa x tem no estoque.
+export function QuoteStockCheck({ needs, spools, spoolName }: Props) {
+  if (!needs.length) return null;
+  const lines = checkStock(needs, spools);
 
   const colorName = (l: (typeof lines)[number]) => (l.spoolIds.length ? spoolName(l.spoolIds[0]) : `${l.type} ${l.color}`);
   const buy = lines.filter((l) => l.status === "buy");
@@ -60,7 +60,7 @@ export function QuoteStockCheck({ plates, spools, spoolName }: Props) {
         })}
       </div>
       <div style={{ fontSize: 10, color: "#64748b" }}>
-        Soma todos os carretéis do estoque da mesma cor e material. Sobra menor que {STOCK_TIGHT_G} g pede repesagem, porque a balança pode ter errado.
+        Confere o carretel escolhido em Parâmetros da peça (ou a cor da placa, se nenhum foi escolhido), somando todos os carretéis iguais do estoque. Sobra menor que {STOCK_TIGHT_G} g pede repesagem, porque a balança pode ter errado.
       </div>
     </div>
   );

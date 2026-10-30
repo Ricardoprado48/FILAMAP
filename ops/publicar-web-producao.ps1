@@ -17,10 +17,10 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $Repo = "$(Split-Path $PSScriptRoot -Parent)"
-$Aprovado = "d33bd40328432162b69df9a7433127b2a2d08038"
+$Aprovado = "a2275b80c92e917ebe4236c627d4e52703494251"
 $Setup = "$(Split-Path $PSScriptRoot -Parent)\desktop-agent\installer\output\FilamapAgentSetup.exe"
-$SetupSha = "A6EF9FF5B953CD56EA772A6AAF89961424E3DE2FB8BDEDB09EB3702BA0261AE4"
-$AgentVersao = "4.4.2"
+$SetupSha = "E37A2594BD65EA65EFD352746321936CA2CD94805323803A8E2AF9D3A71849FC"
+$AgentVersao = "4.4.3"
 $ProdRef = "gqtlszffgvxsqcmefhyd"
 $TestRef = "zllbzjwhdyxbryhbqrfg"
 
@@ -116,7 +116,7 @@ else { Write-Host "    Nenhuma montagem automatica apareceu em 10 min (pode esta
 
 # 6) publicacao definitiva, com o instalador
 Set-Location (Join-Path $Repo "web-app")
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Orcamento: placas x vezes, material no estoque + Agent $AgentVersao""" "Publicacao falhou."
+$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Orcamento por placas + Agent $AgentVersao (carretel certo)""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

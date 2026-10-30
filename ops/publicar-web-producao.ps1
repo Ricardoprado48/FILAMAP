@@ -82,7 +82,7 @@ $resp = Read-Host "Digite PUBLICAR para colocar a tela nova no ar (qualquer outr
 if ($resp -cne "PUBLICAR") { Write-Host "Cancelado. Nada foi publicado. (Digite exatamente PUBLICAR, em maiusculas.)"; exit 0 }
 
 function Get-ProdDeploys {
-    $r = Invoke-Cmd "npx wrangler pages deployment list --project-name filamap --environment production --json"
+    $r = Invoke-Cmd "npx --yes wrangler@4.156.0 pages deployment list --project-name filamap --environment production --json"
     if ($r.Code -ne 0) { Write-Host $r.Out; throw "Nao consegui listar as publicacoes do Cloudflare. Me chame." }
     $i = $r.Out.IndexOf("[")
     return @(ConvertFrom-Json $r.Out.Substring($i))
@@ -116,7 +116,7 @@ else { Write-Host "    Nenhuma montagem automatica apareceu em 10 min (pode esta
 
 # 6) publicacao definitiva, com o instalador
 Set-Location (Join-Path $Repo "web-app")
-$null = Assert-Cmd "npx wrangler pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Orcamento por placas + Agent $AgentVersao (carretel certo)""" "Publicacao falhou."
+$null = Assert-Cmd "npx --yes wrangler@4.156.0 pages deploy dist --project-name filamap --branch main --commit-hash $head --commit-message ""Orcamento por placas + Agent $AgentVersao (carretel certo)""" "Publicacao falhou."
 $servido = ""
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 5

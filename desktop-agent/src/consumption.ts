@@ -40,20 +40,39 @@ export interface FilamentSliceSlotMapping {
   candidateSlotIndexes?: number[];
 }
 
+// Posição de cada filamento dentro do ams_mapping. A impressora manda o mapping em duas
+// formas: uma entrada por filamento do projeto (posição = id - 1) ou só os filamentos da
+// placa, em ordem de id (A1, placa que não usa todas as cores do projeto: projeto com 4
+// cores, placa com as cores 2, 3 e 4 -> mapping [1, 3, 2]). Se algum id passa do tamanho
+// do mapping, é a forma da placa. `plateLogicals` são todos os filamentos listados na
+// placa, inclusive os de 0 g, que também ocupam posição.
+export function amsMappingPositions(logicals: number[], amsMapping: number[], plateLogicals: number[] = logicals): Map<number, number> {
+  const all = Array.from(new Set([...plateLogicals, ...logicals])).sort((a, b) => a - b);
+  const perPlate = all.length > 0 && all[all.length - 1] >= amsMapping.length;
+  return new Map(all.map((logical, rank) => [logical, perPlate ? rank : logical]));
+}
+
 export function resolveFilamentSliceToAmsSlots(
   slices: FilamentSliceInfo[],
   amsMapping?: number[],
-  availableSlots?: AmsSlotPhysicalCandidate[]
+  availableSlots?: AmsSlotPhysicalCandidate[],
+  plateSlices: FilamentSliceInfo[] = slices
 ): FilamentSliceSlotMapping[] {
   const mappings: FilamentSliceSlotMapping[] = [];
+  const logicalOf = (s: FilamentSliceInfo, i: number) => (s.logicalIndex !== undefined ? s.logicalIndex : i);
+  const positions =
+    amsMapping && amsMapping.length > 0
+      ? amsMappingPositions(slices.map(logicalOf), amsMapping, plateSlices.map(logicalOf))
+      : new Map<number, number>();
 
   for (let i = 0; i < slices.length; i++) {
     const slice = slices[i];
-    const logicalIdx = slice.logicalIndex !== undefined ? slice.logicalIndex : i;
+    const logicalIdx = logicalOf(slice, i);
 
     // Prioridade 1: ams_mapping real da Bambu Lab
     if (amsMapping && amsMapping.length > 0) {
-      const mappedSlot = logicalIdx < amsMapping.length ? amsMapping[logicalIdx] : undefined;
+      const pos = positions.get(logicalIdx) ?? logicalIdx;
+      const mappedSlot = pos < amsMapping.length ? amsMapping[pos] : undefined;
       if (mappedSlot !== undefined && mappedSlot >= 0 && mappedSlot <= 15 && mappedSlot !== 255) {
         mappings.push({
           slice,
@@ -150,7 +169,8 @@ export function computeConsumptionPerSlot(
   );
 
   if (exactSlices.length > 0) {
-    const mappings = resolveFilamentSliceToAmsSlots(exactSlices, amsMapping, availableSlots);
+    // Posições no ams_mapping contam todos os filamentos da placa, inclusive os de 0 g.
+    const mappings = resolveFilamentSliceToAmsSlots(exactSlices, amsMapping, availableSlots, filamentSliceInfo || []);
 
     for (const mapping of mappings) {
       if (mapping.ambiguous) {

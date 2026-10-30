@@ -936,3 +936,46 @@ test("Gate 1: regressão monocolor opera normalmente com ou sem ams_mapping", ()
   assert.equal(perSlotB.get(0)?.grams, 15.5);
 });
 
+
+// 4.4.3: na A1, placa que não usa todas as cores do projeto manda o ams_mapping só com
+// os filamentos da placa, em ordem de id. Casos reais do log de 25 a 29/10/2026.
+function plateSlice(logicalIndex: number, color: string, totalGrams: number, material = "PLA"): FilamentSliceInfo {
+  return { trayId: logicalIndex, logicalIndex, filamentId: logicalIndex + 1, material, color, modelGrams: totalGrams, supportGrams: 0, flushGrams: 0, totalGrams, weightDiscount: 0 };
+}
+
+test("4.4.3: troféu (cores 2, 3 e 4 de 4, mapping [1, 3, 2]) desconta cada cor no seu slot", () => {
+  const slices = [plateSlice(1, "#FFB549", 13.48), plateSlice(2, "#0080FF", 58.33), plateSlice(3, "#FFFFFF", 12.93)];
+  const perSlot = computeConsumptionPerSlot([3, 1, 2], slices, 0, 0, [1, 3, 2]);
+  assert.equal(perSlot.get(1)?.grams, 13.48); // amarelo
+  assert.equal(perSlot.get(3)?.grams, 58.33); // azul
+  assert.equal(perSlot.get(2)?.grams, 12.93); // branco
+  assert.equal(perSlot.size, 3);
+});
+
+test("4.4.3: cores 1, 2, 4 e 7 de 7 com mapping [0, 1, 2, 3] -> slots 0, 1, 2, 3", () => {
+  const slices = [
+    plateSlice(0, "#000000", 26.89),
+    plateSlice(1, "#FFB549", 0.64),
+    plateSlice(3, "#FFFFFF", 1.9),
+    plateSlice(6, "#87725F", 2.52, "PETG"),
+  ];
+  const perSlot = computeConsumptionPerSlot([0, 1, 2, 3], slices, 0, 0, [0, 1, 2, 3]);
+  assert.deepEqual(
+    [0, 1, 2, 3].map((s) => perSlot.get(s)?.grams),
+    [26.89, 0.64, 1.9, 2.52]
+  );
+});
+
+test("4.4.3: filamento de 0 g na placa também ocupa posição no mapping", () => {
+  const slices = [plateSlice(1, "#FFB549", 5), plateSlice(2, "#0080FF", 0), plateSlice(3, "#FFFFFF", 7)];
+  const perSlot = computeConsumptionPerSlot([1, 2], slices, 0, 0, [1, 3, 2]);
+  assert.equal(perSlot.get(1)?.grams, 5);
+  assert.equal(perSlot.get(2)?.grams, 7);
+  assert.equal(perSlot.has(3), false);
+});
+
+test("4.4.3: mapping com uma entrada por cor do projeto continua indexado pelo id", () => {
+  const slices = [plateSlice(0, "#000000", 10), plateSlice(2, "#FFFFFF", 4)];
+  const mappings = resolveFilamentSliceToAmsSlots(slices, [0, 255, 3, 255]);
+  assert.deepEqual(mappings.map((m) => m.physicalSlotIndex), [0, 3]);
+});

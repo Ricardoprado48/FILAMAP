@@ -1,5 +1,12 @@
 # 09 — Changelog Técnico
 
+## 30/10/2026 — Agent 4.4.3: desconto no carretel errado (placa com parte das cores)
+
+- **Incidente (25/10 a 29/10, troféu Copa São José):** placa que não usa todas as cores do projeto descontava no carretel errado. Ex. 29/10: projeto com 4 cores, placa com as cores 2, 3 e 4; a A1 mandou `ams_mapping` [1, 3, 2] (só as cores da placa, em ordem). O Agent indexava pelo id da cor no projeto (2 -> posição 1 = slot 3), então amarelo foi para o slot do azul, azul para o do branco, e o branco caiu no "achar pela cor" (slot 2). Por impressão: Branco Ultra Silk -71,3 g (certo 12,9), Azul Velvet -13,5 g (certo 58,3), Amarelo 0 (certo 13,5). Também em placas [0, 1, 2, 3] com as cores 1, 2, 4 e 7: o PETG do slot 3 não era descontado e o branco ia para o slot 3.
+- **Correção (`consumption.ts`, `amsMappingPositions`):** se algum id de cor passa do tamanho do `ams_mapping`, o mapping é o da placa e a posição é a ordem da cor entre as cores da placa (inclusive as de 0 g); senão continua pelo id. Os casos reais viraram teste.
+- **Instalação:** `ops/o13-instalar-agent.ps1` (impressora parada). Volta atrás: `releases/FilamapAgentSetup-4.4.2-A6EF9FF5.exe`.
+- **Testes:** Agent 333/333 (4 novos).
+
 ## 27/10/2026 — Web: placas × vezes, material no estoque, editar orçamento, novo cálculo zerado
 
 - **Pedido:** (1) "Novo Cálculo" mantinha as placas do orçamento anterior; (2) abrir um orçamento do catálogo e salvar criava outro item; (3) o número de cada placa não chegava em Parâmetros da peça. Exemplo real: troféu de 12 unidades = base 4 por placa (3×), corpo 2 por placa (6×), plaquinha 4 por placa (3×); o preço tem que ser o total das 12 impressões.

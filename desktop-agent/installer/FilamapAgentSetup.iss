@@ -1,5 +1,5 @@
 #define MyAppName "Filamap Agent"
-#define MyAppVersion "4.4.2"
+#define MyAppVersion "4.4.3"
 #define MyAppPublisher "Filamap"
 #define MyAppExeName "filamap-agent.exe"
 
